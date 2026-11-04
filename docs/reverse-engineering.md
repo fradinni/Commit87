@@ -173,3 +173,44 @@ wikis, AI chat and org administration are intentionally out of scope.
 | Hook shims with output markers | hooks untouched; console allow-list instead |
 | Subscription-gated breadth | MIT, offline-first core, forge tokens optional |
 | Worktrees buried in context menus | dedicated worktree view and per-worktree repository opening |
+## Reproducing the analysis
+
+The observations above were produced with these REA calls against the local Flatpak
+artifact:
+
+```
+open_binary        path=<flatpak>/files/extra/gitkraken/resources/app.asar
+inspect_electron_fuses
+                   path=<flatpak>/files/extra/gitkraken/gitkraken
+analyze_javascript_application
+                   input_path=<flatpak>/…/resources/app.asar
+                   format=asar
+                   detail=summary
+                   source_paths=[package.json, src/main/static/main.bundle.js,
+                                 src/main/static/startMainProcess.js,
+                                 src/main/static/parseArgv.js,
+                                 src/main/static/cli.js,
+                                 src/js/redux/domain/AskPass/AskPassClient.js,
+                                 src/js/redux/domain/Rebase/GitSequenceEditorClient.js,
+                                 src/renderer/static/entryPoints/main/index.js]
+inspect_analysis_view
+                   kind=javascript-facts, kinds=[ipc-channel, ipc-handler,
+                                                 context-bridge-api, electron-main]
+inspect_analysis_view
+                   kind=javascript-facts, kinds=[native-addon, endpoint]
+inspect_electron_fuses
+                   path=<repo>/dist/linux-unpacked/gitgrove    # our own build
+```
+
+Recorded Evidence identifiers for this session:
+
+- GitKraken ASAR analysis: `ev_18f20facf58c16927a1d219df558a7d64961d89cb969dc97c508b0c192cecc52`
+- IPC facts view: `ev_7fc48b17a4cf966d8cd57e95ba0e7ca439d765729bc21ee957b4a2a62d1e383c`
+- GitKraken fuse inspection: `ev_c43c57446dc30345d00ceae62654436ed2707f760cbbba83547481c34e9d945b`
+- GitGrove fuse inspection: `ev_32c1de02ac1ff11451a036859b2549920efcbbd916ac80eef55a09c8ca7fe74d`
+
+The ASAR integrity check was left enabled (`integrity_policy=fail`), so any content
+mismatch in the archive would have aborted analysis rather than silently using altered
+bytes. The inventory covered 52 524 entries; only 8 JavaScript/JSON sources were selected
+for semantic analysis, leaving 41 055 files explicitly unanalysed. That bound is why the
+document describes *observed* structure and not a claim of complete reconstruction.
