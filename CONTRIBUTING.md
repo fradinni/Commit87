@@ -7,7 +7,7 @@ npm install
 npm run dev
 ```
 
-Node 20+ and Git 2.30+ are required. No native modules are compiled.
+Node 24+ and Git 2.30+ are required. No native modules are compiled.
 
 ## Before opening a pull request
 

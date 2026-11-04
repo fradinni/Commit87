@@ -142,7 +142,7 @@ are configured.
 
 ## Build from source
 
-Requirements: Node.js 20+ and Git 2.30+.
+Requirements: Node.js 24+ and Git 2.30+.
 
 ```bash
 npm install
