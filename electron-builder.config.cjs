@@ -20,6 +20,10 @@ module.exports = {
   files: [
     'out/**/*',
     'package.json',
+    // Renderer, preload and main are fully bundled by electron-vite, so the
+    // production dependencies are not needed at runtime. Excluding node_modules
+    // keeps the ASAR (and AppImage cold start) much smaller.
+    '!node_modules/**/*',
     '!**/*.map',
     '!**/{.eslintrc,.editorconfig,.prettierrc,tsconfig*.json,vitest.config.ts,electron.vite.config.ts,electron-builder.config.cjs}'
   ],
@@ -28,7 +32,9 @@ module.exports = {
   },
   asar: true,
   asarUnpack: ['**/*.node'],
-  compression: 'maximum',
+  // AppImage reads files straight out of the squashfs image. "maximum" uses xz
+  // and adds seconds of decompression to every cold start, so prefer gzip.
+  compression: 'normal',
   removePackageScripts: true,
   npmRebuild: false,
   electronFuses: {

@@ -14,18 +14,27 @@ import { normalizeBaseUrl, detectProviderFromUrl, providerFromHost } from '../pr
 import { ProviderService } from '../providers/service'
 
 type GetWindow = () => BrowserWindow | null
+type GetLaunchTarget = () => string | null
 
 export class Router {
   private readonly store: AppStore
   private readonly tasks: TaskManager
   private readonly providers: ProviderService
   private readonly getWindow: GetWindow
+  private readonly getLaunchTarget: GetLaunchTarget
 
-  constructor(store: AppStore, tasks: TaskManager, providers: ProviderService, getWindow: GetWindow) {
+  constructor(
+    store: AppStore,
+    tasks: TaskManager,
+    providers: ProviderService,
+    getWindow: GetWindow,
+    getLaunchTarget: GetLaunchTarget
+  ) {
     this.store = store
     this.tasks = tasks
     this.providers = providers
     this.getWindow = getWindow
+    this.getLaunchTarget = getLaunchTarget
   }
 
   async handle(channel: IpcChannel, payload: unknown): Promise<unknown> {
@@ -49,6 +58,8 @@ export class Router {
           secretsEncrypted: this.store.secretsEncrypted
         }
       }
+      case 'app.launchTarget':
+        return this.getLaunchTarget()
       case 'app.checkGit': {
         const gitPath = asOptionalString(data.path, 'Git path')
         const info = await detectGit(gitPath || undefined)

@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import hljs from 'highlight.js/lib/common'
+import 'highlight.js/styles/github-dark-dimmed.css'
 import type { FileContent } from '@shared/types'
 import { FileWarning } from 'lucide-react'
 import { languageFromPath } from '../lib/format'

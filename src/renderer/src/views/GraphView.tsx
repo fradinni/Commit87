@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { CSSProperties } from 'react'
 import {
   ArrowDownToLine,
   ArrowUpRight,
   Calendar,
+  CircleDot,
+  Cloud,
   GitBranch,
   GitCommitHorizontal,
-  GitPullRequestArrow,
   History,
   Loader2,
   RotateCcw,
@@ -17,12 +19,20 @@ import {
 import type { Commit, DiffResult } from '@shared/types'
 import { activeIdentity, useStore } from '../store'
 import { call } from '../lib/ipc'
-import { buildGraph, graphWidth } from '../lib/graph'
+import { buildGraph, classifyRefs, GRAPH_PADDING, LANE_GAP } from '../lib/graph'
+import type { ClassifiedRef } from '../lib/graph'
 import { formatDate, formatRelativeTime, initials, shortSha } from '../lib/format'
 import { Badge, Button, ConfirmDialog, EmptyState, IconButton, Modal, Select, TextInput, Field } from '../components/ui'
 import { DiffView } from '../components/DiffView'
 
-const ROW_HEIGHT = 36
+const ROW_HEIGHT = 32
+const REFS_WIDTH = 176
+const MAX_VISIBLE_REFS = 2
+
+interface GraphColumnStyle extends CSSProperties {
+  '--graph-w': string
+  '--refs-w': string
+}
 
 export function GraphView() {
   const repo = useStore((state) => state.currentRepo)
@@ -35,6 +45,8 @@ export function GraphView() {
   const selectCommit = useStore((state) => state.selectCommit)
   const notify = useStore((state) => state.notify)
   const notifyError = useStore((state) => state.notifyError)
+  const currentBranch = useStore((state) => state.status?.branch ?? state.currentRepo?.currentBranch ?? null)
+  const headSha = useStore((state) => state.status?.headSha ?? null)
   const [query, setQuery] = useState('')
   const [branch, setBranch] = useState('')
   const [loading, setLoading] = useState(false)
@@ -54,8 +66,26 @@ export function GraphView() {
   const [busy, setBusy] = useState(false)
 
   const layout = useMemo(() => buildGraph(commits, ROW_HEIGHT), [commits])
-  const width = graphWidth(layout.laneCount)
+  const graphStyle = useMemo<GraphColumnStyle>(
+    () => ({ '--graph-w': `${layout.width}px`, '--refs-w': `${REFS_WIDTH}px` }),
+    [layout.width]
+  )
   const tagNames = useMemo(() => new Set(tags.map((item) => item.name)), [tags])
+  const localBranchNames = useMemo(
+    () => new Set(branches.filter((item) => item.type === 'branch').map((item) => item.shortName)),
+    [branches]
+  )
+  const refsBySha = useMemo(() => {
+    const map = new Map<string, ClassifiedRef[]>()
+    for (const commit of commits) {
+      map.set(commit.sha, classifyRefs(commit.refs, { tags: tagNames, branches: localBranchNames, currentBranch }))
+    }
+    return map
+  }, [commits, localBranchNames, tagNames, currentBranch])
+  const detailRefs = useMemo(
+    () => (detail ? classifyRefs(detail.refs, { tags: tagNames, branches: localBranchNames, currentBranch }) : []),
+    [detail, localBranchNames, tagNames, currentBranch]
+  )
 
   const runQuery = useCallback(
     async (append = false) => {
@@ -212,7 +242,6 @@ export function GraphView() {
     }
   }
 
-  const currentBranch = useStore((state) => state.status?.branch)
   const localBranches = branches.filter((item) => item.type === 'branch')
 
   return (
@@ -257,12 +286,6 @@ export function GraphView() {
 
       <div className="graph-layout">
         <div className="graph-list-panel">
-          <div className="commit-head" style={{ paddingLeft: width + 12 }}>
-            <span>Description</span>
-            <span>Author</span>
-            <span>Date</span>
-            <span>SHA</span>
-          </div>
           {commits.length === 0 && !loading ? (
             <EmptyState
               icon={<GitCommitHorizontal size={22} />}
@@ -286,69 +309,99 @@ export function GraphView() {
             />
           ) : (
             <div className="commit-scroll">
-              <div className="commit-rows" style={{ position: 'relative' }}>
-                <svg className="graph-svg" width={width} height={Math.max(commits.length * ROW_HEIGHT, 1)} aria-hidden="true">
-                  {layout.edges.map((edge, index) => (
-                    <path key={index} d={edge.d} stroke={edge.color} strokeWidth={1.8} fill="none" opacity={0.85} />
-                  ))}
-                  {layout.nodes.map((node) => (
-                    <circle
-                      key={node.sha}
-                      cx={node.lane * 16 + 12}
-                      cy={node.row * ROW_HEIGHT + ROW_HEIGHT / 2}
-                      r={node.sha === selectedCommit ? 5.2 : 3.8}
-                      fill={node.sha === selectedCommit ? node.color : 'var(--bg-panel)'}
-                      stroke={node.color}
-                      strokeWidth={2}
-                    />
-                  ))}
-                </svg>
-                {layout.rows.map(({ commit, color }) => {
-                  const refs = commit.refs.slice(0, 3)
-                  return (
-                    <button
-                      key={commit.sha}
-                      className={`commit-row ${commit.sha === selectedCommit ? 'is-selected' : ''}`}
-                      style={{ paddingLeft: width + 12 }}
-                      onClick={() => selectCommit(commit.sha)}
-                      onDoubleClick={() => void openWeb(commit.sha)}
-                    >
-                      <span className="commit-subject">
-                        <span className="commit-dot" style={{ background: color }} />
-                        <span className="commit-subject-text">{commit.subject || '(no message)'}</span>
-                        <span className="commit-refs">
-                          {refs.map((ref) => {
-                            const isTag = tagNames.has(ref)
-                            const isRemote = ref.includes('/')
-                            const tone = isTag ? 'purple' : isRemote ? 'blue' : ref === 'HEAD' ? 'green' : 'green'
-                            return (
-                              <Badge key={ref} tone={tone}>
-                                {isTag ? <Tag size={10} /> : isRemote ? <GitPullRequestArrow size={10} /> : <GitBranch size={10} />}
-                                {ref}
-                              </Badge>
-                            )
-                          })}
-                          {commit.refs.length > 3 ? <Badge tone="outline">+{commit.refs.length - 3}</Badge> : null}
+              <div className="commit-table" style={graphStyle}>
+                <div className="commit-head">
+                  <span className="commit-head-refs">Branch / Tag</span>
+                  <span className="commit-head-graph">Graph</span>
+                  <span>Description</span>
+                  <span>Author</span>
+                  <span>Date</span>
+                  <span>SHA</span>
+                </div>
+                <div className="commit-rows">
+                  <svg
+                    className="graph-svg"
+                    style={{ left: 'var(--refs-w)' }}
+                    width={layout.width}
+                    height={Math.max(commits.length * ROW_HEIGHT, 1)}
+                    viewBox={`0 0 ${layout.width} ${Math.max(commits.length * ROW_HEIGHT, 1)}`}
+                    aria-hidden="true"
+                  >
+                    <g fill="none" strokeLinecap="round" strokeLinejoin="round">
+                      {layout.edges.map((edge, index) => (
+                        <path
+                          key={`${index}-${edge.fromRow}-${edge.fromLane}-${edge.toRow}-${edge.toLane}`}
+                          d={edge.d}
+                          stroke={edge.color}
+                          strokeWidth={2}
+                          opacity={0.9}
+                        />
+                      ))}
+                    </g>
+                    {layout.nodes.map((node) => {
+                      const selected = node.sha === selectedCommit
+                      const isHead = node.sha === headSha
+                      const radius = node.isMerge ? 4.6 : 3.7
+                      const cx = GRAPH_PADDING + node.lane * LANE_GAP
+                      const cy = node.row * ROW_HEIGHT + ROW_HEIGHT / 2
+                      return (
+                        <g key={node.sha}>
+                          {isHead ? (
+                            <circle cx={cx} cy={cy} r={radius + 3.2} fill="none" stroke={node.color} strokeWidth={1} opacity={0.35} />
+                          ) : null}
+                          <circle
+                            cx={cx}
+                            cy={cy}
+                            r={selected ? 5.6 : radius}
+                            fill={selected ? node.color : 'var(--bg-panel)'}
+                            stroke={node.color}
+                            strokeWidth={selected ? 2 : 1.8}
+                          />
+                          {node.isMerge && !selected ? <circle cx={cx} cy={cy} r={1.3} fill={node.color} /> : null}
+                        </g>
+                      )
+                    })}
+                  </svg>
+                  {layout.rows.map(({ commit, color }) => {
+                    const refs = refsBySha.get(commit.sha) ?? []
+                    const visibleRefs = refs.slice(0, MAX_VISIBLE_REFS)
+                    const hiddenRefs = refs.length - visibleRefs.length
+                    return (
+                      <button
+                        key={commit.sha}
+                        className={`commit-row ${commit.sha === selectedCommit ? 'is-selected' : ''}`}
+                        onClick={() => selectCommit(commit.sha)}
+                        onDoubleClick={() => void openWeb(commit.sha)}
+                      >
+                        <span className="commit-refs-cell" title={refs.map((ref) => ref.name).join('\n')}>
+                          {visibleRefs.map((ref) => (
+                            <RefPill key={ref.name} item={ref} />
+                          ))}
+                          {hiddenRefs > 0 ? <span className="ref-pill ref-more">+{hiddenRefs}</span> : null}
                         </span>
-                      </span>
-                      <span className="commit-author">
-                        <span className="mini-avatar" style={{ background: color }}>
-                          {initials(commit.author.name)}
+                        <span className="commit-graph-cell" aria-hidden="true" />
+                        <span className="commit-subject">
+                          <span className="commit-subject-text">{commit.subject || '(no message)'}</span>
                         </span>
-                        {commit.author.name}
-                      </span>
-                      <span className="commit-date" title={formatDate(commit.committer.date)}>
-                        {formatRelativeTime(commit.committer.date)}
-                      </span>
-                      <span className="commit-sha">{commit.shortSha}</span>
-                    </button>
-                  )
-                })}
-              </div>
-              <div className="commit-load-more">
-                <Button variant="ghost" size="sm" loading={loadingMore} icon={<ArrowDownToLine size={14} />} onClick={() => void runQuery(true)}>
-                  Load more commits
-                </Button>
+                        <span className="commit-author">
+                          <span className="mini-avatar" style={{ background: color }}>
+                            {initials(commit.author.name)}
+                          </span>
+                          {commit.author.name}
+                        </span>
+                        <span className="commit-date" title={formatDate(commit.committer.date)}>
+                          {formatRelativeTime(commit.committer.date)}
+                        </span>
+                        <span className="commit-sha">{commit.shortSha}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+                <div className="commit-load-more">
+                  <Button variant="ghost" size="sm" loading={loadingMore} icon={<ArrowDownToLine size={14} />} onClick={() => void runQuery(true)}>
+                    Load more commits
+                  </Button>
+                </div>
               </div>
             </div>
           )}
@@ -370,9 +423,9 @@ export function GraphView() {
                   </IconButton>
                 </div>
                 <div className="details-refs">
-                  {detail.refs.map((ref) => (
-                    <Badge key={ref} tone={tagNames.has(ref) ? 'purple' : ref.includes('/') ? 'blue' : 'green'}>
-                      {ref}
+                  {detailRefs.map((ref) => (
+                    <Badge key={ref.name} tone={ref.kind === 'tag' ? 'purple' : ref.kind === 'remote' ? 'blue' : 'green'}>
+                      {ref.name}
                     </Badge>
                   ))}
                 </div>
@@ -589,5 +642,15 @@ export function GraphView() {
         }}
       />
     </div>
+  )
+}
+
+function RefPill({ item }: { item: ClassifiedRef }) {
+  const Icon = item.kind === 'tag' ? Tag : item.kind === 'remote' ? Cloud : item.kind === 'head' ? CircleDot : GitBranch
+  return (
+    <span className={`ref-pill ref-${item.kind}${item.current ? ' is-current' : ''}`} title={item.name}>
+      <Icon size={9} />
+      <span className="ref-pill-name">{item.name}</span>
+    </span>
   )
 }

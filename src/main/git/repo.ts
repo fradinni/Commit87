@@ -169,7 +169,10 @@ export async function getLog(input: LogInput): Promise<Commit[]> {
     '--date-order',
     `--max-count=${limit}`,
     `--skip=${skip}`,
-    '--pretty=format:%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ce%x1f%ct%x1f%D%x1f%s%x1f%b%x1e'
+    // Bodies are intentionally omitted: the graph only needs the subject and
+    // the full body is loaded on demand through git.commitDetail. This keeps
+    // the initial log payload small on repositories with long messages.
+    '--pretty=format:%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ce%x1f%ct%x1f%D%x1f%s%x1e'
   ]
   if (input.search) {
     args.push('--regexp-ignore-case', `--grep=${input.search}`)

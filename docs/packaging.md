@@ -88,6 +88,31 @@ flatpak install --user dist/GitGrove-0.1.0-x86_64.flatpak
 
 App ID: `dev.gitgrove.GitGrove`.
 
+## Cold start and AppImage
+
+The AppImage runtime mounts its squashfs image before any application code runs, so the
+in-app splash cannot cover that phase. Everything after it is optimised:
+
+- the main window is created as soon as Electron is ready, while the config store and Git
+  identity detection run in the background; IPC requests wait on the router instead of
+  delaying window creation;
+- a small native splash window is shown until the renderer's first paint;
+- `highlight.js` is loaded lazily with the file viewer instead of the initial graph view;
+- the production `node_modules` tree is excluded from the ASAR because Vite already
+  bundles every runtime dependency, shrinking `app.asar` from ~19 MB to ~1.5 MB;
+- AppImages use `compression: 'normal'` (gzip) rather than `maximum` (xz): xz saves
+  roughly 25 MB but adds decompression time to every launch. Use `deb`/`rpm` if the
+  smallest on-disk artifact matters more than cold-start time.
+
+Measure a build with the opt-in trace:
+
+```bash
+GITGROVE_STARTUP_TRACE=1 ./dist/GitGrove-0.1.0-linux-x86_64.AppImage
+# [gitgrove:startup] main process loaded … +0ms
+# [gitgrove:startup] app ready … +249ms
+# [gitgrove:startup] main window ready … +1290ms
+```
+
 ## Windows
 
 - NSIS: per-user install, changeable directory, desktop and Start Menu shortcuts,

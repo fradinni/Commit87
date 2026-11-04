@@ -52,6 +52,7 @@ import type {
 
 export interface IpcMethods {
   'app.info': { request: void; response: AppInfo }
+  'app.launchTarget': { request: void; response: string | null }
   'app.checkGit': { request: { path?: string } | void; response: GitBinaryInfo }
   'app.openExternal': { request: { url: string }; response: void }
   'app.openPath': { request: { path: string }; response: { ok: boolean; error?: string } }

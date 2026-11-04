@@ -4,6 +4,19 @@ All notable changes to GitGrove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Commit graph: compact lane assignment closes merged lanes instead of drawing stray
+  lines, and a dedicated Branch / Tag column shows local branches, remotes, tags and
+  detached HEAD next to a narrower graph and denser rows
+- Cold start: window creation no longer waits for Git identity discovery, a native splash
+  covers renderer start-up, the initial bundle no longer loads `highlight.js`, and the
+  ASAR excludes bundled production dependencies
+- AppImage uses gzip compression instead of xz for faster reads; opt-in startup tracing is
+  available through `GITGROVE_STARTUP_TRACE=1`
+
 ## [0.1.0] — 2026-11-04
 
 First public preview.

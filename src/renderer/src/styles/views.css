@@ -395,13 +395,18 @@
   border-right: 1px solid var(--border);
 }
 
+.commit-table {
+  min-width: 760px;
+  width: 100%;
+}
+
 .commit-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 170px 105px 80px;
+  grid-template-columns: var(--refs-w, 176px) var(--graph-w, 44px) minmax(240px, 1fr) 150px 92px 72px;
   align-items: center;
-  gap: 10px;
+  gap: 0;
   height: 28px;
-  padding-right: 12px;
+  padding-right: 10px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
   color: var(--muted);
@@ -409,7 +414,26 @@
   font-weight: 650;
   letter-spacing: 0.07em;
   text-transform: uppercase;
-  flex: none;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.commit-head > span {
+  min-width: 0;
+  padding-right: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commit-head-refs {
+  padding-left: 12px;
+}
+
+.commit-head-graph {
+  text-align: center;
+  padding-right: 0 !important;
 }
 
 .commit-scroll {
@@ -420,25 +444,25 @@
 }
 
 .commit-rows {
-  min-width: 700px;
+  position: relative;
 }
 
 .graph-svg {
   position: absolute;
   top: 0;
-  left: 0;
+  z-index: 2;
   pointer-events: none;
+  overflow: visible;
 }
 
 .commit-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 170px 105px 80px;
+  grid-template-columns: var(--refs-w, 176px) var(--graph-w, 44px) minmax(240px, 1fr) 150px 92px 72px;
   align-items: center;
-  gap: 10px;
+  gap: 0;
   height: var(--row-h);
   width: 100%;
-  padding-right: 12px;
-  border-bottom: 1px solid rgba(27, 42, 54, 0.55);
+  padding-right: 10px;
   text-align: left;
   color: var(--text-dim);
   position: relative;
@@ -463,19 +487,90 @@
   background: var(--accent);
 }
 
+.commit-refs-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 100%;
+  padding: 0 8px 0 12px;
+  overflow: hidden;
+}
+
+.ref-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  background: var(--bg-elev);
+  color: var(--text-dim);
+}
+
+.ref-pill svg {
+  flex: none;
+}
+
+.ref-pill-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ref-pill.ref-branch {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-soft);
+}
+
+.ref-pill.ref-remote {
+  color: var(--blue);
+  background: var(--blue-soft);
+  border-color: var(--blue-soft);
+}
+
+.ref-pill.ref-tag {
+  color: var(--purple);
+  background: var(--purple-soft);
+  border-color: var(--purple-soft);
+}
+
+.ref-pill.ref-head {
+  color: var(--text);
+  background: var(--bg-elev);
+}
+
+.ref-pill.is-current {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.ref-pill.ref-more {
+  flex: none;
+  color: var(--muted);
+  background: transparent;
+  border-color: var(--border-strong);
+}
+
+.commit-graph-cell {
+  height: 100%;
+}
+
 .commit-subject {
   display: flex;
   align-items: center;
   gap: 7px;
   min-width: 0;
-}
-
-.commit-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex: none;
-  display: none;
+  padding-right: 10px;
 }
 
 .commit-subject-text {
@@ -484,14 +579,6 @@
   white-space: nowrap;
   color: var(--text);
   font-size: 11.5px;
-}
-
-.commit-refs {
-  display: flex;
-  gap: 3px;
-  flex: none;
-  max-width: 55%;
-  overflow: hidden;
 }
 
 .commit-author {
@@ -503,6 +590,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  padding-right: 10px;
 }
 
 .mini-avatar {
@@ -521,6 +609,10 @@
 .commit-date {
   color: var(--muted);
   font-size: 10px;
+  padding-right: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .commit-sha {

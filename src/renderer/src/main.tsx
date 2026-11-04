@@ -1,5 +1,4 @@
 import { createRoot } from 'react-dom/client'
-import 'highlight.js/styles/github-dark-dimmed.css'
 import './styles/app.css'
 import './styles/views.css'
 import { App } from './App'

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parsePatch } from '../src/renderer/src/lib/diff'
-import { buildGraph } from '../src/renderer/src/lib/graph'
+import { buildGraph, classifyRefs } from '../src/renderer/src/lib/graph'
 import { tokenizeCommand, validateConsoleCommand } from '../src/main/tasks'
 import type { Commit } from '../src/shared/types'
 
@@ -90,6 +90,48 @@ describe('commit graph layout', () => {
     const layout = buildGraph(commits)
     expect(layout.rows.every((row) => row.lane === 0)).toBe(true)
     expect(layout.nodes).toHaveLength(3)
+  })
+
+  it('closes a lane that merges into an already open lane', () => {
+    const commits = [commit('m', ['a', 'b']), commit('a', ['root']), commit('b', ['root']), commit('root', [])]
+    const layout = buildGraph(commits, 10)
+    expect(layout.laneCount).toBe(2)
+    expect(layout.rows[3].lane).toBe(0)
+    expect(layout.edges.some((edge) => edge.fromRow === 2 && edge.toLane === 1)).toBe(false)
+    expect(layout.rows.every((row) => row.lane < layout.laneCount)).toBe(true)
+  })
+
+  it('never draws below the final commit row', () => {
+    const commits = [commit('m', ['a', 'b']), commit('a', ['root']), commit('b', ['root']), commit('root', [])]
+    const layout = buildGraph(commits, 10)
+    expect(layout.edges.every((edge) => edge.toRow < commits.length)).toBe(true)
+    expect(layout.edges.every((edge) => edge.fromLane < layout.laneCount && edge.toLane < layout.laneCount)).toBe(true)
+  })
+})
+
+describe('commit ref classification', () => {
+  it('separates current branch, tags and remotes', () => {
+    const refs = classifyRefs(['origin/main', 'main', 'v1.0.0', 'release/v1', 'HEAD'], {
+      tags: new Set(['v1.0.0', 'release/v1']),
+      currentBranch: 'main'
+    })
+    expect(refs).toEqual([
+      { name: 'main', kind: 'branch', current: true },
+      { name: 'HEAD', kind: 'head', current: false },
+      { name: 'release/v1', kind: 'tag', current: false },
+      { name: 'v1.0.0', kind: 'tag', current: false },
+      { name: 'origin/main', kind: 'remote', current: false }
+    ])
+  })
+
+  it('uses known refs to disambiguate slashed branch names and skips remote HEAD', () => {
+    const refs = classifyRefs(['origin/main', 'origin/main', 'feature/x', 'origin/HEAD'], {
+      branches: new Set(['feature/x'])
+    })
+    expect(refs).toEqual([
+      { name: 'feature/x', kind: 'branch', current: false },
+      { name: 'origin/main', kind: 'remote', current: false }
+    ])
   })
 })
 

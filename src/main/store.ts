@@ -15,7 +15,7 @@ import type {
 } from '@shared/types'
 import { normalizeBaseUrl } from './providers/remote'
 import { PROVIDERS } from '@shared/types'
-import { runGit, setGitBinary, tryRunGit } from './git/runner'
+import { setGitBinary, tryRunGit } from './git/runner'
 
 interface SecretsFile {
   version: 1
@@ -52,7 +52,10 @@ export class AppStore {
     await this.loadSecrets()
     setGitBinary(this.config.gitBinary || null)
     this.loaded = true
-    await this.ensureDefaultIdentity()
+    // Discovering the global Git identity shells out to git. Do not block the
+    // first window on it: the launchpad can render immediately and the
+    // identity is only a convenience default.
+    void this.ensureDefaultIdentity()
   }
 
   get isLoaded(): boolean {
@@ -390,11 +393,12 @@ export class AppStore {
 
   private async ensureDefaultIdentity(): Promise<void> {
     if (this.config.identities.length) return
-    if (!this.config.gitBinary && !(await this.gitAvailable())) return
     try {
       const home = os.homedir()
-      const name = await tryRunGit(['config', '--global', '--get', 'user.name'], { cwd: home })
-      const email = await tryRunGit(['config', '--global', '--get', 'user.email'], { cwd: home })
+      const [name, email] = await Promise.all([
+        tryRunGit(['config', '--global', '--get', 'user.name'], { cwd: home, timeoutMs: 3000 }),
+        tryRunGit(['config', '--global', '--get', 'user.email'], { cwd: home, timeoutMs: 3000 })
+      ])
       const userName = name?.stdout.trim()
       const userEmail = email?.stdout.trim()
       if (userName && userEmail) {
@@ -410,15 +414,6 @@ export class AppStore {
       }
     } catch {
       // No global identity; the UI will prompt for one.
-    }
-  }
-
-  private async gitAvailable(): Promise<boolean> {
-    try {
-      await runGit(['--version'], { cwd: process.cwd(), timeoutMs: 5000 })
-      return true
-    } catch {
-      return false
     }
   }
 

@@ -35,9 +35,11 @@ const DEFAULT_TIMEOUT = 120_000
 const MAX_BUFFER = 64 * 1024 * 1024
 
 let gitBinaryOverride: string | null = null
+let cachedGitDetection: { path: string; version: string; available: boolean; error?: string } | null = null
 
 export function setGitBinary(binary: string | null): void {
   gitBinaryOverride = binary && binary.trim() ? binary.trim() : null
+  cachedGitDetection = null
 }
 
 export function getGitBinary(): string {
@@ -228,18 +230,23 @@ export function buildAuthArgs(account: IntegrationAccount | null, token: string 
 }
 
 export async function detectGit(path?: string): Promise<{ path: string; version: string; available: boolean; error?: string }> {
+  if (!path && cachedGitDetection) return cachedGitDetection
   const previous = getGitBinary()
   if (path) setGitBinary(path)
   try {
     const result = await runGit(['--version'], { cwd: process.cwd(), timeoutMs: 8000 })
-    return { path: getGitBinary(), version: result.stdout.trim(), available: true }
+    const info = { path: getGitBinary(), version: result.stdout.trim(), available: true }
+    if (!path) cachedGitDetection = info
+    return info
   } catch (error) {
-    return {
+    const info = {
       path: getGitBinary(),
       version: '',
       available: false,
       error: error instanceof Error ? error.message : String(error)
     }
+    if (!path) cachedGitDetection = info
+    return info
   } finally {
     if (path && previous !== path) setGitBinary(previous)
   }

@@ -55,11 +55,19 @@ export function App() {
   const [pushUpstream, setPushUpstream] = useState(true)
   const [pushForce, setPushForce] = useState<'none' | 'with-lease' | 'force'>('none')
   const [busy, setBusy] = useState(false)
+  const [bootComplete, setBootComplete] = useState(false)
   const pendingClone = useRef<string | null>(null)
   const fetchedFor = useRef<string | null>(null)
 
   useEffect(() => {
     void init()
+      .then(async () => {
+        const target = await call('app.launchTarget', undefined).catch(() => null)
+        if (target) {
+          await useStore.getState().openRepo(target).catch((error) => useStore.getState().notifyError(errorMessage(error)))
+        }
+      })
+      .finally(() => setBootComplete(true))
     const unsubscribeTasks = window.gitgrove.onTaskEvent((event) => {
       useStore.getState().handleTaskEvent(event)
       if (event.kind === 'clone' && event.phase === 'end' && pendingClone.current) {
@@ -257,7 +265,7 @@ export function App() {
     else if (action === 'push') openPush()
   }, [openPush, pickAndOpen])
 
-  if (!ready) {
+  if (!ready || (!fatal && !bootComplete)) {
     return (
       <div className="app-boot">
         <Logo size={40} />

@@ -123,7 +123,12 @@ Everything user-visible is parsed from stable porcelain formats:
 | Config | `config --list --show-scope` | system/global/local scopes |
 
 The renderer parses unified diffs (`lib/diff.ts`) and lays out the commit graph
-(`lib/graph.ts`) with lane assignment, so the main process only ships text.
+(`lib/graph.ts`) with compact lane assignment, so the main process only ships text.
+Each lane owns a single pending commit; when a branch merges into a lane that is already
+open the redundant lane is closed instead of drawing a stray line to the bottom of the
+history. Decorations are classified into the dedicated branch/tag column (local branch,
+remote, tag and detached `HEAD`). `git.log` omits commit bodies because the graph only
+needs subjects; the body is fetched on demand by `git.commitDetail`.
 
 ### Streaming tasks
 

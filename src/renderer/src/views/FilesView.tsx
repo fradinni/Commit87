@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ChevronDown,
   ChevronRight,
@@ -22,8 +22,11 @@ import { call } from '../lib/ipc'
 import { formatRelativeTime, languageFromPath } from '../lib/format'
 import { Badge, Button, ConfirmDialog, EmptyState, Field, IconButton, LoadingBlock, Select, TextArea } from '../components/ui'
 import { DiffView } from '../components/DiffView'
-import { CodeView } from '../components/CodeView'
 import { IdentitySelect } from '../components/selectors'
+
+// highlight.js is the largest renderer dependency. Load it only when a file is
+// actually opened instead of parsing it during the first paint of the graph.
+const CodeView = lazy(() => import('../components/CodeView').then((module) => ({ default: module.CodeView })))
 
 type FilesTab = 'changes' | 'browse'
 
@@ -474,7 +477,9 @@ export function FilesView() {
                     Stage file
                   </Button>
                 </div>
-                <CodeView content={fileContent} loading={diffLoading || contentLoading} />
+                <Suspense fallback={<LoadingBlock label="Loading file viewer…" />}>
+                  <CodeView content={fileContent} loading={diffLoading || contentLoading} />
+                </Suspense>
               </div>
             ) : (
               <DiffView
@@ -545,7 +550,9 @@ export function FilesView() {
                     </Button>
                   </div>
                 ) : null}
-                <CodeView content={fileContent} loading={contentLoading} />
+                <Suspense fallback={<LoadingBlock label="Loading file viewer…" />}>
+                  <CodeView content={fileContent} loading={contentLoading} />
+                </Suspense>
               </>
             )}
           </main>
