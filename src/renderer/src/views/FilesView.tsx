@@ -387,9 +387,16 @@ export function FilesView() {
                         </span>
                         <span className="change-actions" onClick={(event) => event.stopPropagation()}>
                           {file.stage === 'staged' ? (
-                            <IconButton label="Unstage" onClick={() => void unstageFiles([file.path])}>
-                              <Minus size={12} />
-                            </IconButton>
+                            <>
+                              <IconButton label="Unstage" onClick={() => void unstageFiles([file.path])}>
+                                <Minus size={12} />
+                              </IconButton>
+                              {file.index !== '.' && file.worktree !== '.' ? (
+                                <IconButton label="Stage remaining changes" onClick={() => void stageFiles([file.path])}>
+                                  <Plus size={12} />
+                                </IconButton>
+                              ) : null}
+                            </>
                           ) : (
                             <IconButton label="Stage" onClick={() => void stageFiles([file.path])}>
                               <Plus size={12} />

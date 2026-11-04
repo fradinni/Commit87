@@ -31,7 +31,7 @@ export function Logo({ size = 22 }: { size?: number }) {
   )
 }
 
-export function TitleBar({ onPalette }: { onPalette: () => void }) {
+export function TitleBar({ onPalette, onPush }: { onPalette: () => void; onPush: () => void }) {
   const repo = useStore((state) => state.currentRepo)
   const status = useStore((state) => state.status)
   const detection = useStore((state) => state.detection)
@@ -50,7 +50,7 @@ export function TitleBar({ onPalette }: { onPalette: () => void }) {
     return window.gitgrove.onWindowState((state) => setMaximized(state.maximized))
   }, [])
 
-  const startSync = async (kind: 'fetch' | 'pull' | 'push'): Promise<void> => {
+  const startSync = async (kind: 'fetch' | 'pull'): Promise<void> => {
     if (!repo) return
     const identity = activeIdentity()
     try {
@@ -61,13 +61,6 @@ export function TitleBar({ onPalette }: { onPalette: () => void }) {
           repoPath: repo.path,
           identityId: identity?.id,
           accountId: detection.accountId
-        })
-      } else {
-        await call('git.push', {
-          repoPath: repo.path,
-          identityId: identity?.id,
-          accountId: detection.accountId,
-          setUpstream: !status?.upstream
         })
       }
     } catch (error) {
@@ -153,7 +146,7 @@ export function TitleBar({ onPalette }: { onPalette: () => void }) {
             <IconButton label="Pull" onClick={() => void startSync('pull')} disabled={Boolean(task)}>
               <RefreshCw size={16} />
             </IconButton>
-            <IconButton label="Push" onClick={() => void startSync('push')} disabled={Boolean(task)}>
+            <IconButton label="Push…" onClick={onPush} disabled={Boolean(task)}>
               <CloudUpload size={16} />
             </IconButton>
           </>

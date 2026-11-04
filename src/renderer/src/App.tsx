@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { FolderGit2, Plus } from 'lucide-react'
-import { useStore } from './store'
+import { activeIdentity, useStore } from './store'
 import { call, errorMessage } from './lib/ipc'
 import { Logo, TitleBar } from './components/TitleBar'
 import { Sidebar } from './components/Sidebar'
@@ -20,7 +20,7 @@ import { PullsView } from './views/PullsView'
 import { ReleasesView } from './views/ReleasesView'
 import { ActionsView } from './views/ActionsView'
 import { SettingsView } from './views/SettingsView'
-import { Button, Field, Modal, TextInput } from './components/ui'
+import { Button, Field, Modal, Select, TextInput } from './components/ui'
 import { IdentitySelect, AccountSelect } from './components/selectors'
 
 export function App() {
@@ -29,6 +29,7 @@ export function App() {
   const init = useStore((state) => state.init)
   const config = useStore((state) => state.config)
   const repo = useStore((state) => state.currentRepo)
+  const status = useStore((state) => state.status)
   const view = useStore((state) => state.view)
   const sidebarOpen = useStore((state) => state.sidebarOpen)
   const notify = useStore((state) => state.notify)
@@ -46,6 +47,13 @@ export function App() {
   const [initName, setInitName] = useState('')
   const [initBranch, setInitBranch] = useState('main')
   const [initIdentity, setInitIdentity] = useState<string | undefined>()
+  const [pushOpen, setPushOpen] = useState(false)
+  const [pushRemote, setPushRemote] = useState('')
+  const [pushBranch, setPushBranch] = useState('')
+  const [pushIdentity, setPushIdentity] = useState<string | undefined>()
+  const [pushAccount, setPushAccount] = useState<string | undefined>()
+  const [pushUpstream, setPushUpstream] = useState(true)
+  const [pushForce, setPushForce] = useState<'none' | 'with-lease' | 'force'>('none')
   const [busy, setBusy] = useState(false)
   const pendingClone = useRef<string | null>(null)
   const fetchedFor = useRef<string | null>(null)
@@ -204,14 +212,50 @@ export function App() {
     }
   }
 
-  const paletteAction = (action: PaletteAction): void => {
+  const openPush = useCallback((): void => {
+    const state = useStore.getState()
+    if (!state.currentRepo) return
+    setPushRemote(state.repoDefaults.defaultRemote ?? state.currentRepo.remotes[0]?.name ?? '')
+    setPushBranch(state.status?.branch ?? state.currentRepo.currentBranch ?? '')
+    setPushIdentity(activeIdentity()?.id)
+    setPushAccount(state.detection.accountId)
+    setPushUpstream(!state.status?.upstream)
+    setPushForce('none')
+    setPushOpen(true)
+  }, [])
+
+  const push = async (): Promise<void> => {
+    const repoNow = useStore.getState().currentRepo
+    if (!repoNow) return
+    setBusy(true)
+    try {
+      await call('git.push', {
+        repoPath: repoNow.path,
+        remote: pushRemote || undefined,
+        branch: pushBranch || undefined,
+        identityId: pushIdentity,
+        accountId: pushAccount,
+        setUpstream: pushUpstream,
+        force: pushForce
+      })
+      setPushOpen(false)
+      notify('Push started — progress appears in the status bar', 'info')
+    } catch (error) {
+      notifyError(error)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const paletteAction = useCallback((action: PaletteAction): void => {
     if (action === 'open') void pickAndOpen()
     else if (action === 'clone') setCloneOpen(true)
     else if (action === 'init') setInitOpen(true)
     else if (action === 'new-branch') useStore.getState().setView('branches')
     else if (action === 'new-tag') useStore.getState().setView('tags')
     else if (action === 'new-worktree') useStore.getState().setView('worktrees')
-  }
+    else if (action === 'push') openPush()
+  }, [openPush, pickAndOpen])
 
   if (!ready) {
     return (
@@ -240,7 +284,7 @@ export function App() {
 
   return (
     <div className="app">
-      <TitleBar onPalette={() => useStore.getState().setPaletteOpen(true)} />
+      <TitleBar onPalette={() => useStore.getState().setPaletteOpen(true)} onPush={openPush} />
       <div className="app-body">
         {sidebarOpen ? <Sidebar /> : null}
         <main className="content">
@@ -359,6 +403,59 @@ export function App() {
           <IdentitySelect value={initIdentity} onChange={setInitIdentity} />
         </Field>
         {initParent && initName ? <div className="inline-info"><FolderGit2 size={13} /> {initParent.replace(/[\\/]+$/, '')}/{initName}</div> : null}
+      </Modal>
+
+      <Modal
+        open={pushOpen}
+        title="Push"
+        subtitle={repo ? `${repo.name} · ${pushBranch || status?.branch || 'current branch'}` : undefined}
+        onClose={() => setPushOpen(false)}
+        width={520}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setPushOpen(false)}>Cancel</Button>
+            <Button variant="primary" loading={busy} onClick={() => void push()}>
+              Push
+            </Button>
+          </>
+        }
+      >
+        <div className="form-grid">
+          <Field label="Remote">
+            <Select value={pushRemote} onChange={(event) => setPushRemote(event.target.value)}>
+              {(repo?.remotes ?? []).map((remote) => (
+                <option key={remote.name} value={remote.name}>{remote.name}</option>
+              ))}
+              {(repo?.remotes ?? []).length === 0 ? <option value="">No remote</option> : null}
+            </Select>
+          </Field>
+          <Field label="Branch">
+            <Select value={pushBranch} onChange={(event) => setPushBranch(event.target.value)}>
+              {[...new Set([pushBranch, status?.branch, repo?.currentBranch].filter(Boolean) as string[])].map((branch) => (
+                <option key={branch} value={branch}>{branch}</option>
+              ))}
+            </Select>
+          </Field>
+        </div>
+        <div className="form-grid">
+          <Field label="Commit identity" hint="Used for merge commits created during the push if needed.">
+            <IdentitySelect value={pushIdentity} onChange={setPushIdentity} />
+          </Field>
+          <Field label="Authenticate as" hint="HTTPS credentials come from this forge account.">
+            <AccountSelect value={pushAccount} onChange={setPushAccount} />
+          </Field>
+        </div>
+        <label className="checkbox-row">
+          <input type="checkbox" checked={pushUpstream} onChange={(event) => setPushUpstream(event.target.checked)} />
+          Set upstream for this branch
+        </label>
+        <Field label="Force option">
+          <Select value={pushForce} onChange={(event) => setPushForce(event.target.value as typeof pushForce)}>
+            <option value="none">Never force</option>
+            <option value="with-lease">Force with lease (safer)</option>
+            <option value="force">Force (overwrite remote)</option>
+          </Select>
+        </Field>
       </Modal>
     </div>
   )

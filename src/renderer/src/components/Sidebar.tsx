@@ -38,7 +38,7 @@ export function Sidebar() {
   const pulls = useStore((state) => state.pulls)
   const detection = useStore((state) => state.detection)
   const appInfo = useStore((state) => state.appInfo)
-  const integrations = useStore((state) => state.integrations())
+  const integrations = useStore((state) => state.config?.integrations) ?? []
   const closeRepo = useStore((state) => state.closeRepo)
   const identity = activeIdentity()
   const integration = detection.accountId ? integrations.find((item) => item.id === detection.accountId) : undefined

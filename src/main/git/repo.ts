@@ -160,6 +160,8 @@ export async function getStatus(repoPath: string): Promise<RepoStatus> {
 }
 
 export async function getLog(input: LogInput): Promise<Commit[]> {
+  const head = await tryRunGit(['rev-parse', '--verify', 'HEAD'], { cwd: input.repoPath })
+  if (!head || head.exitCode !== 0) return []
   const limit = Math.min(Math.max(input.limit ?? 300, 1), 5000)
   const skip = Math.max(input.skip ?? 0, 0)
   const args = [

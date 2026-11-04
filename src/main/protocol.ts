@@ -88,10 +88,26 @@ export function registerAppProtocol(rendererRoot: string): void {
 }
 
 function serveFile(target: string, method: string): Response | Promise<Response> {
+  const extension = path.extname(target).toLowerCase()
   const headers: Record<string, string> = {
-    'content-type': MIME[path.extname(target).toLowerCase()] ?? 'application/octet-stream',
+    'content-type': MIME[extension] ?? 'application/octet-stream',
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff'
+  }
+  if (extension === '.html') {
+    // The Vite dev server bypasses this handler, so production gets the strict policy.
+    headers['content-security-policy'] = [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data:",
+      "font-src 'self' data:",
+      "connect-src 'none'",
+      "object-src 'none'",
+      "base-uri 'none'",
+      "form-action 'none'",
+      "frame-ancestors 'none'"
+    ].join('; ')
   }
   if (method === 'HEAD') return new Response(null, { status: 200, headers })
   return net.fetch(pathToFileURL(target).toString()).then(

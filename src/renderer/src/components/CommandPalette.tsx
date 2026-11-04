@@ -22,7 +22,7 @@ import {
 import { activeIdentity, useStore, type ViewId } from '../store'
 import { call } from '../lib/ipc'
 
-export type PaletteAction = 'open' | 'clone' | 'init' | 'new-branch' | 'new-tag' | 'new-worktree'
+export type PaletteAction = 'open' | 'clone' | 'init' | 'new-branch' | 'new-tag' | 'new-worktree' | 'push'
 
 interface PaletteCommand {
   id: string
@@ -105,17 +105,10 @@ export function CommandPalette({ action }: { action: (action: PaletteAction) => 
         },
         {
           id: 'push',
-          label: 'Push',
+          label: 'Push…',
           group: 'Git',
           icon: <CloudUpload size={15} />,
-          run: async () => {
-            await call('git.push', {
-              repoPath: repo.path,
-              identityId: activeIdentity()?.id,
-              accountId: detection.accountId,
-              setUpstream: true
-            })
-          }
+          run: () => action('push')
         },
         { id: 'new-branch', label: 'Create branch…', group: 'Git', icon: <GitBranch size={15} />, run: () => action('new-branch') },
         { id: 'new-tag', label: 'Create tag…', group: 'Git', icon: <Tag size={15} />, run: () => action('new-tag') },
