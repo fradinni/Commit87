@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.gitgrove.GitGrove</id>
+  <name>GitGrove</name>
+  <summary>Focused desktop Git client</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>
+      GitGrove is a fast desktop Git client built on the system Git binary. It manages
+      repositories, branches, worktrees, tags, releases and pipelines, and supports
+      multiple Git identities for commits and pushes.
+    </p>
+    <ul>
+      <li>Commit graph with staging, commit, amend and sign-off</li>
+      <li>Branches, tags, stashes and worktrees</li>
+      <li>Pull requests, releases and CI pipelines for GitHub, GitLab, Bitbucket and Gitea</li>
+      <li>Per-repository identity and per-forge account mapping</li>
+      <li>Built-in git console that runs git directly, without a shell</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">dev.gitgrove.GitGrove.desktop</launchable>
+  <url type="homepage">https://gitgrove.dev</url>
+  <url type="bugtracker">https://github.com/gitgrove/gitgrove/issues</url>
+  <developer_name>GitGrove Contributors</developer_name>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://gitgrove.dev/screenshots/graph.png</image>
+      <caption>Commit graph with staging and repository details</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://gitgrove.dev/screenshots/worktrees.png</image>
+      <caption>Side-by-side worktrees</caption>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="0.1.0" date="2026-11-04">
+      <description>
+        <p>First public preview: repositories, branches, worktrees, tags, stashes, releases, pipelines and multi-account identities.</p>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1"/>
+  <categories>
+    <category>Development</category>
+    <category>RevisionControl</category>
+  </categories>
+  <keywords>
+    <keyword>git</keyword>
+    <keyword>scm</keyword>
+    <keyword>version control</keyword>
+    <keyword>repository</keyword>
+    <keyword>branch</keyword>
+    <keyword>worktree</keyword>
+  </keywords>
+</component>

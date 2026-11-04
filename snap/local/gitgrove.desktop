@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=GitGrove
+GenericName=Git Client
+Comment=Manage repositories, branches, worktrees, releases and pipelines
+Exec=gitgrove %U
+Icon=${SNAP}/meta/gui/gitgrove.png
+Terminal=false
+Type=Application
+Categories=Development;RevisionControl;
+Keywords=git;scm;version control;repository;branch;worktree;
+StartupWMClass=GitGrove
+MimeType=x-scheme-handler/gitgrove;

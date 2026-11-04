@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+dist/
+*.tsbuildinfo
+
+# Logs and coverage
+*.log
+coverage/
+.vitest
+
+# Editors and OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local packaging scratch
+build/flatpak-build/
+build/flatpak-repo/
+flatpak/.flatpak-builder/
+snap/*.snap
+*.AppImage
+*.deb
+*.rpm
+*.pkg.tar.zst
+
+# Secrets and local overrides
+.env
+.env.*
+*.pem
+*.p12
+*.pfx

@@ -1,0 +1,262 @@
+# GitGrove
+
+**Git, without the noise.** A focused desktop Git client built on the Git you already
+have installed — repositories, branches, worktrees, tags, releases and pipelines, with
+per-repository identities and multi-forge accounts.
+
+![Launchpad](docs/screenshots/launchpad.png)
+
+## Why another Git client
+
+GitKraken proved the shape of a good desktop Git UI, but it is a large Electron
+application that bundles its own Git stack (NodeGit/libgit2), requires an account for much
+of its value, and ships a lot of surface area most teams never touch. GitGrove is a
+**clean-room, deliberately smaller** take on the same idea:
+
+- **System Git, not a re-implementation.** Every operation is a real `git` invocation, so
+  hooks, filters, LFS, GPG signing, SSH config, `includeIf` identities, submodules and
+  `git` behaviour you already rely on keep working.
+- **Multi-account by design.** Keep several identities (name/email/SSH key/GPG key) and
+  several forge accounts, then bind them per repository, per remote or per push.
+- **Focused scope.** Repos, code review, worktrees, tags, releases and actions — no
+  boards, no AI chat panel, no issue tracker, no wiki.
+- **Auditable and portable.** Tokens live in the OS credential store when available, the
+  renderer is sandboxed with a strict CSP, and the git console cannot spawn a shell.
+
+## Features
+
+### Repositories and code
+
+| Area | What you get |
+| --- | --- |
+| Repositories | Open, clone (HTTPS/SSH, shallow, bare), init, recent list with pinning |
+| Commit graph | Lane layout, refs and tags, search, branch filter, load more, commit details |
+| History actions | Branch here, tag here, cherry-pick, revert, reset (soft/mixed/hard), detached checkout |
+| Staging | Staged / modified / untracked / conflicted groups, per-file stage, discard with undo |
+| Commits | Amend, sign-off, `--allow-empty`, identity override per commit, Ctrl/Cmd+Enter |
+| Code browsing | Worktree and `HEAD` file tree, syntax highlighting, blame, open in OS editor |
+| Diffs | Unified diffs with per-file stats, binary detection, rename detection |
+
+![Commit graph](docs/screenshots/commit-graph.png)
+![Staging](docs/screenshots/staging.png)
+
+### Branches, worktrees and refs
+
+- Local and remote branches with upstream and ahead/behind counts
+- Checkout, create, rename, delete (with optional remote delete), set upstream
+- Merge (`--no-ff`, `--ff-only`, squash) and rebase onto any branch
+- Conflict-aware status bar with **Continue**, **Skip** and **Abort** for merge, rebase,
+  cherry-pick, revert and `git am`
+- Worktrees: add from a branch or a new branch, open side by side, lock/unlock with a
+  reason, prune, force-remove
+- Tags: annotated or lightweight, push to a remote, delete locally and remotely
+- Stashes: push (with untracked), apply, pop, drop
+
+![Worktrees](docs/screenshots/worktrees.png)
+
+### Forge integrations
+
+| Forge | Pull requests | Releases | Pipelines / actions |
+| --- | --- | --- | --- |
+| GitHub / GitHub Enterprise | yes | yes | Actions (list, dispatch) |
+| GitLab (self-hosted included) | merge requests | yes | CI pipelines |
+| Bitbucket Cloud | yes | — (API has none) | Pipelines |
+| Gitea / Forgejo | yes | yes | Actions (tasks + dispatch) |
+
+- Detect the forge from any remote URL (HTTPS, `ssh://`, `git@host:owner/repo`)
+- Match a configured account to the remote host, or pin one per repository
+- Check out a pull request locally (`refs/pull/N/head`, GitLab merge refs, or the source
+  branch on Bitbucket/Gitea) into `pr-N`
+- Create pull requests, create and delete releases, dispatch workflows and follow runs
+- Never touches the network from the renderer: all API traffic runs in the main process
+
+### Identity management
+
+- Unlimited identities: label, name, email, optional SSH key and GPG key/signing
+- Default identity plus per-repository override and per-account binding
+- Every commit, merge, cherry-pick, revert, tag and stash records the selected identity
+- Pushes authenticate with the selected integration account through an ephemeral
+  credential helper — tokens never appear in `argv` or in the process list
+
+### Built for the keyboard
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl/Cmd + K` | Command palette (commands, branches, recent repositories) |
+| `Ctrl/Cmd + J` | Toggle the git console |
+| `Ctrl/Cmd + O` | Open repository |
+| `Ctrl/Cmd + Shift + O` | Clone repository |
+| `Ctrl/Cmd + R` | Refresh repository |
+| `Ctrl/Cmd + Enter` | Commit from the message box |
+
+The git console runs **only git commands, without a shell**, validates subcommands
+against an allow-list, and blocks `-c`, `--git-dir`, alias definitions, `--exec` and
+`submodule foreach`.
+
+![Git console](docs/screenshots/git-console.png)
+![Command palette](docs/screenshots/command-palette.png)
+
+## Install
+
+Prebuilt packages are produced by CI for every target and architecture:
+
+| Platform | Formats |
+| --- | --- |
+| Linux | AppImage, `.deb` (Debian/Ubuntu/Mint), `.rpm` (Fedora/RHEL/openSUSE), `pacman` (Arch/Manjaro), `tar.gz`, Snap, Flatpak |
+| Windows | NSIS installer, portable `.exe`, `.zip` (x64 and arm64) |
+| macOS | `.dmg` and `.zip` (Intel x64 and Apple Silicon arm64) |
+
+### Linux
+
+```bash
+# Debian / Ubuntu
+sudo apt install ./GitGrove-0.1.0-amd64.deb
+
+# Fedora / RHEL
+sudo dnf install ./GitGrove-0.1.0-x86_64.rpm
+
+# Arch
+sudo pacman -U GitGrove-0.1.0-x86_64.pkg.tar.zst
+
+# Any distro, no install
+chmod +x GitGrove-0.1.0-linux-x86_64.AppImage
+./GitGrove-0.1.0-linux-x86_64.AppImage
+
+# Flatpak
+flatpak install --user GitGrove-0.1.0-x86_64.flatpak
+flatpak run dev.gitgrove.GitGrove
+
+# Snap
+sudo snap install --dangerous gitgrove_0.1.0_amd64.snap
+```
+
+Every Linux package depends on the system `git`; Flatpak and Snap additionally bundle
+Git, OpenSSH and CA certificates because their sandbox cannot use the host binaries.
+
+### Windows and macOS
+
+Download the installer (`.exe` for x64/arm64, `.dmg` for Intel/Apple Silicon) from the
+release page. Portable builds need no installation: the Windows portable `.exe` and the
+macOS `.zip` run in place. macOS builds are signed and notarized when the release secrets
+are configured.
+
+## Build from source
+
+Requirements: Node.js 20+ and Git 2.30+.
+
+```bash
+npm install
+npm run dev          # electron-vite dev server with HMR
+npm run typecheck    # strict TypeScript for main, preload and renderer
+npm test             # 42 unit and integration tests against real git
+npm run build        # production bundles in out/
+npm run pack:dir     # unpacked app in dist/linux-unpacked
+```
+
+Package the app:
+
+```bash
+npm run icons             # regenerate PNG/ICO/ICNS from build/icon.svg
+npm run build:linux       # AppImage, deb, rpm, pacman, tar.gz, snap
+npm run build:win         # NSIS, portable, zip
+npm run build:mac         # dmg, zip
+npm run dist:flatpak      # Flatpak bundle (needs flatpak-builder)
+npm run dist:snap         # Snap (needs snapcraft)
+python3 scripts/package-linux.py deb rpm pacman   # no-fpm fallback packager
+```
+
+Do not use `--publish always` for a dry run; pass `--publish never` as CI does.
+
+## Architecture
+
+```
+src/
+├─ main/                      Electron main process (Node, full privileges)
+│  ├─ index.ts                lifecycle, single instance, deep links
+│  ├─ window.ts               hardened BrowserWindow, navigation guards
+│  ├─ protocol.ts             gitgrove:// app scheme (no file:// renderer)
+│  ├─ menu.ts                 native menu
+│  ├─ store.ts                config + encrypted secrets, repo defaults
+│  ├─ tasks.ts                streaming git tasks, console allow-list
+│  ├─ git/
+│  │  ├─ runner.ts            spawn wrapper, identity and credential env
+│  │  ├─ parsers.ts           porcelain v2, log, refs, worktrees, blame
+│  │  └─ repo.ts              typed operations over system git
+│  ├─ providers/              GitHub, GitLab, Bitbucket, Gitea clients
+│  └─ ipc/router.ts           one validated channel table, no dynamic IPC
+├─ preload/index.ts           contextBridge surface (invoke + events)
+├─ shared/                    types and the typed IPC contract
+└─ renderer/                  React 19 UI (sandboxed, no Node access)
+   └─ src/{components,views,lib,styles}
+```
+
+**Process boundaries.** The renderer never sees a token, a path outside the chosen repo,
+or a `child_process`. It calls a single `gitgrove:invoke` channel with a discriminated
+envelope; the router re-validates every argument, resolves identity/account permissions
+and returns either a value or a sanitized error.
+
+**Git execution.** `git/runner.ts` spawns Git with `shell: false`,
+`GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=true`, `GIT_SEQUENCE_EDITOR=true` and a non-parsing
+`--no-pager` baseline. Long operations (clone/fetch/pull/push/console) stream stdout and
+stderr line by line through `TaskManager`, which redacts known secrets before sending
+anything to the renderer.
+
+**Identity and credentials.** `buildIdentityEnv` exports `GIT_AUTHOR_*` / `GIT_COMMITTER_*`
+and inline `-c user.*` values, and sets `GIT_SSH_COMMAND` for per-identity SSH keys.
+`buildAuthArgs` installs a throwaway credential helper that reads the username and token
+from the environment, so secrets never appear in `argv`, `ps`, shell history or task logs.
+
+**Renderer serving.** The production renderer is served by a privileged `gitgrove://`
+scheme instead of `file://`. That allows `grantFileProtocolExtraPrivileges: false` and
+`onlyLoadAppFromAsar: true` while keeping ES modules and a strict CSP working.
+
+See [docs/architecture.md](docs/architecture.md) for the full design and data flow.
+
+## Security model
+
+- `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`, no `webview`
+- Strict CSP: no remote script, no inline script, no `unsafe-eval`, `object-src 'none'`
+- Navigation and `window.open` are blocked; http(s) links open in the system browser
+- Tokens encrypted with Electron `safeStorage` (OS keychain) when available; otherwise
+  stored in `secrets.json` with mode `0600` and clearly reported in Settings
+- IPC accepts only the known channel table and only from the main window's webContents
+- Git console: git-only, allow-listed subcommands, no shell, no config writes
+- Path traversal is rejected for every file, worktree and repository argument
+- Electron fuses disable `runAsNode`, `NODE_OPTIONS`, CLI inspect and extra `file://`
+  privileges, and enable ASAR integrity validation
+
+Report vulnerabilities via [SECURITY.md](SECURITY.md).
+
+## Reverse engineering and provenance
+
+GitGrove was designed after a **static analysis of the shipped GitKraken 12.6.1 Flatpak**
+using REA: ASAR inventory, Electron fuse inspection, JavaScript application graph,
+child-process and credential-handling relationships, and the bundled string catalogue.
+No GitKraken code, assets, icons, copy or data files were copied. Findings and the
+resulting design decisions are documented in
+[docs/reverse-engineering.md](docs/reverse-engineering.md).
+
+## Project layout
+
+```
+docs/                architecture, reverse engineering, packaging, testing
+build/               icons, installer and entitlement resources
+scripts/             icon generation, version sync, Flatpak/Snap/deb/rpm/pacman helpers
+flatpak/ snap/       native manifests
+src/                 application source (see above)
+tests/               vitest suites (parsers, providers, git integration, security)
+```
+
+## Roadmap
+
+- [ ] Interactive rebase editor (todo list, squash, reword) inside the app
+- [ ] Submodule management UI
+- [ ] Git LFS status and pull/prune actions
+- [ ] Diff review comments and inline PR review
+- [ ] Multiple simultaneous repository tabs (state is already per-repository)
+- [ ] Auto-update channels for AppImage, NSIS and DMG
+- [ ] Windows ARM64 native ARM build validation on hardware
+
+## License
+
+MIT — see [LICENSE](LICENSE).

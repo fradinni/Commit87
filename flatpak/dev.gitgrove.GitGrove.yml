@@ -1,0 +1,68 @@
+app-id: dev.gitgrove.GitGrove
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+base: org.electronjs.Electron2.BaseApp
+base-version: '24.08'
+command: gitgrove-run
+separate-locales: false
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --device=dri
+  - --filesystem=home
+  - --filesystem=/media
+  - --filesystem=/run/media
+  - --filesystem=xdg-run/gnupg:ro
+  - --filesystem=~/.ssh:ro
+  - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.gnome.keyring
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --env=GITGROVE_FLATPAK=1
+
+modules:
+  - name: git
+    buildsystem: simple
+    build-commands:
+      - ./configure --prefix=/app --with-openssl --with-curl --with-expat --with-zlib --without-tcltk --without-perl --without-python
+      - make -j"${FLATPAK_BUILDER_N_JOBS:-4}"
+      - make install
+    sources:
+      - type: archive
+        url: https://mirrors.edge.kernel.org/pub/software/scm/git/git-2.51.2.tar.xz
+        sha256: 233d7143a2d58e60755eee9b76f559ec73ea2b3c297f5b503162ace95966b4e3
+        x-checker-data:
+          type: anitya
+          project-id: 5350
+          url-template: https://mirrors.edge.kernel.org/pub/software/scm/git/git-$version.tar.xz
+
+  - name: gitgrove
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 gitgrove.sh /app/bin/gitgrove-run
+      - cp -r gitgrove /app/gitgrove
+      - install -Dm644 icons/512x512.png /app/share/icons/hicolor/512x512/apps/dev.gitgrove.GitGrove.png
+      - install -Dm644 icons/128x128.png /app/share/icons/hicolor/128x128/apps/dev.gitgrove.GitGrove.png
+      - install -Dm644 icons/64x64.png /app/share/icons/hicolor/64x64/apps/dev.gitgrove.GitGrove.png
+      - install -Dm644 dev.gitgrove.GitGrove.desktop /app/share/applications/dev.gitgrove.GitGrove.desktop
+      - install -Dm644 dev.gitgrove.GitGrove.metainfo.xml /app/share/metainfo/dev.gitgrove.GitGrove.metainfo.xml
+      - install -Dm644 LICENSE /app/share/licenses/dev.gitgrove.GitGrove/LICENSE
+    sources:
+      - type: file
+        path: gitgrove.sh
+      - type: file
+        path: dev.gitgrove.GitGrove.desktop
+      - type: file
+        path: dev.gitgrove.GitGrove.metainfo.xml
+      - type: dir
+        path: ../dist/linux-unpacked
+        dest: gitgrove
+      - type: dir
+        path: ../build/icons
+        dest: icons
+      - type: file
+        path: ../LICENSE

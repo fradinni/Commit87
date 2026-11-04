@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: Publish as a draft release
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Publish ${{ matrix.target }} (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux
+            arch: x64
+            runner: ubuntu-24.04
+          - target: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - target: win
+            arch: x64
+            runner: windows-2022
+          - target: win
+            arch: arm64
+            runner: windows-2022
+          - target: mac
+            arch: x64
+            runner: macos-13
+          - target: mac
+            arch: arm64
+            runner: macos-14
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/sync-version.mjs "${GITHUB_REF_NAME#v}"
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+      - run: npm test
+      - name: Build and publish
+        run: npx electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_LINK: ${{ matrix.target == 'mac' && secrets.MAC_CERT_P12 || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.target == 'mac' && secrets.MAC_CERT_PASSWORD || '' }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WIN_CSC_LINK: ${{ matrix.target == 'win' && secrets.WIN_CERT_P12 || '' }}
+          WIN_CSC_KEY_PASSWORD: ${{ matrix.target == 'win' && secrets.WIN_CERT_PASSWORD || '' }}
+
+  flatpak:
+    name: Flatpak bundle
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: sudo apt-get update && sudo apt-get install -y flatpak flatpak-builder
+      - run: bash scripts/build-flatpak.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak
+          path: dist/*.flatpak

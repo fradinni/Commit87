@@ -1,0 +1,107 @@
+app: gitgrove
+base: core24
+version: '0.1.0'
+summary: Focused desktop Git client
+description: |
+  GitGrove is a fast desktop Git client built on the system Git binary.
+  It manages repositories, branches, worktrees, tags, releases and
+  pipelines, and supports multiple Git identities for commits and pushes.
+
+  * Commit graph with staging, commit, amend and sign-off
+  * Branches, tags, stashes and worktrees
+  * Pull requests, releases and CI pipelines for GitHub, GitLab,
+    Bitbucket and Gitea
+  * Per-repository identity and per-forge account mapping
+  * Built-in git console that runs git directly (no shell)
+
+grade: stable
+confinement: strict
+compression: lzo
+icon: build/icon.png
+license: MIT
+website: https://gitgrove.dev
+source-code: https://github.com/gitgrove/gitgrove
+issues: https://github.com/gitgrove/gitgrove/issues
+
+platform:
+  amd64:
+    build-on: [amd64]
+    build-for: [amd64]
+  arm64:
+    build-on: [arm64]
+    build-for: [arm64]
+
+plugs:
+  password-manager-service:
+  ssh-keys:
+  home:
+  removable-media:
+
+apps:
+  gitgrove:
+    command: command.sh
+    desktop: share/applications/gitgrove.desktop
+    extensions: [gnome]
+    plugs:
+      - home
+      - removable-media
+      - password-manager-service
+      - ssh-keys
+      - network
+      - network-bind
+      - unity7
+      - gsettings
+      - desktop
+      - desktop-legacy
+      - wayland
+      - x11
+      - browser-support
+      - libsecret
+
+parts:
+  gitgrove:
+    plugin: dump
+    source: dist/linux-unpacked
+    source-type: local
+    stage-packages:
+      - git
+      - git-lfs
+      - openssh-client
+      - ca-certificates
+      - libsecret-1-0
+    organize:
+      gitgrove: usr/lib/gitgrove/gitgrove
+      resources: usr/lib/gitgrove/resources
+      locales: usr/lib/gitgrove/locales
+      chrome_100_percent.pak: usr/lib/gitgrove/chrome_100_percent.pak
+      chrome_200_percent.pak: usr/lib/gitgrove/chrome_200_percent.pak
+      icudtl.dat: usr/lib/gitgrove/icudtl.dat
+      resources.pak: usr/lib/gitgrove/resources.pak
+      snapshot_blob.bin: usr/lib/gitgrove/snapshot_blob.bin
+      v8_context_snapshot.bin: usr/lib/gitgrove/v8_context_snapshot.bin
+      libEGL.so: usr/lib/gitgrove/libEGL.so
+      libGLESv2.so: usr/lib/gitgrove/libGLESv2.so
+      libffmpeg.so: usr/lib/gitgrove/libffmpeg.so
+      libvk_swiftshader.so: usr/lib/gitgrove/libvk_swiftshader.so
+      libvulkan.so.1: usr/lib/gitgrove/libvulkan.so.1
+      vk_swiftshader_icd.json: usr/lib/gitgrove/vk_swiftshader_icd.json
+    prime:
+      - usr/lib/gitgrove
+      - usr/bin/git
+      - usr/lib/git-core
+      - usr/share/git-core
+      - usr/bin/git-lfs
+      - usr/bin/ssh
+      - usr/share/applications
+      - usr/share/icons
+  launcher:
+    plugin: dump
+    source: snap/local
+    organize:
+      command.sh: bin/command.sh
+      gitgrove.desktop: share/applications/gitgrove.desktop
+  icons:
+    plugin: dump
+    source: build/icons
+    organize:
+      '*.png': share/icons/hicolor/512x512/apps/

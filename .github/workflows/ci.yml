@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Typecheck, test and build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y git
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Upload renderer bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: built-app
+          path: out
+          retention-days: 7
+
+  package-linux:
+    name: Linux packages (${{ matrix.arch }})
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build AppImage, deb, rpm, pacman, tar.gz and snap
+        run: npx electron-builder --linux --${{ matrix.arch }} --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.rpm
+            dist/*.pacman
+            dist/*.tar.gz
+            dist/*.snap
+          retention-days: 14
+
+  package-windows:
+    name: Windows packages (${{ matrix.arch }})
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-2022
+          - arch: arm64
+            runner: windows-2022
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build NSIS, portable and zip
+        run: npx electron-builder --win --${{ matrix.arch }} --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.arch }}
+          path: |
+            dist/*.exe
+            dist/*.zip
+          retention-days: 14
+
+  package-macos:
+    name: macOS packages (${{ matrix.arch }})
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: macos-13
+          - arch: arm64
+            runner: macos-14
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build dmg and zip
+        run: npx electron-builder --mac --${{ matrix.arch }} --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+          retention-days: 14
