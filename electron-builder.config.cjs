@@ -8,6 +8,20 @@
  * Architecture is selected on the command line so CI can build each target on a
  * matching runner:  npx electron-builder --linux --arm64
  */
+const { existsSync } = require('node:fs')
+const { resolve } = require('node:path')
+
+// electron-builder packages whatever is already in `out/`; it does not build the
+// app. Fail early with a clear message instead of producing a broken ASAR that
+// only reports the missing entry file after packaging.
+const mainEntry = resolve(__dirname, 'out/main/index.js')
+if (!existsSync(mainEntry)) {
+  throw new Error(
+    `Missing ${mainEntry}. Run "npm run build" before invoking electron-builder ` +
+      '(or use "npm run build:linux", "npm run build:win", "npm run build:mac" or "npm run pack:dir").'
+  )
+}
+
 module.exports = {
   appId: 'dev.gitgrove.GitGrove',
   productName: 'GitGrove',

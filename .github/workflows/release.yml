@@ -43,13 +43,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: node scripts/sync-version.mjs "${GITHUB_REF_NAME#v}"
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
       - run: npm test
+      - run: npm run build
       - name: Build and publish
         run: npx electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish always
         env:
@@ -69,7 +70,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: sudo apt-get update && sudo apt-get install -y flatpak flatpak-builder
@@ -86,7 +87,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: sudo snap install snapcraft --classic
