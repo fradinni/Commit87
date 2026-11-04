@@ -54,8 +54,7 @@ module.exports = {
       { target: 'deb', arch: ['x64', 'arm64'] },
       { target: 'rpm', arch: ['x64', 'arm64'] },
       { target: 'pacman', arch: ['x64', 'arm64'] },
-      { target: 'tar.gz', arch: ['x64', 'arm64'] },
-      { target: 'snap', arch: ['x64', 'arm64'] }
+      { target: 'tar.gz', arch: ['x64', 'arm64'] }
     ],
     category: 'Development;RevisionControl',
     icon: 'build/icons',

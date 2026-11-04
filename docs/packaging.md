@@ -9,7 +9,7 @@
 | Linux | `.rpm` | x86_64, aarch64 | `electron-builder` or `scripts/package-linux.py` |
 | Linux | `pacman` `.pkg.tar.zst` | x86_64, aarch64 | `electron-builder` or `scripts/package-linux.py` |
 | Linux | `tar.gz` | x64, arm64 | `electron-builder` |
-| Linux | Snap | amd64, arm64 | `electron-builder` or `scripts/build-snap.sh` |
+| Linux | Snap | amd64, arm64 | `scripts/build-snap.sh` (CI `snap` job) |
 | Linux | Flatpak | x86_64, aarch64 | `scripts/build-flatpak.sh` |
 | Windows | NSIS `.exe` | x64, arm64 | `electron-builder` on `windows-2022` |
 | Windows | portable `.exe` | x64, arm64 | `electron-builder` |

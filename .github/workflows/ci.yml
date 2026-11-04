@@ -50,8 +50,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Build AppImage, deb, rpm, pacman, tar.gz and snap
-        run: npx electron-builder --linux --${{ matrix.arch }} --publish never
+      - name: Build AppImage, deb, rpm, pacman and tar.gz
+        run: |
+          sudo apt-get install -y fakeroot rpm
+          npx electron-builder --linux --${{ matrix.arch }} --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
@@ -63,7 +65,6 @@ jobs:
             dist/*.rpm
             dist/*.pacman
             dist/*.tar.gz
-            dist/*.snap
           retention-days: 14
 
   package-windows:
