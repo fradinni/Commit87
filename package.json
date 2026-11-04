@@ -21,7 +21,6 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint .",
     "build:linux": "npm run build && electron-builder --config electron-builder.config.cjs --linux",
     "build:win": "npm run build && electron-builder --config electron-builder.config.cjs --win",
     "build:mac": "npm run build && electron-builder --config electron-builder.config.cjs --mac",
@@ -54,5 +53,6 @@
   },
   "engines": {
     "node": ">=20"
-  }
+  },
+  "desktopName": "gitgrove.desktop"
 }

@@ -15,6 +15,7 @@
 | Windows | portable `.exe` | x64, arm64 | `electron-builder` |
 | Windows | `.zip` | x64, arm64 | `electron-builder` |
 | macOS | `.dmg` | x64, arm64 | `electron-builder` on `macos-13` / `macos-14` |
+| macOS | `.pkg` | x64, arm64 | `electron-builder` |
 | macOS | `.zip` | x64, arm64 | `electron-builder` |
 
 Artifacts land in `dist/`. CI uploads them per runner

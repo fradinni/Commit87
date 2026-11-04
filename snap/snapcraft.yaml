@@ -61,7 +61,7 @@ apps:
 parts:
   gitgrove:
     plugin: dump
-    source: dist/linux-unpacked
+    source: ../dist/linux-unpacked
     source-type: local
     stage-packages:
       - git

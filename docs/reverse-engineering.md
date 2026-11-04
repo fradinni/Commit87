@@ -61,6 +61,20 @@ GitGrove flips the security-relevant ones: `runAsNode: false`,
 `enableCookieEncryption: true`. Disabling the `file://` privileges is why GitGrove serves
 its renderer from a privileged `gitgrove://` scheme instead of `file://`.
 
+The final packaged binary was re-inspected with the same REA fuse reader to confirm the
+result (SHA-256 `ec93fc9f…095b4`, sentinel at offset 31 318 896):
+
+| Fuse | GitKraken 12.6.1 | GitGrove 0.1.0 |
+| --- | --- | --- |
+| `RunAsNode` | enabled | **disabled** |
+| `EnableCookieEncryption` | disabled | **enabled** |
+| `EnableNodeOptionsEnvironmentVariable` | enabled | **disabled** |
+| `EnableNodeCliInspectArguments` | disabled | disabled |
+| `EnableEmbeddedAsarIntegrityValidation` | disabled | **enabled** |
+| `OnlyLoadAppFromAsar` | disabled | **enabled** |
+| `GrantFileProtocolExtraPrivileges` | enabled | **disabled** |
+| `WasmTrapHandlers` | disabled | enabled (Electron 41 default) |
+
 ### 3. Credential handling: askpass over a local socket
 
 `src/js/redux/domain/AskPass/AskPass.sh` and `AskPassClient.js` were extracted from the

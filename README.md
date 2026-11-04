@@ -104,7 +104,7 @@ Prebuilt packages are produced by CI for every target and architecture:
 | --- | --- |
 | Linux | AppImage, `.deb` (Debian/Ubuntu/Mint), `.rpm` (Fedora/RHEL/openSUSE), `pacman` (Arch/Manjaro), `tar.gz`, Snap, Flatpak |
 | Windows | NSIS installer, portable `.exe`, `.zip` (x64 and arm64) |
-| macOS | `.dmg` and `.zip` (Intel x64 and Apple Silicon arm64) |
+| macOS | `.dmg`, `.pkg` and `.zip` (Intel x64 and Apple Silicon arm64) |
 
 ### Linux
 

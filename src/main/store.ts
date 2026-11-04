@@ -360,8 +360,10 @@ export class AppStore {
       for (const account of this.config.integrations) {
         if (provider && account.provider !== provider) continue
         try {
-          const accountHost = new URL(account.baseUrl.includes('://') ? account.baseUrl : `https://${account.baseUrl}`).hostname
-          if (accountHost.toLowerCase() === hostLower) return account
+          const accountHost = new URL(account.baseUrl.includes('://') ? account.baseUrl : `https://${account.baseUrl}`).hostname.toLowerCase()
+          if (accountHost === hostLower) return account
+          if (account.provider === 'github' && accountHost === 'api.github.com' && hostLower === 'github.com') return account
+          if (account.provider === 'bitbucket' && accountHost === 'api.bitbucket.org' && hostLower === 'bitbucket.org') return account
         } catch {
           // ignore
         }
