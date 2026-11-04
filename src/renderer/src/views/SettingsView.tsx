@@ -628,9 +628,9 @@ function RepositorySettings({ repoDefaults }: { repoDefaults: ReturnType<typeof 
   const [entries, setEntries] = useState<Array<{ key: string; value: string; scope: string }>>([])
 
   useEffect(() => {
-    if (!repo) return
+    if (!repo?.path) return
     void call('git.config', { path: repo.path }).then((list) => setEntries(list.slice(0, 40))).catch(notifyError)
-  }, [notifyError, repo])
+  }, [notifyError, repo?.path])
 
   if (!repo) {
     return <EmptyState icon={<GitBranch size={20} />} title="No repository open" description="Open a repository to configure its identity and forge mapping." />

@@ -149,7 +149,7 @@ export function CommandPalette({ action }: { action: (action: PaletteAction) => 
       })
     }
     return items
-  }, [action, branches, detection.accountId, openRepo, recent, repo, setView, toggleConsole])
+  }, [action, branches, detection.accountId, openRepo, recent, repo?.path, setView, toggleConsole])
 
   const filtered = useMemo(() => {
     const term = query.trim().toLowerCase()

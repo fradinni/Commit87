@@ -119,16 +119,17 @@ export function App() {
   useEffect(() => {
     if (!repo || !config?.autoFetchOnOpen) return
     if (fetchedFor.current === repo.path) return
-    fetchedFor.current = repo.path
+    const repoPath = repo.path
+    fetchedFor.current = repoPath
     const timer = window.setTimeout(() => {
       void call('git.fetch', {
-        repoPath: repo.path,
+        repoPath,
         prune: true,
         accountId: useStore.getState().detection.accountId
       }).catch(() => undefined)
     }, 800)
     return () => window.clearTimeout(timer)
-  }, [config?.autoFetchOnOpen, repo])
+  }, [config?.autoFetchOnOpen, repo?.path])
 
   useEffect(() => {
     if (!repo) return undefined
@@ -138,7 +139,7 @@ export function App() {
       }
     }, 5000)
     return () => window.clearInterval(timer)
-  }, [repo])
+  }, [repo?.path])
 
   const pickAndOpen = useCallback(async (): Promise<void> => {
     const chosen = await call('app.pickDirectory', { title: 'Open a Git repository' })
@@ -157,7 +158,8 @@ export function App() {
     }
     setBusy(true)
     try {
-      const target = `${cloneParent.replace(/[\\/]+$/, '')}/${cloneName || deriveName(cloneUrl)}`
+      const folderName = (cloneName.trim() || deriveName(cloneUrl)).replace(/[\\/:*?"<>|]/g, '-')
+      const target = `${cloneParent.replace(/[\\/]+$/, '')}/${folderName}`
       await call('repo.clone', {
         url: cloneUrl.trim(),
         directory: cloneParent,

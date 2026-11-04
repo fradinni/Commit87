@@ -29,6 +29,7 @@ type FilesTab = 'changes' | 'browse'
 
 export function FilesView() {
   const repo = useStore((state) => state.currentRepo)
+  const repoPath = repo?.path ?? ''
   const status = useStore((state) => state.status)
   const repoDefaults = useStore((state) => state.repoDefaults)
   const notify = useStore((state) => state.notify)
@@ -68,18 +69,18 @@ export function FilesView() {
 
   const loadDiff = useCallback(
     async (file: StatusFile) => {
-      if (!repo) return
+      if (!repoPath) return
       setDiffLoading(true)
       setDiff(null)
       try {
         const result = await call('git.diff', {
-          repoPath: repo.path,
+          repoPath,
           path: file.path,
           staged: file.stage === 'staged'
         })
         setDiff(result)
         if (file.stage === 'untracked') {
-          const content = await call('git.fileContent', { path: repo.path, file: file.path, from: 'worktree' })
+          const content = await call('git.fileContent', { path: repoPath, file: file.path, from: 'worktree' })
           setFileContent(content)
         }
       } catch (error) {
@@ -88,21 +89,26 @@ export function FilesView() {
         setDiffLoading(false)
       }
     },
-    [notifyError, repo]
+    [notifyError, repoPath]
   )
 
+  const selectedStage = selectedStatus?.stage
   useEffect(() => {
     if (!selectedFile) return
-    const file = status?.files.find((item) => item.path === selectedFile)
+    const file = useStore.getState().status?.files.find((item) => item.path === selectedFile)
     if (file) void loadDiff(file)
-  }, [loadDiff, selectedFile, status?.files])
+    else {
+      setDiff(null)
+      setFileContent(null)
+    }
+  }, [loadDiff, selectedFile, selectedStage])
 
   const loadTree = useCallback(
     async (dir = '') => {
-      if (!repo) return
+      if (!repoPath) return
       setTreeLoading(true)
       try {
-        const entries = await call('git.fileTree', { path: repo.path, dir })
+        const entries = await call('git.fileTree', { path: repoPath, dir })
         setTree((current) => ({ ...current, [dir]: entries }))
       } catch (error) {
         notifyError(error)
@@ -110,11 +116,11 @@ export function FilesView() {
         setTreeLoading(false)
       }
     },
-    [notifyError, repo]
+    [notifyError, repoPath]
   )
 
   useEffect(() => {
-    if (!repo) return
+    if (!repoPath) return
     setTree({})
     setExpanded(new Set())
     setBrowseFile(null)
@@ -123,17 +129,17 @@ export function FilesView() {
     setSelectedFile(null)
     setDiff(null)
     if (tab === 'browse') void loadTree('')
-  }, [repo?.path, tab, loadTree])
+  }, [repoPath, tab, loadTree])
 
   const loadFile = useCallback(
     async (file: string) => {
-      if (!repo) return
+      if (!repoPath) return
       setBrowseFile(file)
       setBlame(null)
       setContentLoading(true)
       try {
         const content = await call('git.fileContent', {
-          path: repo.path,
+          path: repoPath,
           file,
           from: browseFrom,
           commit: browseFrom === 'head' ? 'HEAD' : undefined
@@ -145,7 +151,7 @@ export function FilesView() {
         setContentLoading(false)
       }
     },
-    [browseFrom, notifyError, repo]
+    [browseFrom, notifyError, repoPath]
   )
 
   useEffect(() => {
@@ -226,6 +232,9 @@ export function FilesView() {
       })
       setMessage('')
       setAmend(false)
+      setSelectedFile(null)
+      setDiff(null)
+      setFileContent(null)
       await refreshAll()
       notify('Commit created', 'success')
     } catch (error) {

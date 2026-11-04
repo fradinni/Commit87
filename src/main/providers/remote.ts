@@ -109,11 +109,11 @@ export function providerFromHost(host: string | undefined, accounts: Integration
 export function webUrlFor(provider: ProviderId | undefined, host: string, owner: string, repo: string): string {
   switch (provider) {
     case 'github':
-      return `https://github.com/${owner}/${repo}`
+      return host === 'github.com' ? `https://github.com/${owner}/${repo}` : `https://${host}/${owner}/${repo}`
     case 'gitlab':
       return `https://${host}/${owner}/${repo}`
     case 'bitbucket':
-      return `https://bitbucket.org/${owner}/${repo}`
+      return host === 'bitbucket.org' ? `https://bitbucket.org/${owner}/${repo}` : `https://${host}/${owner}/${repo}`
     case 'gitea':
       return `https://${host}/${owner}/${repo}`
     default:

@@ -94,6 +94,7 @@ export function GraphView() {
     setDiff(null)
     setDiffFile(null)
     const sha = selectedCommit
+    const repoPath = repo.path
     if (!sha) {
       setDetail(null)
       setDiffLoading(false)
@@ -102,8 +103,8 @@ export function GraphView() {
     const cached = commits.find((commit) => commit.sha === sha) ?? null
     setDetail(cached)
     void Promise.all([
-      call('git.commitDetail', { path: repo.path, sha }),
-      call('git.diff', { repoPath: repo.path, commit: sha })
+      call('git.commitDetail', { path: repoPath, sha }),
+      call('git.diff', { repoPath, commit: sha })
     ])
       .then(([commit, result]) => {
         if (cancelled) return
@@ -119,7 +120,7 @@ export function GraphView() {
     return () => {
       cancelled = true
     }
-  }, [commits, notifyError, repo, selectedCommit])
+  }, [notifyError, repo?.path, selectedCommit])
 
   if (!repo) return null
 

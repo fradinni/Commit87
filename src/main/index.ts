@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { EventEmitter } from 'node:events'
+import { statSync } from 'node:fs'
 import path from 'node:path'
 import { IPC_INVOKE, IPC_MENU, IPC_TASK_EVENT } from '@shared/ipc'
 import type { IpcChannel, IpcEnvelope } from '@shared/ipc'
@@ -37,15 +38,22 @@ function parseLaunchTarget(argv: string[], cwd: string): string | null {
         const url = new URL(raw)
         const fromQuery = url.searchParams.get('path') || url.searchParams.get('repo')
         if (fromQuery) return decodeURIComponent(fromQuery)
-        const pathname = decodeURIComponent(url.pathname.replace(/^\/+/, ''))
-        if (pathname) return pathname
+        let pathname = decodeURIComponent(url.pathname)
+        if (pathname && pathname !== '/') {
+          if (/^\/[A-Za-z]:/.test(pathname)) pathname = pathname.slice(1)
+          return pathname
+        }
       } catch {
         // ignore malformed deep links
       }
       continue
     }
-    if (path.isAbsolute(raw) && !raw.startsWith(process.execPath)) {
-      return raw
+    if (!path.isAbsolute(raw)) continue
+    if (raw === app.getAppPath() || raw.endsWith('/out/main/index.js')) continue
+    try {
+      if (statSync(raw).isDirectory()) return raw
+    } catch {
+      // not an existing directory; ignore
     }
     void cwd
   }
