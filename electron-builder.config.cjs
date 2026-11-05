@@ -174,7 +174,12 @@ module.exports = {
       provider: 'github',
       owner: 'fradinni',
       repo: 'Commit87',
-      releaseType: 'draft'
+      // Pre-release tags (v1.2.0-beta.1) publish beta.yml and are marked as a
+      // GitHub pre-release, so /releases/latest keeps pointing at the last
+      // stable release. Stable tags stay drafts until a maintainer publishes.
+      releaseType: process.env.COMMIT87_RELEASE_CHANNEL === 'beta' ? 'prerelease' : 'draft',
+      // The release workflow sets COMMIT87_RELEASE_CHANNEL from the tag.
+      channel: process.env.COMMIT87_RELEASE_CHANNEL === 'beta' ? 'beta' : 'latest'
     }
   ]
 }

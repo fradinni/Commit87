@@ -1,0 +1,613 @@
+import { describe, expect, it, vi } from 'vitest'
+import type { UpdateChannel, UpdateProgress, UpdateStatus } from '../src/shared/types'
+import type { UpdateAdapter, UpdateDownloadTask, UpdateInfoSummary, UpdatePreferences } from '../src/main/updates'
+import { UpdateService, normalizeProgress, versionMatchesChannel } from '../src/main/updates'
+import { detectUpdateSupport } from '../src/main/update-support'
+import type { UpdateEnvironment } from '../src/main/update-support'
+
+const info: UpdateInfoSummary = {
+  version: '0.2.0',
+  releaseDate: '2026-11-05T10:00:00.000Z',
+  releaseNotes: '## 0.2.0\n\n- Updates land in place'
+}
+
+class FakeAdapter implements UpdateAdapter {
+  channel: UpdateChannel = 'stable'
+  autoDownload = true
+  autoInstallOnAppQuit = false
+  allowDowngrade = false
+  checks = 0
+  downloads = 0
+  installs = 0
+  checkResult: UpdateInfoSummary | null = info
+  downloadError: Error | null = null
+  private emitEvents = true
+  private checkGate: Promise<void> | null = null
+  private readonly checking: Array<() => void> = []
+  private readonly available: Array<(value: UpdateInfoSummary) => void> = []
+  private readonly notAvailable: Array<() => void> = []
+  private readonly progress: Array<(value: UpdateProgress) => void> = []
+  private readonly downloaded: Array<(value: UpdateInfoSummary) => void> = []
+  private readonly errors: Array<(error: Error) => void> = []
+
+  setChannel(channel: UpdateChannel): void {
+    this.channel = channel
+    // Real electron-updater forces allowDowngrade on every channel change; the
+    // service must correct it afterwards.
+    this.allowDowngrade = true
+  }
+
+  setAutoDownload(value: boolean): void {
+    this.autoDownload = value
+  }
+
+  setAutoInstallOnAppQuit(value: boolean): void {
+    this.autoInstallOnAppQuit = value
+  }
+
+  setAllowDowngrade(value: boolean): void {
+    this.allowDowngrade = value
+  }
+
+  setSilent(value: boolean): void {
+    this.emitEvents = value
+  }
+
+  holdCheck(): () => void {
+    let release = (): void => undefined
+    this.checkGate = new Promise((resolve) => {
+      release = resolve
+    })
+    return release
+  }
+
+  async check(): Promise<UpdateInfoSummary | null> {
+    this.checks += 1
+    if (this.checkGate) await this.checkGate
+    if (this.emitEvents) this.checking.forEach((listener) => listener())
+    if (this.emitEvents) {
+      if (this.checkResult) this.available.forEach((listener) => listener(this.checkResult as UpdateInfoSummary))
+      else this.notAvailable.forEach((listener) => listener())
+    }
+    return this.checkResult
+  }
+
+  download(): UpdateDownloadTask {
+    return { promise: this.runDownload(), cancel: () => undefined }
+  }
+
+  private async runDownload(): Promise<void> {
+    this.downloads += 1
+    if (this.downloadError) {
+      this.errors.forEach((listener) => listener(this.downloadError as Error))
+      throw this.downloadError
+    }
+    if (this.emitEvents) {
+      this.progress.forEach((listener) =>
+        listener({ percent: 42.5, transferred: 425, total: 1000, bytesPerSecond: 2048 })
+      )
+      this.downloaded.forEach((listener) => listener(info))
+    }
+  }
+
+  emittingTask(): UpdateDownloadTask {
+    return { promise: this.runDownload(), cancel: () => undefined }
+  }
+
+  startDownload(): { task: UpdateDownloadTask; release: () => void } {
+    let release = (): void => undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let cancelled = false
+    const task: UpdateDownloadTask = {
+      promise: (async () => {
+        await gate
+        if (cancelled) throw new Error('cancelled')
+        await this.runDownload()
+      })(),
+      cancel: () => {
+        cancelled = true
+        release()
+      }
+    }
+    return { task, release }
+  }
+
+  quitAndInstall(): void {
+    this.installs += 1
+  }
+
+  onChecking(listener: () => void): void {
+    this.checking.push(listener)
+  }
+
+  onAvailable(listener: (value: UpdateInfoSummary) => void): void {
+    this.available.push(listener)
+  }
+
+  onNotAvailable(listener: () => void): void {
+    this.notAvailable.push(listener)
+  }
+
+  onProgress(listener: (value: UpdateProgress) => void): void {
+    this.progress.push(listener)
+  }
+
+  onDownloaded(listener: (value: UpdateInfoSummary) => void): void {
+    this.downloaded.push(listener)
+  }
+
+  onError(listener: (error: Error) => void): void {
+    this.errors.push(listener)
+  }
+
+  triggerError(error: Error): void {
+    this.errors.forEach((listener) => listener(error))
+  }
+
+  triggerProgress(progress: UpdateProgress): void {
+    this.progress.forEach((listener) => listener(progress))
+  }
+
+  triggerDownloaded(value: UpdateInfoSummary): void {
+    this.downloaded.forEach((listener) => listener(value))
+  }
+
+  triggerAvailable(value: UpdateInfoSummary): void {
+    this.available.forEach((listener) => listener(value))
+  }
+}
+
+const packaged: UpdateEnvironment = { platform: 'linux', isPackaged: true, appImage: '/tmp/Commit87.AppImage' }
+
+function setup(options: { preferences?: Partial<UpdatePreferences>; environment?: UpdateEnvironment; version?: string } = {}) {
+  const adapter = new FakeAdapter()
+  const preferences: UpdatePreferences = {
+    channel: options.preferences?.channel ?? 'stable',
+    autoCheck: options.preferences?.autoCheck ?? false
+  }
+  const seen: UpdateStatus[] = []
+  const service = new UpdateService({
+    adapter,
+    environment: options.environment ?? packaged,
+    version: options.version ?? '0.1.0',
+    preferences: () => preferences,
+    onChange: (status) => seen.push(status),
+    autoCheckDelayMs: 1000
+  })
+  return { adapter, preferences, seen, service }
+}
+
+describe('update support detection', () => {
+  it('allows packaged AppImage, NSIS and macOS bundles only', () => {
+    expect(detectUpdateSupport(packaged)).toEqual({ supported: true, format: 'appimage', reason: null })
+    expect(detectUpdateSupport({ platform: 'win32', isPackaged: true, windowsUninstaller: true })).toEqual({
+      supported: true,
+      format: 'nsis',
+      reason: null
+    })
+    expect(detectUpdateSupport({ platform: 'darwin', isPackaged: true })).toEqual({
+      supported: true,
+      format: 'dmg',
+      reason: null
+    })
+  })
+
+  it('explains why other builds are not updated in place', () => {
+    expect(detectUpdateSupport({ platform: 'linux', isPackaged: false }).supported).toBe(false)
+    expect(detectUpdateSupport({ platform: 'linux', isPackaged: true, flatpak: 'fr.fradinni.Commit87' }).reason).toContain(
+      'Flatpak'
+    )
+    expect(detectUpdateSupport({ platform: 'linux', isPackaged: true, snap: '/snap/commit87' }).reason).toContain('snapd')
+    expect(detectUpdateSupport({ platform: 'linux', isPackaged: true }).reason).toContain('AppImage')
+    expect(detectUpdateSupport({ platform: 'win32', isPackaged: true, portable: 'C:\\Commit87.exe' }).reason).toContain(
+      'Portable'
+    )
+    // A zip build has no installer and no uninstaller, so it must not be offered
+    // an NSIS update that would install a second copy.
+    expect(detectUpdateSupport({ platform: 'win32', isPackaged: true }).reason).toContain('zip')
+    expect(detectUpdateSupport({ platform: 'freebsd', isPackaged: true }).supported).toBe(false)
+  })
+})
+
+describe('channel matching', () => {
+  it('keeps prerelease builds off the stable channel', () => {
+    expect(versionMatchesChannel('0.2.0', 'stable')).toBe(true)
+    expect(versionMatchesChannel('0.2.0-beta.1', 'stable')).toBe(false)
+    expect(versionMatchesChannel('0.2.0-beta.1', 'beta')).toBe(true)
+    expect(versionMatchesChannel('0.2.0', 'beta')).toBe(true)
+  })
+
+  it('treats build metadata with a hyphen as stable', () => {
+    expect(versionMatchesChannel('1.0.0+build-1', 'stable')).toBe(true)
+  })
+})
+
+describe('update progress normalization', () => {
+  it('clamps percentages, byte counts and speeds', () => {
+    expect(normalizeProgress({ percent: 142.345, transferred: 2000, total: 1000, bytesPerSecond: -5 })).toEqual({
+      percent: 100,
+      transferred: 1000,
+      total: 1000,
+      bytesPerSecond: 0
+    })
+    expect(normalizeProgress({ percent: Number.NaN, transferred: Number.NaN, total: 0, bytesPerSecond: 12.6 })).toEqual({
+      percent: 0,
+      transferred: 0,
+      total: 0,
+      bytesPerSecond: 13
+    })
+  })
+})
+
+describe('UpdateService', () => {
+  it('reports an unsupported build without touching the adapter', async () => {
+    const { adapter, service } = setup({
+      environment: { platform: 'linux', isPackaged: false }
+    })
+    expect(service.getStatus()).toMatchObject({ supported: false, phase: 'unsupported' })
+    await service.check()
+    expect(adapter.checks).toBe(0)
+    expect(service.getStatus().phase).toBe('unsupported')
+  })
+
+  it('applies the channel and automatic download preference to the adapter', () => {
+    const { adapter } = setup({ preferences: { channel: 'beta', autoCheck: true } })
+    expect(adapter.channel).toBe('beta')
+    // The service owns downloads so they can be cancelled; the library must not
+    // start one during a check.
+    expect(adapter.autoDownload).toBe(false)
+    // Installing always needs the explicit "Restart & install" action.
+    expect(adapter.autoInstallOnAppQuit).toBe(false)
+    expect(adapter.allowDowngrade).toBe(false)
+  })
+
+  it('allows downgrading when a prerelease build switches back to stable', () => {
+    const { adapter, service, preferences } = setup({ version: '0.2.0-beta.1' })
+    // A beta build on the stable channel may move to the newest stable release,
+    // even when that stable version sorts lower than the installed prerelease.
+    expect(adapter.allowDowngrade).toBe(true)
+    preferences.channel = 'beta'
+    service.refreshPreferences()
+    expect(adapter.allowDowngrade).toBe(false)
+    preferences.channel = 'stable'
+    service.refreshPreferences()
+    expect(adapter.allowDowngrade).toBe(true)
+  })
+
+  it('surfaces an available update with notes and check timestamp', async () => {
+    const { adapter, service } = setup()
+    expect(adapter.autoDownload).toBe(false)
+    const status = await service.check()
+    expect(adapter.checks).toBe(1)
+    expect(status).toMatchObject({
+      phase: 'available',
+      currentVersion: '0.1.0',
+      version: '0.2.0',
+      releaseDate: '2026-11-05T10:00:00.000Z',
+      releaseNotes: '## 0.2.0\n\n- Updates land in place',
+      error: null
+    })
+    expect(status.checkedAt).not.toBeNull()
+  })
+
+  it('falls back to the returned update info when no event is emitted', async () => {
+    const { adapter, service } = setup()
+    adapter.setSilent(true)
+    const status = await service.check()
+    expect(status.phase).toBe('available')
+    expect(status.version).toBe('0.2.0')
+
+    adapter.checkResult = null
+    const second = await service.check()
+    expect(second.phase).toBe('up-to-date')
+    expect(second.version).toBeNull()
+  })
+
+  it('downloads an available update and reaches the ready phase', async () => {
+    const { adapter, service } = setup()
+    await service.check()
+    const status = await service.download()
+    expect(adapter.downloads).toBe(1)
+    expect(status.phase).toBe('ready')
+    expect(status.progress).toEqual({ percent: 100, transferred: 1000, total: 1000, bytesPerSecond: 0 })
+  })
+
+  it('refuses to download without an available update and to install before ready', async () => {
+    const { adapter, service } = setup()
+    await expect(service.download()).rejects.toThrow('No update is available')
+    expect(() => service.install()).toThrow('No downloaded update')
+    expect(adapter.installs).toBe(0)
+  })
+
+  it('does not demote a downloaded update when checking again', async () => {
+    const { adapter, service } = setup()
+    await service.check()
+    await service.download()
+    const status = await service.check()
+    expect(adapter.checks).toBe(1)
+    expect(status).toMatchObject({ phase: 'ready', version: '0.2.0' })
+    expect(adapter.downloads).toBe(1)
+  })
+
+  it('installs only once the package is ready', async () => {
+    const { adapter, service } = setup()
+    await service.check()
+    await service.download()
+    expect(service.getStatus().phase).toBe('ready')
+    service.install()
+    expect(adapter.installs).toBe(1)
+  })
+
+  it('sanitizes updater errors and keeps the channel selection', async () => {
+    const { adapter, service, preferences } = setup({ preferences: { channel: 'beta' } })
+    adapter.setSilent(true)
+    adapter.checkResult = null
+    const error = new Error(`network down\n\n${'x'.repeat(700)}`)
+    adapter.check = async (): Promise<UpdateInfoSummary | null> => {
+      throw error
+    }
+    const status = await service.check()
+    expect(status.phase).toBe('error')
+    expect(status.error).not.toContain('\n')
+    expect(status.error?.length).toBe(500)
+    expect(status.channel).toBe('beta')
+    expect(preferences.channel).toBe('beta')
+  })
+
+  it('reacts to adapter error events without throwing', async () => {
+    const { adapter, service } = setup()
+    adapter.triggerError(new Error('signature mismatch'))
+    expect(service.getStatus()).toMatchObject({ phase: 'error', error: 'signature mismatch' })
+  })
+
+  it('downloads automatically after a check when automatic updates are enabled', async () => {
+    const { adapter, service } = setup({ preferences: { autoCheck: true } })
+    await service.check()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(adapter.downloads).toBe(1)
+    expect(service.getStatus().phase).toBe('ready')
+  })
+
+  it('re-checks on the new channel when it changes mid-check', async () => {
+    const { adapter, service, preferences } = setup()
+    const release = adapter.holdCheck()
+    const first = service.check()
+    preferences.channel = 'beta'
+    service.refreshPreferences()
+    // The stale check resolves against the old feed; the service must not adopt
+    // its result and a second request must run a real check.
+    adapter.checkResult = { ...info, version: '0.3.0-beta.1' }
+    release()
+    const [stale, fresh] = await Promise.all([first, service.check()])
+    expect(adapter.checks).toBe(2)
+    expect(stale.channel).toBe('beta')
+    expect(fresh).toMatchObject({ phase: 'available', channel: 'beta', version: '0.3.0-beta.1' })
+  })
+
+  it('re-checks after a channel round-trip instead of reusing the stale check', async () => {
+    const { adapter, service, preferences } = setup()
+    const release = adapter.holdCheck()
+    const first = service.check()
+    preferences.channel = 'beta'
+    service.refreshPreferences()
+    preferences.channel = 'stable'
+    service.refreshPreferences()
+    adapter.checkResult = { ...info, version: '0.2.1' }
+    release()
+    const [stale, fresh] = await Promise.all([first, service.check()])
+    expect(adapter.checks).toBe(2)
+    expect(stale).toMatchObject({ phase: 'idle' })
+    expect(fresh).toMatchObject({ phase: 'available', channel: 'stable', version: '0.2.1' })
+  })
+
+  it('ignores a stale check error after a channel change', async () => {
+    const { adapter, service, preferences } = setup()
+    const release = adapter.holdCheck()
+    const check = service.check()
+    preferences.channel = 'beta'
+    service.refreshPreferences()
+    adapter.triggerError(new Error('old channel failed'))
+    expect(service.getStatus()).toMatchObject({ phase: 'idle', error: null })
+    release()
+    await check
+    expect(service.getStatus()).toMatchObject({ phase: 'idle', error: null })
+  })
+
+  it('does not interrupt an active download when a check is requested', async () => {
+    const { adapter, service } = setup()
+    await service.check()
+    const { task } = adapter.startDownload()
+    adapter.download = () => task
+    void service.download()
+    await Promise.resolve()
+    const status = await service.check()
+    expect(adapter.checks).toBe(1)
+    expect(status.phase).toBe('downloading')
+    // A repeated update-available event must not demote the download.
+    adapter.triggerAvailable(info)
+    expect(service.getStatus()).toMatchObject({ phase: 'downloading', version: '0.2.0' })
+  })
+
+  it('reports a failed download as an error', async () => {
+    const { adapter, service } = setup()
+    await service.check()
+    adapter.downloadError = new Error('disk full')
+    const status = await service.download()
+    expect(status.phase).toBe('error')
+    expect(status.error).toContain('disk full')
+  })
+
+  it('keeps the automatic check timer off once the option is disabled', async () => {
+    vi.useFakeTimers()
+    try {
+      const { adapter, service, preferences } = setup({ preferences: { autoCheck: true } })
+      service.start()
+      preferences.autoCheck = false
+      service.refreshPreferences()
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(adapter.checks).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('ignores late events from a cancelled download', async () => {
+    const { adapter, service, preferences } = setup()
+    await service.check()
+    const { task } = adapter.startDownload()
+    adapter.download = () => task
+    const downloading = service.download()
+    await Promise.resolve()
+
+    preferences.channel = 'beta'
+    service.refreshPreferences()
+    expect(service.getStatus().phase).toBe('idle')
+
+    adapter.triggerProgress({ percent: 90, transferred: 900, total: 1000, bytesPerSecond: 10 })
+    adapter.triggerDownloaded(info)
+    adapter.triggerError(new Error('cancelled download failed'))
+    const status = service.getStatus()
+    expect(status).toMatchObject({ phase: 'idle', channel: 'beta', version: null, error: null, progress: null })
+    await downloading
+  })
+
+  it('leaves the checking phase when the channel changes mid-check', async () => {
+    const { adapter, service, preferences } = setup()
+    const release = adapter.holdCheck()
+    const check = service.check()
+    expect(service.getStatus().phase).toBe('checking')
+    preferences.channel = 'beta'
+    service.refreshPreferences()
+    expect(service.getStatus().phase).toBe('idle')
+    release()
+    const settled = await check
+    expect(settled.phase).toBe('idle')
+  })
+
+  it('stops at available when automatic updates are disabled', async () => {
+    const { adapter, service } = setup({ preferences: { autoCheck: false } })
+    await service.check()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(adapter.downloads).toBe(0)
+    expect(service.getStatus().phase).toBe('available')
+  })
+
+  it('can start a fresh download after a cancelled one is detached', async () => {
+    const { adapter, service, preferences } = setup()
+    await service.check()
+    const first = adapter.startDownload()
+    adapter.download = () => first.task
+    void service.download()
+    await Promise.resolve()
+    preferences.channel = 'beta'
+    service.refreshPreferences()
+    expect(service.getStatus().phase).toBe('idle')
+
+    adapter.download = () => adapter.emittingTask()
+    preferences.channel = 'stable'
+    service.refreshPreferences()
+    await service.check()
+    const status = await service.download()
+    expect(status.phase).toBe('ready')
+  })
+
+  it('resets a stale offer when the channel changes', async () => {
+    const { service, preferences } = setup()
+    await service.check()
+    expect(service.getStatus().phase).toBe('available')
+    preferences.channel = 'beta'
+    service.refreshPreferences()
+    expect(service.getStatus()).toMatchObject({ phase: 'idle', channel: 'beta', version: null })
+  })
+
+  it('ignores a prerelease offer on the stable channel', async () => {
+    const { adapter, service } = setup()
+    adapter.checkResult = { ...info, version: '0.2.0-beta.1' }
+    const status = await service.check()
+    expect(status.phase).toBe('idle')
+    expect(status.version).toBeNull()
+  })
+
+  it('cancels an in-flight download when the channel changes', async () => {
+    const { adapter, service, preferences } = setup()
+    await service.check()
+    const { task } = adapter.startDownload()
+    adapter.download = () => task
+    const downloading = service.download()
+    await Promise.resolve()
+    expect(service.getStatus().phase).toBe('downloading')
+
+    preferences.channel = 'beta'
+    service.refreshPreferences()
+    expect(service.getStatus()).toMatchObject({ phase: 'idle', channel: 'beta' })
+
+    const settled = await downloading
+    expect(settled.phase).toBe('idle')
+    expect(settled.error).toBeNull()
+  })
+
+  it('coalesces concurrent checks into one request', async () => {
+    const { adapter, service } = setup()
+    const release = adapter.holdCheck()
+    const first = service.check()
+    const second = service.check()
+    release()
+    const [a, b] = await Promise.all([first, second])
+    expect(adapter.checks).toBe(1)
+    expect(a.phase).toBe('available')
+    expect(b.phase).toBe('available')
+  })
+
+  it('schedules one automatic check after launch and can be stopped', async () => {
+    vi.useFakeTimers()
+    try {
+      const { adapter, service } = setup({ preferences: { autoCheck: true } })
+      service.start()
+      service.start()
+      await vi.advanceTimersByTimeAsync(999)
+      expect(adapter.checks).toBe(0)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(adapter.checks).toBe(1)
+      service.stop()
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(adapter.checks).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not schedule checks when automatic checks are off or unsupported', async () => {
+    vi.useFakeTimers()
+    try {
+      const off = setup({ preferences: { autoCheck: false } })
+      off.service.start()
+      const unsupported = setup({
+        preferences: { autoCheck: true },
+        environment: { platform: 'linux', isPackaged: true }
+      })
+      unsupported.service.start()
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(off.adapter.checks).toBe(0)
+      expect(unsupported.adapter.checks).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('emits a snapshot on each transition without sharing mutable progress', async () => {
+    const { service, seen } = setup()
+    await service.check()
+    const available = seen.find((status) => status.phase === 'available')
+    expect(available).toBeDefined()
+    await service.download()
+    const phases = seen.map((status) => status.phase)
+    expect(phases).toContain('checking')
+    expect(phases).toContain('available')
+    expect(phases).toContain('downloading')
+    expect(phases).toContain('ready')
+    expect(available?.version).toBe('0.2.0')
+    expect(available?.progress).toBeNull()
+  })
+})

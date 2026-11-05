@@ -14,6 +14,7 @@ import * as rebaseOps from '../git/rebase'
 import { parseRebaseTodoItems } from '../git/rebase-plan'
 import { normalizeBaseUrl, accountMatchesHost, detectProviderFromUrl, providerFromHost } from '../providers/remote'
 import { ProviderService } from '../providers/service'
+import type { UpdateService } from '../updates'
 
 type GetWindow = () => BrowserWindow | null
 type GetLaunchTarget = () => string | null
@@ -22,6 +23,7 @@ export class Router {
   private readonly store: AppStore
   private readonly tasks: TaskManager
   private readonly providers: ProviderService
+  private readonly updates: UpdateService
   private readonly getWindow: GetWindow
   private readonly getLaunchTarget: GetLaunchTarget
 
@@ -29,12 +31,14 @@ export class Router {
     store: AppStore,
     tasks: TaskManager,
     providers: ProviderService,
+    updates: UpdateService,
     getWindow: GetWindow,
     getLaunchTarget: GetLaunchTarget
   ) {
     this.store = store
     this.tasks = tasks
     this.providers = providers
+    this.updates = updates
     this.getWindow = getWindow
     this.getLaunchTarget = getLaunchTarget
   }
@@ -132,10 +136,15 @@ export class Router {
         }
         if (typeof patch.confirmDestructive === 'boolean') allowed.confirmDestructive = patch.confirmDestructive
         if (typeof patch.autoFetchOnOpen === 'boolean') allowed.autoFetchOnOpen = patch.autoFetchOnOpen
+        if (patch.updateChannel === 'stable' || patch.updateChannel === 'beta') allowed.updateChannel = patch.updateChannel
+        if (typeof patch.autoUpdateCheck === 'boolean') allowed.autoUpdateCheck = patch.autoUpdateCheck
         if (patch.defaultProvider && PROVIDERS[patch.defaultProvider]) allowed.defaultProvider = patch.defaultProvider
         const updated = await this.store.updateConfig(allowed)
         if (allowed.gitBinary !== undefined) {
           await this.store.setGitBinary(allowed.gitBinary)
+        }
+        if (allowed.updateChannel !== undefined || allowed.autoUpdateCheck !== undefined) {
+          this.updates.refreshPreferences()
         }
         return updated
       }
@@ -770,6 +779,19 @@ export class Router {
       }
       case 'window.isMaximized':
         return this.getWindow()?.isMaximized() ?? false
+
+      // ---------------------------------------------------------------------
+      // Updates
+      case 'update.status':
+        return this.updates.getStatus()
+      case 'update.check':
+        return this.updates.check()
+      case 'update.download':
+        return this.updates.download()
+      case 'update.install': {
+        this.updates.install()
+        return undefined
+      }
 
       default: {
         const exhaustive: never = channel

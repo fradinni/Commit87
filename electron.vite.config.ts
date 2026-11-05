@@ -4,7 +4,10 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // electron-updater is bundled into out/main so the packaged ASAR does not
+    // need a node_modules tree at runtime; everything else in dependencies is
+    // renderer-only and bundled by Vite already.
+    plugins: [externalizeDepsPlugin({ exclude: ['electron-updater'] })],
     resolve: {
       alias: { '@shared': resolve(__dirname, 'src/shared') }
     },

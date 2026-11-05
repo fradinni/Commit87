@@ -108,6 +108,40 @@ export interface RecentRepo {
   pinned?: boolean
 }
 
+export type UpdateChannel = 'stable' | 'beta'
+
+export type UpdatePhase =
+  | 'unsupported'
+  | 'idle'
+  | 'checking'
+  | 'up-to-date'
+  | 'available'
+  | 'downloading'
+  | 'ready'
+  | 'error'
+
+export interface UpdateProgress {
+  percent: number
+  transferred: number
+  total: number
+  bytesPerSecond: number
+}
+
+export interface UpdateStatus {
+  supported: boolean
+  reason: string | null
+  phase: UpdatePhase
+  currentVersion: string
+  channel: UpdateChannel
+  version: string | null
+  releaseDate: string | null
+  releaseNotes: string | null
+  progress: UpdateProgress | null
+  error: string | null
+  checkedAt: number | null
+  autoCheck: boolean
+}
+
 export interface AppConfig {
   schemaVersion: 1
   gitBinary: string
@@ -119,6 +153,8 @@ export interface AppConfig {
   maxCommits: number
   confirmDestructive: boolean
   autoFetchOnOpen: boolean
+  updateChannel: UpdateChannel
+  autoUpdateCheck: boolean
   defaultProvider?: ProviderId
 }
 

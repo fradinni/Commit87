@@ -29,9 +29,11 @@
     "icons": "bash scripts/make-icons.sh",
     "dist:flatpak": "bash scripts/build-flatpak.sh",
     "dist:snap": "bash scripts/build-snap.sh",
+    "demo:updates": "node scripts/demo-updates.mjs",
     "version:sync": "node scripts/sync-version.mjs"
   },
   "dependencies": {
+    "electron-updater": "^6.8.11",
     "highlight.js": "^11.11.1",
     "lucide-react": "^1.66.0",
     "react": "^19.0.0",

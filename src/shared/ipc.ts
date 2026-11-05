@@ -51,6 +51,7 @@ import type {
   TaskEvent,
   TaskHandle,
   TriggerActionInput,
+  UpdateStatus,
   WorktreeAddInput,
   WorktreeInfo,
   IdentityInput,
@@ -170,6 +171,11 @@ export interface IpcMethods {
   'window.maximizeToggle': { request: void; response: boolean }
   'window.close': { request: void; response: void }
   'window.isMaximized': { request: void; response: boolean }
+
+  'update.status': { request: void; response: UpdateStatus }
+  'update.check': { request: void; response: UpdateStatus }
+  'update.download': { request: void; response: UpdateStatus }
+  'update.install': { request: void; response: void }
 }
 
 export type IpcChannel = keyof IpcMethods
@@ -188,6 +194,7 @@ export const IPC_INVOKE = 'commit87:invoke' as const
 export const IPC_TASK_EVENT = 'commit87:task-event' as const
 export const IPC_WINDOW_STATE = 'commit87:window-state' as const
 export const IPC_MENU = 'commit87:menu' as const
+export const IPC_UPDATE_STATUS = 'commit87:update-status' as const
 
 export interface IpcEnvelope<K extends IpcChannel = IpcChannel> {
   channel: K

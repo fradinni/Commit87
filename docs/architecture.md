@@ -64,6 +64,7 @@ Channels are grouped:
 | `repo.*` | recent list, open/info/clone/init, repo defaults |
 | `git.*` | reads (`status`, `log`, `diff`, `blame` …), writes, and streaming tasks |
 | `provider.*` | forge APIs and pull request checkout |
+| `update.*` | update status, check, download and install |
 | `window.*` | minimize/maximize/close for the custom title bar |
 
 `Router.handle` is a single `switch` over the union. The default branch uses an
@@ -317,6 +318,44 @@ then `git switch -c pr-N <ref>` with the integration token used for the fetch.
   `prefers-color-scheme`.
 - **Accessibility**: native buttons, `aria-label` on icon buttons, focus-visible outlines,
   `role="status"` for toasts, `aria-modal` dialogs closed with Escape.
+
+## Updates
+
+`main/update-support.ts` decides whether the running build can be updated in place:
+packaged AppImages, NSIS installs and macOS app bundles qualify; Flatpak, Snap, portable
+and zip Windows builds and distro packages are rejected with a message pointing at their
+real update path. An NSIS install is recognised by its uninstaller next to the executable,
+so an extracted zip build is not offered an installer that would create a second copy. `main/updates.ts` owns the state machine (`idle`, `checking`, `up-to-date`,
+`available`, `downloading`, `ready`, `error`) and talks to an `UpdateAdapter`, which
+`main/update-adapter.ts` implements over `electron-updater`. The adapter is bundled into
+the main output, so the packaged ASAR still has no `node_modules` tree.
+
+Preferences are part of `AppConfig`:
+
+- `updateChannel` is `stable` (electron-updater channel `latest`) or `beta` (`beta`).
+  Switching channels clears a stale offer, cancels a download for the previous channel and
+  sets `allowDowngrade` when a prerelease build returns to stable.
+- `autoUpdateCheck` checks once shortly after launch and downloads a newer build in the
+  background. With it off, a manual check stops at `available` and the user chooses
+  Download.
+
+electron-updater's own auto-download and install-on-quit are disabled. The service owns the
+download so it can be cancelled, and installing always requires the explicit
+**Restart & install** action (`quitAndInstall(true, true)`), which keeps NSIS silent.
+
+The renderer only sees sanitized `UpdateStatus` snapshots through `update.*` IPC calls and
+the `commit87:update-status` push channel. It cannot choose a feed URL, version or file:
+the feed comes from the packaged `app-update.yml` produced by electron-builder's `publish`
+configuration. Progress values are clamped, error messages are collapsed to one line and
+release notes are truncated before they cross the boundary. `update.install` is only
+accepted in the `ready` phase.
+
+Release tags without a prerelease suffix build `latest.yml` and stay drafts until
+published. Tags such as `v0.2.0-beta.1` set `COMMIT87_RELEASE_CHANNEL=beta` in the release
+workflow, which publishes `beta.yml`, marks the GitHub release as a pre-release (so
+`/releases/latest` keeps pointing at the last stable version) and leaves the stable feed
+untouched. Only `-beta.N` identifiers are accepted; other prerelease tags fail the
+workflow instead of publishing a channel file no client requests.
 
 ## Failure handling
 
