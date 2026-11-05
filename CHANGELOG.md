@@ -6,8 +6,21 @@ All notable changes to GitGrove are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Interactive rebase planner: pick, reword, squash, fixup, drop and reorder the commits
+  between a base and `HEAD` in one dialog. Reword messages survive conflict stops and
+  Continue, and the bridge keeps app-controlled editor scripts in the git dir instead of
+  opening an external editor
+- Conflict resolver: for each conflicted block, keep ours, theirs, both or the base, or
+  remove it; the resolved file can be edited manually in the output pane and staged in one
+  action
+
 ### Fixed
 
+- Files & Staging: a conflicted path now shows its working-tree content with the
+  conflict blocks highlighted, instead of an empty diff. Git emits a combined
+  diff (`diff --cc`) for unmerged paths, which the unified-diff view cannot parse
 - Linux packaging: CI installs `libarchive-tools` (bsdtar) before building, so the
   pacman target no longer fails with `fpm` exit code 127 when generating `.MTREE`
 

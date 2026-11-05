@@ -98,13 +98,27 @@ and the environment:
 GIT_TERMINAL_PROMPT=0   never block waiting for input
 GIT_OPTIONAL_LOCKS=0    avoid touching the index for read-only calls
 GIT_PAGER=cat
-GIT_EDITOR=true         merge/rebase continuation never opens an editor
+GIT_EDITOR=true         never wait for an interactive editor
 GIT_SEQUENCE_EDITOR=true
 LC_ALL=C                stable parsing
 ```
 
 `shell: false` everywhere. A 120 s default timeout and a 64 MiB output cap bound runaway
 commands. `GitError` keeps `argv`, `stderr` and the exit code for diagnostics.
+
+The interactive rebase planner is the one caller allowed to override those two editor
+variables, and only with app-controlled files. Git has no machine-readable todo interface,
+so `git/rebase.ts` prepares `todo`, `sequence-editor.sh`, `edit-message.sh` and
+`messages/<sha>.txt` under `<git-dir>/gitgrove/rebase`, then runs
+`git rebase --interactive` with deterministic rebase config. The sequence editor copies
+the prepared todo and the message editor replaces the message of a native `reword` action.
+It identifies the commit from the last line of git's own `rebase-merge/done` file, so a
+skipped or emptied commit never invokes the editor and can never rewrite another commit.
+The directory survives conflict stops (including an app restart) and is removed by
+Continue, Skip, Abort or the next planner run; it never enters the working tree. The
+bridge also selects a `core.commentChar` that no supplied message line starts with, so
+subjects such as `#123 fix login` are not mistaken for comments. Planner ranges are capped
+at 500 commits and ranges containing merge commits are rejected.
 
 ### Parsers
 
@@ -247,6 +261,14 @@ then `git switch -c pr-N <ref>` with the integration token used for the fetch.
   branches, tags, worktrees, stashes, pulls, runs), loading flags, toasts and task state.
 - **Views**: launchpad, commit graph, files/staging, branches, worktrees, tags, stashes,
   remotes, pull requests, releases, pipelines, settings.
+- **Interactive rebase**: a modal planner over `onto..HEAD` where commits can be reordered,
+  reworded, squashed, fixed up or dropped; it validates the plan in the renderer and again
+  in the main process before replaying it.
+- **Conflict resolver**: unmerged files are split into ours/theirs/base regions. Each block
+  can keep a side, keep both, use the base or be removed, while a live editable output pane
+  holds the final file. Saving writes the path (never a symlink or a path outside the repo)
+  and stages it through `git.resolveConflict`. Non-UTF-8, symlinked and oversized paths are
+  read-only here and must be resolved in an external editor.
 - **Diff renderer**: parses unified diffs into files/hunks/lines with old/new line numbers,
   caps rendering at 6 000 lines, and renders untracked files as highlighted code.
 - **Graph renderer**: lane assignment with merge/fork edges as SVG cubic curves, one color

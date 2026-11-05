@@ -11,6 +11,7 @@ import {
   GitCommitHorizontal,
   GitPullRequest,
   Layers,
+  ListTree,
   RefreshCw,
   Rocket,
   Search,
@@ -43,6 +44,7 @@ export function CommandPalette({ action }: { action: (action: PaletteAction) => 
   const detection = useStore((state) => state.detection)
   const toggleConsole = useStore((state) => state.toggleConsole)
   const openRepo = useStore((state) => state.openRepo)
+  const openRebase = useStore((state) => state.openRebase)
   const notifyError = useStore((state) => state.notifyError)
   const [query, setQuery] = useState('')
   const [index, setIndex] = useState(0)
@@ -111,6 +113,14 @@ export function CommandPalette({ action }: { action: (action: PaletteAction) => 
           run: () => action('push')
         },
         { id: 'new-branch', label: 'Create branch…', group: 'Git', icon: <GitBranch size={15} />, run: () => action('new-branch') },
+        {
+          id: 'interactive-rebase',
+          label: 'Interactive rebase…',
+          hint: repo.upstream ?? 'choose a base',
+          group: 'Git',
+          icon: <ListTree size={15} />,
+          run: () => openRebase(repo.upstream ?? undefined)
+        },
         { id: 'new-tag', label: 'Create tag…', group: 'Git', icon: <Tag size={15} />, run: () => action('new-tag') },
         { id: 'new-worktree', label: 'Add worktree…', group: 'Git', icon: <Waypoints size={15} />, run: () => action('new-worktree') }
       )
@@ -142,7 +152,18 @@ export function CommandPalette({ action }: { action: (action: PaletteAction) => 
       })
     }
     return items
-  }, [action, branches, detection.accountId, openRepo, recent, repo?.path, setView, toggleConsole])
+  }, [
+    action,
+    branches,
+    detection.accountId,
+    openRebase,
+    openRepo,
+    recent,
+    repo?.path,
+    repo?.upstream,
+    setView,
+    toggleConsole
+  ])
 
   const filtered = useMemo(() => {
     const term = query.trim().toLowerCase()

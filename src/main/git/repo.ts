@@ -102,7 +102,7 @@ export async function resolveRepo(inputPath: string): Promise<RepoInfo> {
     }
   })
 
-  const state = await detectRepoState(root)
+  const state = await getOperationState(root)
 
   return {
     path: root,
@@ -123,7 +123,7 @@ export async function resolveRepo(inputPath: string): Promise<RepoInfo> {
   }
 }
 
-async function detectRepoState(repoPath: string): Promise<RepoInfo['state']> {
+export async function getOperationState(repoPath: string): Promise<RepoInfo['state']> {
   const paths = [
     ['MERGE_HEAD', 'merging'],
     ['rebase-merge', 'rebasing'],
@@ -292,6 +292,58 @@ export async function listTree(repoPath: string, dir = ''): Promise<DirEntry[]> 
 }
 
 const MAX_FILE_BYTES = 3 * 1024 * 1024
+const MAX_RESOLVED_BYTES = 5 * 1024 * 1024
+
+/**
+ * Write the resolved content of a currently unmerged path and stage it.
+ *
+ * The path is accepted only while it is reported as conflicted, never follows a
+ * symlink, and must stay inside the repository (including via real paths in the
+ * parent chain). This keeps the staging action narrow; ordinary file edits
+ * remain in the user's external editor.
+ */
+export async function resolveConflict(repoPath: string, file: string, content: string): Promise<void> {
+  if (content.includes('\0')) throw new Error('Resolved content contains a NUL byte')
+  if (Buffer.byteLength(content, 'utf8') > MAX_RESOLVED_BYTES) {
+    throw new Error('Resolved file is too large to save from the app')
+  }
+  if (/^(?:<<<<<<<|>>>>>>>)/m.test(content)) {
+    throw new Error('Remove the conflict markers before staging the file')
+  }
+
+  const repo = await resolveRepo(repoPath)
+  if (repo.isBare) throw new Error('Conflicted files need a working tree')
+  const status = await getStatus(repo.path)
+  const entry = status.files.find((item) => item.path === file)
+  if (!entry || entry.stage !== 'conflicted') throw new Error('This file is not in conflict')
+
+  const target = safeJoin(repo.path, file)
+  const rootReal = await fs.realpath(repo.path)
+  let parentReal: string
+  try {
+    parentReal = await fs.realpath(path.dirname(target))
+  } catch {
+    throw new Error('The file folder no longer exists; resolve this conflict outside the app')
+  }
+  if (!isInside(rootReal, parentReal)) throw new Error('Path escapes the repository')
+
+  const existing = await fs.lstat(target).catch(() => null)
+  if (existing?.isSymbolicLink()) throw new Error('Symlink conflicts must be resolved outside the app')
+  if (existing?.isDirectory()) throw new Error('A directory occupies this path; resolve the conflict outside the app')
+  if (existing && !existing.isFile()) throw new Error('Unsupported conflicted path; resolve it outside the app')
+  if (existing) {
+    if (existing.size > MAX_RESOLVED_BYTES) {
+      throw new Error('This file is too large to rewrite from the app')
+    }
+    const current = await fs.readFile(target)
+    if (decodeText(current).binary) {
+      throw new Error('This file is not UTF-8 text; resolve it outside the app')
+    }
+  }
+
+  await fs.writeFile(target, content, 'utf8')
+  await runGit(['add', '--', file], { cwd: repo.path })
+}
 
 export async function readFileContent(
   repoPath: string,
@@ -322,16 +374,27 @@ export async function readFileContent(
     buffer = Buffer.from(result.stdout, 'utf8')
     size = buffer.length
   }
-  const sample = buffer.subarray(0, 8000)
-  const binary = sample.includes(0)
+  const decoded = decodeText(buffer)
   return {
     path: file,
-    content: binary ? '' : buffer.toString('utf8'),
-    binary,
+    content: decoded.content,
+    binary: decoded.binary,
     truncated: size > MAX_FILE_BYTES,
     size,
     from
   }
+}
+
+/**
+ * Decode worktree bytes only when they round-trip as UTF-8. A legacy-encoded
+ * file has no NUL bytes, so a NUL sample alone is not enough: replacing its
+ * bytes with U+FFFD and writing them back would silently corrupt the file.
+ */
+function decodeText(buffer: Buffer): { content: string; binary: boolean } {
+  if (buffer.includes(0)) return { content: '', binary: true }
+  const content = buffer.toString('utf8')
+  if (!Buffer.from(content, 'utf8').equals(buffer)) return { content: '', binary: true }
+  return { content, binary: false }
 }
 
 export async function getBlame(repoPath: string, file: string, commit?: string): Promise<BlameLine[]> {
@@ -482,7 +545,7 @@ export async function resetTo(repoPath: string, commit: string, mode: ResetInput
 }
 
 export async function abortOperation(repoPath: string): Promise<void> {
-  const state = await detectRepoState(repoPath)
+  const state = await getOperationState(repoPath)
   switch (state) {
     case 'merging':
       await runGit(['merge', '--abort'], { cwd: repoPath })
@@ -507,10 +570,16 @@ export async function abortOperation(repoPath: string): Promise<void> {
   }
 }
 
-export async function continueOperation(repoPath: string, ctx: GitAuthContext): Promise<{ output: string }> {
-  const state = await detectRepoState(repoPath)
+export async function continueOperation(
+  repoPath: string,
+  ctx: GitAuthContext,
+  extraEnv: NodeJS.ProcessEnv = {}
+): Promise<{ output: string }> {
+  const state = await getOperationState(repoPath)
   const { args, env } = contextArgs(ctx)
-  // GIT_EDITOR is forced non-interactive by the runner.
+  const runEnv = { ...env, ...extraEnv }
+  // GIT_EDITOR is forced non-interactive by the runner unless the rebase bridge
+  // installs its message editor for a still-running interactive rebase.
   const command =
     state === 'rebasing'
       ? 'rebase'
@@ -522,19 +591,23 @@ export async function continueOperation(repoPath: string, ctx: GitAuthContext): 
             ? 'am'
             : 'merge'
   if (state === 'merging') {
-    await runGit([...args, 'commit', '--no-edit'], { cwd: repoPath, env })
+    await runGit([...args, 'commit', '--no-edit'], { cwd: repoPath, env: runEnv })
     return { output: 'Merge commit created' }
   }
-  const result = await runGit([...args, command, '--continue'], { cwd: repoPath, env, allowFailure: true })
+  const result = await runGit([...args, command, '--continue'], {
+    cwd: repoPath,
+    env: runEnv,
+    allowFailure: true
+  })
   return { output: result.stdout + result.stderr }
 }
 
-export async function skipOperation(repoPath: string): Promise<void> {
-  const state = await detectRepoState(repoPath)
-  if (state === 'rebasing') await runGit(['rebase', '--skip'], { cwd: repoPath })
-  else if (state === 'cherry-picking') await runGit(['cherry-pick', '--skip'], { cwd: repoPath })
-  else if (state === 'reverting') await runGit(['revert', '--skip'], { cwd: repoPath })
-  else if (state === 'applying') await runGit(['am', '--skip'], { cwd: repoPath })
+export async function skipOperation(repoPath: string, extraEnv: NodeJS.ProcessEnv = {}): Promise<void> {
+  const state = await getOperationState(repoPath)
+  if (state === 'rebasing') await runGit(['rebase', '--skip'], { cwd: repoPath, env: extraEnv })
+  else if (state === 'cherry-picking') await runGit(['cherry-pick', '--skip'], { cwd: repoPath, env: extraEnv })
+  else if (state === 'reverting') await runGit(['revert', '--skip'], { cwd: repoPath, env: extraEnv })
+  else if (state === 'applying') await runGit(['am', '--skip'], { cwd: repoPath, env: extraEnv })
   else throw new Error('Nothing to skip')
 }
 

@@ -84,6 +84,8 @@ interface StoreState {
   consoleLines: ConsoleLine[]
   sidebarOpen: boolean
   paletteOpen: boolean
+  rebaseOpen: boolean
+  rebaseOnto: string | null
 
   init: () => Promise<void>
   refreshConfig: () => Promise<void>
@@ -112,6 +114,8 @@ interface StoreState {
   pushConsoleLine: (text: string, stream?: 'stdout' | 'stderr') => void
   setSidebarOpen: (open: boolean) => void
   setPaletteOpen: (open: boolean) => void
+  openRebase: (onto?: string) => void
+  closeRebase: () => void
   identities: () => GitIdentity[]
   integrations: () => IntegrationAccount[]
   identityById: (id?: string) => GitIdentity | undefined
@@ -162,6 +166,8 @@ export const useStore = create<StoreState>((set, get) => ({
   consoleLines: [],
   sidebarOpen: true,
   paletteOpen: false,
+  rebaseOpen: false,
+  rebaseOnto: null,
 
   async init() {
     try {
@@ -420,6 +426,12 @@ export const useStore = create<StoreState>((set, get) => ({
   },
   setPaletteOpen(open) {
     set({ paletteOpen: open })
+  },
+  openRebase(onto) {
+    set({ rebaseOpen: true, rebaseOnto: onto ?? null })
+  },
+  closeRebase() {
+    set({ rebaseOpen: false, rebaseOnto: null })
   },
 
   identities() {

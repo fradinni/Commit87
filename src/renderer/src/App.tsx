@@ -7,6 +7,7 @@ import { Sidebar } from './components/Sidebar'
 import { StatusBar, RepoOperationBanner } from './components/StatusBar'
 import { Toasts } from './components/Toasts'
 import { CommandPalette, type PaletteAction } from './components/CommandPalette'
+import { RebasePlanner } from './components/RebasePlanner'
 import { ConsoleDrawer } from './components/ConsoleDrawer'
 import { Launchpad } from './views/Launchpad'
 import { GraphView } from './views/GraphView'
@@ -325,6 +326,7 @@ export function App() {
       </div>
       <StatusBar />
       <CommandPalette action={paletteAction} />
+      <RebasePlanner />
       <Toasts />
 
       <Modal

@@ -70,8 +70,10 @@ export async function runGit(args: string[], options: RunGitOptions): Promise<Gi
     GIT_TERMINAL_PROMPT: '0',
     GIT_OPTIONAL_LOCKS: '0',
     GIT_PAGER: 'cat',
-    GIT_EDITOR: 'true',
-    GIT_SEQUENCE_EDITOR: 'true',
+    // Callers may install a controlled editor (the interactive rebase bridge);
+    // otherwise git must never wait for an editor.
+    GIT_EDITOR: options.env?.GIT_EDITOR || 'true',
+    GIT_SEQUENCE_EDITOR: options.env?.GIT_SEQUENCE_EDITOR || 'true',
     LC_ALL: 'C'
   }
 

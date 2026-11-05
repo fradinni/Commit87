@@ -503,6 +503,12 @@ export interface CommitInput {
   allowEmpty?: boolean
 }
 
+export interface ResolveConflictInput {
+  repoPath: string
+  file: string
+  content: string
+}
+
 export interface LogInput {
   repoPath: string
   limit?: number
@@ -537,6 +543,38 @@ export interface MergeInput {
   squash?: boolean
   message?: string
   identityId?: string
+}
+
+export type RebaseAction = 'pick' | 'reword' | 'squash' | 'fixup' | 'drop'
+
+export interface RebaseTodoItem {
+  sha: string
+  action: RebaseAction
+  message?: string
+}
+
+export interface RebasePlan {
+  onto: string
+  upstreamSha: string | null
+  upstreamSubject: string | null
+  branch: string | null
+  detached: boolean
+  /** Commits in replay order: oldest first, as git will apply them. */
+  commits: Commit[]
+}
+
+export interface RebasePlanInput {
+  repoPath: string
+  onto: string
+  items: RebaseTodoItem[]
+  identityId?: string
+}
+
+export interface RebaseResult {
+  output: string
+  exitCode: number
+  /** True when the repository is left in a rebasing state (conflict, edit or hook stop). */
+  inProgress: boolean
 }
 
 export interface ResetInput {

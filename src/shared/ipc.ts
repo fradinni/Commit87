@@ -35,8 +35,12 @@ import type {
   RepoConfigEntry,
   RepoDefaults,
   RepoInfo,
+  RebasePlan,
+  RebasePlanInput,
+  RebaseResult,
   RepoStatus,
   ResetInput,
+  ResolveConflictInput,
   StashInfo,
   StatusFile,
   TagCreateInput,
@@ -93,6 +97,7 @@ export interface IpcMethods {
   'git.worktrees': { request: { path: string }; response: WorktreeInfo[] }
   'git.stashes': { request: { path: string }; response: StashInfo[] }
   'git.diff': { request: DiffInput; response: DiffResult }
+  'git.resolveConflict': { request: ResolveConflictInput; response: void }
   'git.fileTree': { request: { path: string; dir?: string }; response: DirEntry[] }
   'git.fileContent': { request: { path: string; file: string; from?: 'worktree' | 'head'; commit?: string }; response: FileContent }
   'git.blame': { request: { path: string; file: string; commit?: string }; response: BlameLine[] }
@@ -110,6 +115,8 @@ export interface IpcMethods {
   'git.setUpstream': { request: { path: string; branch: string; upstream: string }; response: void }
   'git.merge': { request: MergeInput; response: { output: string } }
   'git.rebase': { request: { path: string; onto: string; identityId?: string }; response: { output: string } }
+  'git.rebasePlan': { request: { repoPath: string; onto: string }; response: RebasePlan }
+  'git.rebaseInteractive': { request: RebasePlanInput; response: RebaseResult }
   'git.cherryPick': { request: { path: string; sha: string; identityId?: string }; response: { output: string } }
   'git.revert': { request: { path: string; sha: string; identityId?: string }; response: { output: string } }
   'git.reset': { request: ResetInput; response: void }
