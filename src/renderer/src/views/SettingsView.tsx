@@ -746,7 +746,10 @@ function AboutSettings() {
           <Laptop size={28} />
           <div>
             <h3>GitGrove {appInfo?.version}</h3>
-            <p>A focused Git desktop client built on system Git. Simplified and rebuilt from a clean-room analysis of GitKraken.</p>
+            <p>
+              A focused Git desktop client built on your system Git, with multi-account identities and
+              multi-forge integrations.
+            </p>
           </div>
         </div>
         <div className="kv-grid">

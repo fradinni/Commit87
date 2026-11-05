@@ -1,17 +1,38 @@
-# GitGrove
+<div align="center">
+  <a href="https://github.com/fradinni/GitGrove">
+    <img src="docs/assets/header.svg" alt="GitGrove — Git, without the noise" width="100%">
+  </a>
+</div>
+
+<div align="center">
+
+[![CI](https://github.com/fradinni/GitGrove/actions/workflows/ci.yml/badge.svg)](https://github.com/fradinni/GitGrove/actions/workflows/ci.yml)
+[![Dependabot Updates](https://github.com/fradinni/GitGrove/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/fradinni/GitGrove/actions/workflows/dependabot/dependabot-updates)
+[![Release](https://github.com/fradinni/GitGrove/actions/workflows/release.yml/badge.svg)](https://github.com/fradinni/GitGrove/actions/workflows/release.yml)
+
+[![Latest release](https://img.shields.io/github/v/release/fradinni/GitGrove?color=3ddc97&label=latest)](https://github.com/fradinni/GitGrove/releases)
+[![License](https://img.shields.io/github/license/fradinni/GitGrove?color=3ddc97)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-5ba8ff)](https://github.com/fradinni/GitGrove/releases)
+[![Vitest](https://img.shields.io/badge/tests-Vitest-6E9F18?logo=vitest&logoColor=white)](https://github.com/fradinni/GitGrove/actions/workflows/ci.yml)
+
+[![Electron](https://img.shields.io/badge/Electron-41-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
+[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev/)
+[![Node.js](https://img.shields.io/badge/Node.js-24-5FA04E?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Git](https://img.shields.io/badge/Git-2.30%2B-F05032?logo=git&logoColor=white)](https://git-scm.com/)
 
 **Git, without the noise.** A focused desktop Git client built on the Git you already
 have installed — repositories, branches, worktrees, tags, releases and pipelines, with
 per-repository identities and multi-forge accounts.
 
+</div>
+
 ![Launchpad](docs/screenshots/launchpad.png)
 
 ## Why another Git client
 
-GitKraken proved the shape of a good desktop Git UI, but it is a large Electron
-application that bundles its own Git stack (NodeGit/libgit2), requires an account for much
-of its value, and ships a lot of surface area most teams never touch. GitGrove is a
-**clean-room, deliberately smaller** take on the same idea:
+Most desktop Git clients are large Electron applications that bundle their own Git stack
+(NodeGit/libgit2), require an account for much of their value, and ship a lot of surface
+area most teams never touch. GitGrove is a **deliberately smaller** take on the idea:
 
 - **System Git, not a re-implementation.** Every operation is a real `git` invocation, so
   hooks, filters, LFS, GPG signing, SSH config, `includeIf` identities, submodules and
@@ -104,7 +125,7 @@ Prebuilt packages are produced by CI for every target and architecture:
 | --- | --- |
 | Linux | AppImage, `.deb` (Debian/Ubuntu/Mint), `.rpm` (Fedora/RHEL/openSUSE), `pacman` (Arch/Manjaro), `tar.gz`, Snap, Flatpak |
 | Windows | NSIS installer, portable `.exe`, `.zip` (x64 and arm64) |
-| macOS | `.dmg`, `.pkg` and `.zip` (Intel x64 and Apple Silicon arm64) |
+| macOS | `.dmg` and `.zip` (Apple Silicon arm64; Intel x64 temporarily paused) |
 
 ### Linux
 
@@ -135,10 +156,14 @@ Git, OpenSSH and CA certificates because their sandbox cannot use the host binar
 
 ### Windows and macOS
 
-Download the installer (`.exe` for x64/arm64, `.dmg` for Intel/Apple Silicon) from the
-release page. Portable builds need no installation: the Windows portable `.exe` and the
-macOS `.zip` run in place. macOS builds are signed and notarized when the release secrets
-are configured.
+Download the installer (`.exe` for x64/arm64, `.dmg` for Apple Silicon) from the release
+page. Portable builds need no installation: the Windows portable `.exe` and the macOS
+`.zip` run in place. macOS builds are signed and notarized when the release secrets are
+configured.
+
+> **macOS Intel (x64) is temporarily paused in CI** while GitHub-hosted `macos-13` runners
+> are scarce. Build it locally with `npm run build:mac` (or run the Apple Silicon build
+> under Rosetta) until the x64 entry is restored in `.github/workflows/`.
 
 ## Build from source
 
@@ -230,19 +255,10 @@ See [docs/architecture.md](docs/architecture.md) for the full design and data fl
 
 Report vulnerabilities via [SECURITY.md](SECURITY.md).
 
-## Reverse engineering and provenance
-
-GitGrove was designed after a **static analysis of the shipped GitKraken 12.6.1 Flatpak**
-using REA: ASAR inventory, Electron fuse inspection, JavaScript application graph,
-child-process and credential-handling relationships, and the bundled string catalogue.
-No GitKraken code, assets, icons, copy or data files were copied. Findings and the
-resulting design decisions are documented in
-[docs/reverse-engineering.md](docs/reverse-engineering.md).
-
 ## Project layout
 
 ```
-docs/                architecture, reverse engineering, packaging, testing
+docs/                architecture, packaging, testing, screenshots
 build/               icons, installer and entitlement resources
 scripts/             icon generation, version sync, Flatpak/Snap/deb/rpm/pacman helpers
 flatpak/ snap/       native manifests

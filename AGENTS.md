@@ -63,7 +63,7 @@ src/renderer/src/  React UI: App, components, views, zustand store, lib, styles
 tests/             Vitest: parsers, providers, credentials, diff/graph, git integration
 build/             icons, installer/entitlement resources
 scripts/ flatpak/ snap/  packaging helpers and native manifests
-docs/              architecture, reverse engineering, packaging, testing
+docs/              architecture, packaging, testing, screenshots
 ```
 
 Rules by boundary: `shared` stays dependency-free; `main` validates and owns privileges;
@@ -75,3 +75,18 @@ the store/view. Never bypass `src/renderer/src/lib/ipc.ts`.
 Integration tests create temporary repositories under `os.tmpdir()` and clean up; never
 touch user repos. Provider tests stub global `fetch`. Renderer effects must depend on
 primitive values (repo path, ids) rather than refreshed objects, to avoid reload loops.
+
+## Content and provenance
+
+- Never commit or push material that names another application, its shipped artifacts or
+  any inspection of them: no reverse-engineering notes, static-analysis write-ups, target
+  inventories, extracted strings, screenshots, hashes or provenance tables.
+- The same ban applies to code comments, docs, UI copy, commit messages, branch names,
+  PR titles/descriptions and issue text. Describe GitGrove on its own merits.
+- Feature comparisons stay generic ("most desktop Git clients…"), never a named product
+  or vendor.
+- If such material already exists on a branch, remove it and rewrite the history-sensitive
+  text before opening or updating a pull request; do not add it to a new commit as a
+  "follow-up" fix.
+- Icons, copy, theme values and assets must be original work or permissively licensed
+  third-party material with attribution, never derived from a competitor's build.

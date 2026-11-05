@@ -109,8 +109,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - arch: x64
-            runner: macos-13
+          # macOS x64 is paused: GitHub-hosted Intel runners (macos-13) queue for a long
+          # time. Restore the x64 entry once Intel capacity is available again.
+          # - arch: x64
+          #   runner: macos-13
           - arch: arm64
             runner: macos-14
     runs-on: ${{ matrix.runner }}

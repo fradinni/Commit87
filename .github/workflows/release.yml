@@ -32,9 +32,11 @@ jobs:
           - target: win
             arch: arm64
             runner: windows-2022
-          - target: mac
-            arch: x64
-            runner: macos-13
+          # macOS x64 is paused: GitHub-hosted Intel runners (macos-13) queue for a long
+          # time. Restore the x64 entry once Intel capacity is available again.
+          # - target: mac
+          #   arch: x64
+          #   runner: macos-13
           - target: mac
             arch: arm64
             runner: macos-14
