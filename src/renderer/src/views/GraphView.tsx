@@ -47,8 +47,8 @@ export function GraphView() {
   const notifyError = useStore((state) => state.notifyError)
   const currentBranch = useStore((state) => state.status?.branch ?? state.currentRepo?.currentBranch ?? null)
   const headSha = useStore((state) => state.status?.headSha ?? null)
-  const [query, setQuery] = useState('')
-  const [branch, setBranch] = useState('')
+  const [query, setQuery] = [useStore((state) => state.graphQuery), useStore((state) => state.setGraphQuery)]
+  const [branch, setBranch] = [useStore((state) => state.graphBranch), useStore((state) => state.setGraphBranch)]
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [detail, setDetail] = useState<Commit | null>(null)
@@ -103,8 +103,8 @@ export function GraphView() {
           search: query.trim() || undefined
         })
         const next = append ? [...commits, ...fresh.filter((item) => !commits.some((existing) => existing.sha === item.sha))] : fresh
-        useStore.setState({ commits: next })
-        if (!append) {
+        useStore.getState().updateTab(repo.path, { commits: next })
+        if (!append && useStore.getState().currentRepo?.path === repo.path) {
           selectCommit(fresh[0]?.sha ?? null)
         }
       } catch (error) {
@@ -179,7 +179,7 @@ export function GraphView() {
         startPoint: detail.sha,
         checkout: checkoutNew
       })
-      await useStore.getState().refreshAll()
+      await useStore.getState().refreshAll(repo.path)
       notify(`Branch ${formName.trim()} created`, 'success')
       setBranchModal(false)
       setFormName('')
@@ -201,7 +201,7 @@ export function GraphView() {
         commit: detail.sha,
         identityId: activeIdentity()?.id
       })
-      await useStore.getState().refreshTags()
+      await useStore.getState().refreshTags(repo.path)
       notify(`Tag ${formName.trim()} created`, 'success')
       setTagModal(false)
       setFormName('')
@@ -218,7 +218,7 @@ export function GraphView() {
     setBusy(true)
     try {
       await call('git.reset', { repoPath: repo.path, commit: detail.sha, mode: resetMode })
-      await useStore.getState().refreshAll()
+      await useStore.getState().refreshAll(repo.path)
       notify(`Reset ${resetMode} to ${shortSha(detail.sha)}`, 'success')
       setResetModal(false)
     } catch (error) {
@@ -235,7 +235,7 @@ export function GraphView() {
         action === 'cherry-pick'
           ? await call('git.cherryPick', { path: repo.path, sha: detail.sha, identityId: activeIdentity()?.id })
           : await call('git.revert', { path: repo.path, sha: detail.sha, identityId: activeIdentity()?.id })
-      await useStore.getState().refreshAll()
+      await useStore.getState().refreshAll(repo.path)
       notify(result.output?.trim() || (action === 'cherry-pick' ? 'Cherry-picked' : 'Reverted'), 'success')
     } catch (error) {
       notifyError(error)
@@ -476,7 +476,7 @@ export function GraphView() {
                         message: `This detaches HEAD at ${shortSha(detail.sha)}. Your branch will not move.`,
                         run: async () => {
                           await call('git.checkout', { repoPath: repo.path, branch: detail.sha })
-                          await useStore.getState().refreshAll()
+                          await useStore.getState().refreshAll(repo.path)
                         }
                       })
                     } else if (value === 'cherry-pick') {

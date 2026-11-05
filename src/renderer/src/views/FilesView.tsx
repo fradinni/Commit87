@@ -194,8 +194,8 @@ export function FilesView() {
   const stageFiles = async (files: string[]): Promise<void> => {
     try {
       await call('git.stage', { path: repo.path, files })
-      await refreshStatus()
-      await useStore.getState().refreshBranches()
+      await refreshStatus(repo.path)
+      await useStore.getState().refreshBranches(repo.path)
     } catch (error) {
       notifyError(error)
     }
@@ -204,7 +204,7 @@ export function FilesView() {
   const unstageFiles = async (files: string[]): Promise<void> => {
     try {
       await call('git.unstage', { path: repo.path, files })
-      await refreshStatus()
+      await refreshStatus(repo.path)
     } catch (error) {
       notifyError(error)
     }
@@ -221,7 +221,7 @@ export function FilesView() {
       setDiscardTarget(null)
       setSelectedFile(null)
       setDiff(null)
-      await refreshAll()
+      await refreshAll(repo.path)
       notify('Changes discarded', 'success')
     } catch (error) {
       notifyError(error)
@@ -247,7 +247,7 @@ export function FilesView() {
       setSelectedFile(null)
       setDiff(null)
       setFileContent(null)
-      await refreshAll()
+      await refreshAll(repo.path)
       notify('Commit created', 'success')
     } catch (error) {
       notifyError(error)
@@ -268,7 +268,7 @@ export function FilesView() {
         path: repo.path,
         defaults: { ...repoDefaults, identityId: value }
       })
-      useStore.setState({ repoDefaults: defaults })
+      useStore.getState().updateTab(repo.path, { repoDefaults: defaults })
       await useStore.getState().refreshConfig()
     } catch (error) {
       notifyError(error)

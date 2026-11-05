@@ -19,7 +19,8 @@ import {
   Settings,
   SquareTerminal,
   Tag,
-  Waypoints
+  Waypoints,
+  X
 } from 'lucide-react'
 import { activeIdentity, useStore, type ViewId } from '../store'
 import { call } from '../lib/ipc'
@@ -43,6 +44,11 @@ export function CommandPalette({ action }: { action: (action: PaletteAction) => 
   const recent = useStore((state) => state.recent)
   const branches = useStore((state) => state.branches)
   const detection = useStore((state) => state.detection)
+  const tabs = useStore((state) => state.tabs)
+  const activeTabId = useStore((state) => state.activeTabId)
+  const activateTab = useStore((state) => state.activateTab)
+  const cycleTab = useStore((state) => state.cycleTab)
+  const closeTab = useStore((state) => state.closeTab)
   const toggleConsole = useStore((state) => state.toggleConsole)
   const openRepo = useStore((state) => state.openRepo)
   const openRebase = useStore((state) => state.openRebase)
@@ -71,7 +77,7 @@ export function CommandPalette({ action }: { action: (action: PaletteAction) => 
     })
 
     items.push(
-      { id: 'open', label: 'Open repository…', hint: 'Choose a folder', group: 'Repository', icon: <FolderOpen size={15} />, run: () => action('open') },
+      { id: 'open', label: 'Open repository…', hint: 'opens a tab', group: 'Repository', icon: <FolderOpen size={15} />, run: () => action('open') },
       { id: 'clone', label: 'Clone repository…', hint: 'https or SSH URL', group: 'Repository', icon: <FolderGit2 size={15} />, run: () => action('clone') },
       { id: 'init', label: 'Create repository…', hint: 'git init', group: 'Repository', icon: <FilePlus2 size={15} />, run: () => action('init') },
       view('graph', 'Commit graph', <GitCommitHorizontal size={15} />),
@@ -86,6 +92,38 @@ export function CommandPalette({ action }: { action: (action: PaletteAction) => 
       view('settings', 'Settings', <Settings size={15} />),
       { id: 'console', label: 'Toggle git console', hint: 'Ctrl/Cmd+J', group: 'Tools', icon: <SquareTerminal size={15} />, run: () => toggleConsole() }
     )
+
+    for (const tab of tabs) {
+      if (tab.id === activeTabId) continue
+      items.push({
+        id: `tab-${tab.id}`,
+        label: `Switch to ${tab.currentRepo.name}`,
+        hint: tab.status?.branch ?? tab.currentRepo.path,
+        group: 'Repository tabs',
+        icon: <FolderGit2 size={15} />,
+        run: () => activateTab(tab.id)
+      })
+    }
+    if (tabs.length > 1) {
+      items.push(
+        {
+          id: 'next-tab',
+          label: 'Next repository tab',
+          hint: 'Ctrl+Tab',
+          group: 'Repository tabs',
+          icon: <ArrowRight size={15} />,
+          run: () => cycleTab(1)
+        },
+        {
+          id: 'close-tab',
+          label: 'Close repository tab',
+          hint: 'Ctrl/Cmd+W',
+          group: 'Repository tabs',
+          icon: <X size={15} />,
+          run: () => closeTab()
+        }
+      )
+    }
 
     if (repo) {
       items.push(
@@ -136,7 +174,7 @@ export function CommandPalette({ action }: { action: (action: PaletteAction) => 
           icon: <GitBranch size={15} />,
           run: async () => {
             await call('git.checkout', { repoPath: repo.path, branch: branch.shortName })
-            await useStore.getState().refreshAll()
+            await useStore.getState().refreshAll(repo.path)
           }
         })
       }
@@ -157,7 +195,11 @@ export function CommandPalette({ action }: { action: (action: PaletteAction) => 
     return items
   }, [
     action,
+    activateTab,
+    activeTabId,
     branches,
+    closeTab,
+    cycleTab,
     detection.accountId,
     openRebase,
     openRepo,
@@ -165,6 +207,7 @@ export function CommandPalette({ action }: { action: (action: PaletteAction) => 
     repo?.path,
     repo?.upstream,
     setView,
+    tabs,
     toggleConsole
   ])
 

@@ -35,6 +35,7 @@ export function PullsView() {
 
   const load = useCallback(async () => {
     if (!repo || !detection.accountId || !detection.owner || !detection.repo) return
+    const repoPath = repo.path
     setLoading(true)
     try {
       const result = await call('provider.pullRequests', {
@@ -44,7 +45,7 @@ export function PullsView() {
         state
       })
       setPulls(result)
-      useStore.setState({ pulls: result })
+      useStore.getState().updateTab(repoPath, { pulls: result })
     } catch (error) {
       notifyError(error)
     } finally {
@@ -113,7 +114,7 @@ export function PullsView() {
         repo: detection.repo!,
         number: pull.number
       })
-      await useStore.getState().refreshAll()
+      await useStore.getState().refreshAll(repo.path)
       notifications(`Checked out ${result.branch}`, 'success')
     } catch (error) {
       notifyError(error)

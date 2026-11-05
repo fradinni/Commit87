@@ -639,7 +639,7 @@ function RepositorySettings({ repoDefaults }: { repoDefaults: ReturnType<typeof 
   const setDefaults = async (value: typeof repoDefaults): Promise<void> => {
     try {
       const defaults = await call('repo.setDefaults', { path: repo.path, defaults: value })
-      useStore.setState({ repoDefaults: defaults })
+      useStore.getState().updateTab(repo.path, { repoDefaults: defaults })
       await refreshConfig()
       notify('Repository settings saved', 'success')
     } catch (error) {

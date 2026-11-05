@@ -8,6 +8,7 @@ export interface TaskSpec {
   title: string
   args: string[]
   cwd: string
+  repoPath?: string
   env?: NodeJS.ProcessEnv
   input?: string
   secrets?: Array<string | null | undefined>
@@ -34,6 +35,7 @@ export class TaskManager {
     let finished = false
 
     const send = (event: TaskEvent): void => {
+      event.repoPath = spec.repoPath
       if (event.text) event.text = redact(event.text, secrets)
       if (event.error) event.error = redact(event.error, secrets)
       this.emit(event)

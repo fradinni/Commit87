@@ -40,7 +40,7 @@ export function TagsView() {
     setBusy(true)
     try {
       await task()
-      await refreshTags()
+      await refreshTags(repo.path)
       if (message) notify(message, 'success')
     } catch (error) {
       notifyError(error)

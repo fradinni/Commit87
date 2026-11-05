@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { FolderGit2, Plus } from 'lucide-react'
 import { activeIdentity, useStore } from './store'
 import { call, errorMessage } from './lib/ipc'
+import { repoPathKey } from './lib/tabs'
 import { Logo, TitleBar } from './components/TitleBar'
+import { RepoTabs } from './components/RepoTabs'
 import { Sidebar } from './components/Sidebar'
 import { StatusBar, RepoOperationBanner } from './components/StatusBar'
 import { Toasts } from './components/Toasts'
@@ -31,6 +33,8 @@ export function App() {
   const init = useStore((state) => state.init)
   const config = useStore((state) => state.config)
   const repo = useStore((state) => state.currentRepo)
+  const activeTabId = useStore((state) => state.activeTabId)
+  const openPaths = useStore((state) => state.tabs.map((tab) => tab.currentRepo.path).join('\n'))
   const status = useStore((state) => state.status)
   const view = useStore((state) => state.view)
   const sidebarOpen = useStore((state) => state.sidebarOpen)
@@ -58,8 +62,7 @@ export function App() {
   const [pushForce, setPushForce] = useState<'none' | 'with-lease' | 'force'>('none')
   const [busy, setBusy] = useState(false)
   const [bootComplete, setBootComplete] = useState(false)
-  const pendingClone = useRef<string | null>(null)
-  const fetchedFor = useRef<string | null>(null)
+  const fetchedFor = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     void init()
@@ -72,10 +75,9 @@ export function App() {
       .finally(() => setBootComplete(true))
     const unsubscribeTasks = window.gitgrove.onTaskEvent((event) => {
       useStore.getState().handleTaskEvent(event)
-      if (event.kind === 'clone' && event.phase === 'end' && pendingClone.current) {
-        const target = pendingClone.current
-        pendingClone.current = null
-        void useStore.getState().openRepo(target).catch((error) => useStore.getState().notifyError(error))
+      // A finished clone opens (or activates) a tab for the new repository.
+      if (event.kind === 'clone' && event.phase === 'end' && event.repoPath) {
+        void useStore.getState().openRepo(event.repoPath).catch((error) => useStore.getState().notifyError(error))
       }
     })
     const unsubscribeMenu = window.gitgrove.onMenu((action) => {
@@ -99,6 +101,18 @@ export function App() {
         case 'init-repo':
           setInitOpen(true)
           break
+        case 'next-tab':
+          useStore.getState().cycleTab(1)
+          break
+        case 'prev-tab':
+          useStore.getState().cycleTab(-1)
+          break
+        case 'close-tab':
+          useStore.getState().closeTab()
+          break
+        case 'close-all-tabs':
+          useStore.getState().closeAllTabs()
+          break
       }
     })
     return () => {
@@ -116,16 +130,44 @@ export function App() {
   }, [config?.theme, ready])
 
   useEffect(() => {
+    document.title = repo ? `${repo.name} — GitGrove` : 'GitGrove'
+  }, [repo?.name])
+
+  useEffect(() => {
+    setPushOpen(false)
+  }, [activeTabId])
+
+  useEffect(() => {
     const handler = (event: KeyboardEvent): void => {
       const mod = event.metaKey || event.ctrlKey
       if (!mod) return
-      if (event.key.toLowerCase() === 'k') {
+      if (event.key === 'Tab') {
+        event.preventDefault()
+        useStore.getState().cycleTab(event.shiftKey ? -1 : 1)
+        return
+      }
+      const key = event.key.toLowerCase()
+      if (key >= '1' && key <= '9' && !event.shiftKey) {
+        const tab = useStore.getState().tabs[Number(key) - 1]
+        if (tab) {
+          event.preventDefault()
+          useStore.getState().activateTab(tab.id)
+        }
+        return
+      }
+      if (key === 'w' && !isEditable(event.target)) {
+        event.preventDefault()
+        if (event.shiftKey) useStore.getState().closeAllTabs()
+        else useStore.getState().closeTab()
+        return
+      }
+      if (key === 'k') {
         event.preventDefault()
         useStore.getState().setPaletteOpen(!useStore.getState().paletteOpen)
-      } else if (event.key.toLowerCase() === 'j') {
+      } else if (key === 'j') {
         event.preventDefault()
         useStore.getState().toggleConsole()
-      } else if (event.key.toLowerCase() === 'r') {
+      } else if (key === 'r') {
         event.preventDefault()
         void useStore.getState().refreshAll()
       }
@@ -135,16 +177,20 @@ export function App() {
   }, [])
 
   useEffect(() => {
+    const open = new Set(openPaths.split('\n'))
+    for (const path of fetchedFor.current) {
+      if (!open.has(path)) fetchedFor.current.delete(path)
+    }
+  }, [openPaths])
+
+  useEffect(() => {
     if (!repo || !config?.autoFetchOnOpen) return
-    if (fetchedFor.current === repo.path) return
     const repoPath = repo.path
-    fetchedFor.current = repoPath
+    if (fetchedFor.current.has(repoPath)) return
     const timer = window.setTimeout(() => {
-      void call('git.fetch', {
-        repoPath,
-        prune: true,
-        accountId: useStore.getState().detection.accountId
-      }).catch(() => undefined)
+      fetchedFor.current.add(repoPath)
+      const accountId = useStore.getState().tabs.find((tab) => tab.currentRepo.path === repoPath)?.detection.accountId
+      void call('git.fetch', { repoPath, prune: true, accountId }).catch(() => undefined)
     }, 800)
     return () => window.clearTimeout(timer)
   }, [config?.autoFetchOnOpen, repo?.path])
@@ -152,8 +198,13 @@ export function App() {
   useEffect(() => {
     if (!repo) return undefined
     const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible' && !useStore.getState().task) {
-        void useStore.getState().refreshStatus()
+      const state = useStore.getState()
+      const activeId = state.activeTabId
+      const activeBusy = Object.values(state.tasks).some(
+        (item) => item.repoPath && repoPathKey(item.repoPath, window.gitgrove.platform) === activeId
+      )
+      if (document.visibilityState === 'visible' && !activeBusy) {
+        void state.refreshStatus()
       }
     }, 5000)
     return () => window.clearInterval(timer)
@@ -177,16 +228,14 @@ export function App() {
     setBusy(true)
     try {
       const folderName = (cloneName.trim() || deriveName(cloneUrl)).replace(/[\\/:*?"<>|]/g, '-')
-      const target = `${cloneParent.replace(/[\\/]+$/, '')}/${folderName}`
       await call('repo.clone', {
         url: cloneUrl.trim(),
         directory: cloneParent,
-        name: cloneName.trim() || undefined,
+        name: cloneName.trim() || folderName || undefined,
         identityId: cloneIdentity,
         accountId: cloneAccount,
         bare: cloneBare
       })
-      pendingClone.current = target
       setCloneOpen(false)
       setCloneUrl('')
       setCloneName('')
@@ -296,6 +345,7 @@ export function App() {
   return (
     <div className="app">
       <TitleBar onPalette={() => useStore.getState().setPaletteOpen(true)} onPush={openPush} />
+      <RepoTabs onOpen={() => void pickAndOpen()} />
       <div className="app-body">
         {sidebarOpen ? <Sidebar /> : null}
         <main className="content">
@@ -308,7 +358,7 @@ export function App() {
           ) : (
             <>
               <RepoOperationBanner />
-              <div className="view-host">
+              <div className="view-host" key={activeTabId ?? 'launchpad'}>
                 {view === 'graph' ? <GraphView /> : null}
                 {view === 'files' ? <FilesView /> : null}
                 {view === 'branches' ? <BranchesView /> : null}
@@ -471,6 +521,16 @@ export function App() {
         </Field>
       </Modal>
     </div>
+  )
+}
+
+function isEditable(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  return (
+    target.isContentEditable ||
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    target.tagName === 'SELECT'
   )
 }
 

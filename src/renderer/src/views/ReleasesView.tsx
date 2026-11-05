@@ -96,7 +96,7 @@ export function ReleasesView() {
       setDraft(false)
       setPrerelease(false)
       await load()
-      await useStore.getState().refreshTags()
+      await useStore.getState().refreshTags(repo.path)
     } catch (error) {
       notifyError(error)
     } finally {

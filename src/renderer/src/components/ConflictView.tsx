@@ -76,7 +76,7 @@ export function ConflictView({
           content: withLineEndings(output, eol)
         })
       }
-      await useStore.getState().refreshStatus()
+      await useStore.getState().refreshStatus(repoPath)
       notify(dirty ? 'Conflict resolved and staged' : 'File staged', 'success')
     } catch (nextError) {
       notifyError(nextError)

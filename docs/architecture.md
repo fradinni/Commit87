@@ -166,12 +166,16 @@ needs subjects; the body is fetched on demand by `git.commitDetail`.
 (token, passphrase) and emits `TaskEvent`s over `gitgrove:task-event`:
 
 ```ts
-{ taskId, kind: 'clone' | 'fetch' | 'pull' | 'push' | 'console', phase: 'start' | 'output' | 'end' | 'error' }
+{ taskId, kind: 'clone' | 'fetch' | 'pull' | 'push' | 'console', phase: 'start' | 'output' | 'end' | 'error', repoPath? }
 ```
 
-The UI shows progress in the title bar, a persistent task chip in the status bar, and the
-git console panel. On exit the store refreshes status, branches and, after clones, the
-recent repository list.
+`repoPath` identifies the repository the task belongs to. Fetch, pull, push and console
+set it to the repository they run in, and a clone sets it to the target folder, so the
+renderer can refresh and stream into the right tab even when the user has switched away.
+
+The UI shows progress in the title bar and a persistent task chip in the status bar. On
+exit the store refreshes status, branches and, after clones, the recent repository list,
+targeting the tab that started the task.
 
 ### Git console allow-list
 
@@ -273,8 +277,21 @@ then `git switch -c pr-N <ref>` with the integration token used for the fetch.
 
 ## UI
 
-- **State**: a single zustand store with the current repo, derived collections (commits,
-  branches, tags, worktrees, stashes, pulls, runs), loading flags, toasts and task state.
+- **State**: a single zustand store holding `tabs: RepoTab[]` plus `activeTabId`. Each tab
+  owns the repository info, identity/forge defaults, status, collections (commits,
+  branches, tags, worktrees, stashes, submodules, pulls), commit selection, commit-graph
+  search/branch filters and git console output. The store mirrors the active tab's fields
+  at the top level so views keep plain selectors; every write to a mirrored field is copied
+  back into the owning tab record first, and switching tabs hydrates the mirror from the
+  target record. Global state (config, toasts, sidebar/palette/dialogs) stays outside the
+  tab record. Views remount on a tab switch, so component-local dialog state cannot leak
+  into another repository.
+- **Repository tabs**: the strip above the sidebar shows the branch and a dirty dot per
+  repository, supports drag reorder, middle-click close and `Ctrl+Tab`, `Ctrl/Cmd+1…9`
+  and `Ctrl/Cmd+W`. Opening a path that is already open activates its tab instead of
+  reloading it; deep links and second instances take the same path. A deliberate tab switch
+  cancels a repository that is still loading, so it cannot steal focus when it finishes.
+  Closing the last tab returns to the launchpad.
 - **Views**: launchpad, commit graph, files/staging, branches, worktrees, submodules, tags,
   stashes, remotes, pull requests, releases, pipelines, settings.
 - **Interactive rebase**: a modal planner over `onto..HEAD` where commits can be reordered,

@@ -130,7 +130,7 @@ a {
 
 .app {
   display: grid;
-  grid-template-rows: 46px minmax(0, 1fr) 28px;
+  grid-template-rows: 46px auto minmax(0, 1fr) 28px;
   height: 100%;
   background: var(--bg-app);
 }
@@ -488,6 +488,151 @@ a {
 }
 
 .dropdown button:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* --------------------------------------------------------------- repo tabs */
+
+.repo-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 6px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+
+.repo-tabs-scroll {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.repo-tabs-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.repo-tab {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 280px;
+  margin-top: 4px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  color: var(--muted);
+}
+
+.repo-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-dim);
+}
+
+.repo-tab.is-active {
+  background: var(--bg-app);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.repo-tab.is-dragging {
+  opacity: 0.45;
+}
+
+.repo-tab-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 100%;
+  padding: 0 4px 0 10px;
+  color: inherit;
+}
+
+.repo-tab-icon {
+  display: flex;
+  color: var(--muted);
+  flex: none;
+}
+
+.repo-tab.is-active .repo-tab-icon {
+  color: var(--accent);
+}
+
+.repo-tab-name {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.repo-tab-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.repo-tab-dirty {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--amber);
+}
+
+.repo-tab-close {
+  width: 20px;
+  height: 20px;
+  margin-right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: 4px;
+  color: var(--muted);
+  opacity: 0;
+}
+
+.repo-tab:hover .repo-tab-close,
+.repo-tab.is-active .repo-tab-close {
+  opacity: 1;
+}
+
+.repo-tab-close:hover,
+.repo-tab-close:focus-visible {
+  background: var(--border-strong);
+  color: var(--text);
+  opacity: 1;
+}
+
+.repo-tab-add {
+  width: 26px;
+  margin: 4px 4px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+}
+
+.repo-tab-add:hover {
   background: var(--bg-hover);
   color: var(--text);
 }
