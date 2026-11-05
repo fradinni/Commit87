@@ -2,11 +2,11 @@ import {
   ArrowRight,
   CheckCircle2,
   Cloud,
+  Command,
   FolderGit2,
   FolderOpen,
   GitBranch,
   GitCommitHorizontal,
-  Github,
   Plus,
   Settings,
   Sparkles,
@@ -225,7 +225,7 @@ export function Launchpad({
         </div>
         <div className="setup-card">
           <span className="setup-icon purple">
-            <Github size={17} />
+            <Command size={17} />
           </span>
           <div>
             <h3>Keyboard first</h3>
