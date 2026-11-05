@@ -271,13 +271,21 @@ tests/               vitest suites (parsers, providers, git integration, securit
 
 ## Roadmap
 
+Current priorities, in order:
+
+1. **Multiple simultaneous repository tabs** (state is already per-repository)
+2. **Auto-update channels for AppImage, NSIS and DMG**
+3. **Diff review comments and inline PR review**
+
+Next up:
+
+- [ ] Git LFS status and pull/prune actions
+- [ ] Windows ARM64 native ARM build validation on hardware
+
+Shipped:
+
 - [x] Interactive rebase editor (todo list, squash, reword) inside the app
 - [x] Submodule management UI
-- [ ] Git LFS status and pull/prune actions
-- [ ] Diff review comments and inline PR review
-- [ ] Multiple simultaneous repository tabs (state is already per-repository)
-- [ ] Auto-update channels for AppImage, NSIS and DMG
-- [ ] Windows ARM64 native ARM build validation on hardware
 
 ## License
 
