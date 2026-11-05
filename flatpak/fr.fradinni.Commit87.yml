@@ -28,7 +28,8 @@ modules:
   - name: git
     buildsystem: simple
     build-commands:
-      - ./configure --prefix=/app --with-openssl --with-curl --with-expat --with-zlib --without-tcltk --without-perl --without-python
+      # The SDK has no perl; NO_PERL=YesPlease lets configure accept --without-perl.
+      - NO_PERL=YesPlease ./configure --prefix=/app --with-openssl --with-curl --with-expat --with-zlib --without-tcltk --without-perl --without-python
       - make -j"${FLATPAK_BUILDER_N_JOBS:-4}"
       - make install
     sources:

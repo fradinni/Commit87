@@ -1,4 +1,4 @@
-app: commit87
+name: commit87
 base: core24
 version: '0.1.0'
 summary: Focused desktop Git client
@@ -30,12 +30,6 @@ platforms:
   arm64:
     build-on: [arm64]
     build-for: [arm64]
-
-plugs:
-  password-manager-service:
-  ssh-keys:
-  home:
-  removable-media:
 
 apps:
   commit87:
