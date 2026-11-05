@@ -65,7 +65,9 @@ const config: AppConfig = {
   recentRepos: [],
   maxCommits: 500,
   confirmDestructive: true,
-  autoFetchOnOpen: false
+  autoFetchOnOpen: false,
+  updateChannel: 'stable',
+  autoUpdateCheck: true
 }
 
 const handlers: Record<string, (payload: unknown) => unknown> = {

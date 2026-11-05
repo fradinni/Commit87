@@ -33,7 +33,9 @@ const DEFAULT_CONFIG: AppConfig = {
   recentRepos: [],
   maxCommits: 500,
   confirmDestructive: true,
-  autoFetchOnOpen: false
+  autoFetchOnOpen: false,
+  updateChannel: 'stable',
+  autoUpdateCheck: true
 }
 
 /** App name used before the Commit87 rename; profiles were stored under it. */

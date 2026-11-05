@@ -11,6 +11,7 @@ export function installMenu(): void {
       label: app.name,
       submenu: [
         { role: 'about' },
+        { label: 'Check for Updates…', click: () => app.emit('commit87:menu', 'check-updates') },
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
@@ -75,6 +76,14 @@ export function installMenu(): void {
     {
       role: 'help',
       submenu: [
+        {
+          label: 'Check for Updates…',
+          click: () => app.emit('commit87:menu', 'check-updates')
+        },
+        {
+          label: 'Latest release notes',
+          click: () => void shell.openExternal('https://github.com/fradinni/Commit87/releases')
+        },
         {
           label: 'Git documentation',
           click: () => void shell.openExternal('https://git-scm.com/doc')

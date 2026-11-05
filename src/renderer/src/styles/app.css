@@ -419,6 +419,37 @@ a {
   white-space: nowrap;
 }
 
+.update-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 20px;
+  color: var(--blue);
+  background: var(--blue-soft);
+  font-size: 11px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.update-chip:hover {
+  border-color: var(--blue);
+}
+
+.update-chip-downloading {
+  color: var(--amber);
+  background: var(--amber-soft);
+  border-color: var(--amber);
+}
+
+.update-chip-ready {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
 .palette-trigger {
   display: flex;
   align-items: center;

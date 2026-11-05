@@ -1,8 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { EventEmitter } from 'node:events'
-import { statSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import path from 'node:path'
-import { IPC_INVOKE, IPC_MENU, IPC_TASK_EVENT } from '@shared/ipc'
+import { IPC_INVOKE, IPC_MENU, IPC_TASK_EVENT, IPC_UPDATE_STATUS } from '@shared/ipc'
 import type { IpcChannel, IpcEnvelope } from '@shared/ipc'
 import { AppStore } from './store'
 import { TaskManager } from './tasks'
@@ -12,6 +12,9 @@ import { createMainWindow } from './window'
 import { createSplashWindow } from './splash'
 import { installMenu } from './menu'
 import { registerAppProtocol, registerAppScheme } from './protocol'
+import { UpdateService } from './updates'
+import { createElectronUpdater } from './update-adapter'
+import { APP_VERSION } from './version'
 
 app.setName('Commit87')
 if (process.platform === 'win32') {
@@ -173,7 +176,30 @@ app.whenReady().then(() => {
       mainWindow?.webContents.send(IPC_TASK_EVENT, { event: taskEvent })
     })
     const providers = new ProviderService(store)
-    const router = new Router(store, tasks, providers, () => mainWindow, () => {
+    const updates = new UpdateService({
+      adapter: createElectronUpdater(),
+      environment: {
+        platform: process.platform,
+        isPackaged: app.isPackaged,
+        appImage: process.env.APPIMAGE,
+        portable: process.env.PORTABLE_EXECUTABLE_FILE,
+        snap: process.env.SNAP,
+        flatpak: process.env.FLATPAK_ID,
+        // NSIS installs ship an uninstaller next to the executable; portable and
+        // zip builds do not, so they are not updated in place.
+        windowsUninstaller: existsSync(path.join(path.dirname(process.execPath), 'Uninstall Commit87.exe'))
+      },
+      version: APP_VERSION,
+      preferences: () => {
+        const config = store.getConfig()
+        return { channel: config.updateChannel, autoCheck: config.autoUpdateCheck }
+      },
+      onChange: (status) => {
+        mainWindow?.webContents.send(IPC_UPDATE_STATUS, status)
+      }
+    })
+    updates.start()
+    const router = new Router(store, tasks, providers, updates, () => mainWindow, () => {
       const target = launchTarget
       launchTarget = null
       return target

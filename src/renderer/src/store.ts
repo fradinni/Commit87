@@ -17,6 +17,7 @@ import type {
   SubmoduleInfo,
   TagInfo,
   TaskEvent,
+  UpdateStatus,
   WorktreeInfo
 } from '@shared/types'
 import type { IpcMethods, IpcRequest } from '@shared/ipc'
@@ -39,6 +40,8 @@ export type ViewId =
   | 'releases'
   | 'actions'
   | 'settings'
+
+export type SettingsTab = 'general' | 'identities' | 'integrations' | 'repository' | 'updates' | 'about'
 
 export interface Toast {
   id: string
@@ -92,6 +95,8 @@ interface StoreState {
   appInfo: AppInfo | null
   config: AppConfig | null
   recent: RecentRepo[]
+  updateStatus: UpdateStatus | null
+  settingsTab: SettingsTab
   tabs: RepoTab[]
   activeTabId: string | null
   currentRepo: RepoInfo | null
@@ -123,6 +128,11 @@ interface StoreState {
 
   init: () => Promise<void>
   refreshConfig: () => Promise<void>
+  setUpdateStatus: (status: UpdateStatus) => void
+  setSettingsTab: (tab: SettingsTab) => void
+  checkForUpdates: (options?: { navigate?: boolean }) => Promise<void>
+  downloadUpdate: () => Promise<void>
+  installUpdate: () => Promise<void>
   loadRecent: () => Promise<void>
   removeRecent: (path: string) => Promise<void>
   pinRecent: (path: string, pinned: boolean) => Promise<void>
@@ -276,6 +286,8 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
   appInfo: null,
   config: null,
   recent: [],
+  updateStatus: null,
+  settingsTab: 'general',
   tabs: [],
   activeTabId: null,
   ...emptyRepoSlice,
@@ -292,12 +304,13 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
 
   async init() {
     try {
-      const [appInfo, config, recent] = await Promise.all([
+      const [appInfo, config, recent, updateStatus] = await Promise.all([
         call('app.info', undefined),
         call('config.get', undefined),
-        call('repo.recent', undefined)
+        call('repo.recent', undefined),
+        call('update.status', undefined)
       ])
-      set({ appInfo, config, recent, ready: true })
+      set({ appInfo, config, recent, updateStatus, ready: true })
     } catch (error) {
       set({
         ready: true,
@@ -309,6 +322,45 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
   async refreshConfig() {
     const [config, recent] = await Promise.all([call('config.get', undefined), call('repo.recent', undefined)])
     set({ config, recent })
+  },
+
+  setUpdateStatus(status) {
+    set({ updateStatus: status })
+  },
+
+  setSettingsTab(tab) {
+    set({ settingsTab: tab })
+  },
+
+  async checkForUpdates(options) {
+    if (options?.navigate) set({ view: 'settings', settingsTab: 'updates' })
+    try {
+      const status = await call('update.check', undefined)
+      set({ updateStatus: status })
+      if (status.phase === 'up-to-date') get().notify('Commit87 is up to date', 'success')
+      else if (status.phase === 'available' && !status.autoCheck) {
+        get().notify(`Commit87 ${status.version ?? 'update'} is available`, 'info')
+      } else if (status.phase === 'error') get().notify(status.error ?? 'Update check failed', 'error')
+      else if (status.phase === 'unsupported') get().notify(status.reason ?? 'Updates are managed elsewhere', 'info')
+    } catch (error) {
+      get().notifyError(error)
+    }
+  },
+
+  async downloadUpdate() {
+    try {
+      set({ updateStatus: await call('update.download', undefined) })
+    } catch (error) {
+      get().notifyError(error)
+    }
+  },
+
+  async installUpdate() {
+    try {
+      await call('update.install', undefined)
+    } catch (error) {
+      get().notifyError(error)
+    }
   },
 
   async loadRecent() {

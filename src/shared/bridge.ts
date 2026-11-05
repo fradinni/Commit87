@@ -1,5 +1,5 @@
 import type { IpcChannel, IpcRequest, IpcResponse, WindowStateEvent } from './ipc'
-import type { TaskEvent } from './types'
+import type { TaskEvent, UpdateStatus } from './types'
 
 /**
  * The complete surface the preload exposes on the renderer. Kept dependency-free
@@ -10,6 +10,7 @@ export interface Commit87Bridge {
   onTaskEvent(callback: (event: TaskEvent) => void): () => void
   onWindowState(callback: (state: WindowStateEvent) => void): () => void
   onMenu(callback: (action: string) => void): () => void
+  onUpdateStatus(callback: (status: UpdateStatus) => void): () => void
   platform: string
   versions: { electron: string; chrome: string; node: string }
 }

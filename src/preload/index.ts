@@ -1,8 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC_INVOKE, IPC_MENU, IPC_TASK_EVENT, IPC_WINDOW_STATE } from '@shared/ipc'
+import { IPC_INVOKE, IPC_MENU, IPC_TASK_EVENT, IPC_UPDATE_STATUS, IPC_WINDOW_STATE } from '@shared/ipc'
 import type { IpcChannel, IpcEnvelope, IpcRequest, IpcResponse, TaskEventEnvelope, WindowStateEvent } from '@shared/ipc'
 import type { Commit87Bridge } from '@shared/bridge'
-import type { TaskEvent } from '@shared/types'
+import type { TaskEvent, UpdateStatus } from '@shared/types'
 
 async function invoke<K extends IpcChannel>(channel: K, payload: IpcRequest<K>): Promise<IpcResponse<K>> {
   const response = (await ipcRenderer.invoke(IPC_INVOKE, { channel, payload } satisfies IpcEnvelope<K>)) as {
@@ -30,6 +30,9 @@ const api: Commit87Bridge = {
   },
   onMenu(callback: (action: string) => void): () => void {
     return subscribe<string>(IPC_MENU, callback)
+  },
+  onUpdateStatus(callback: (status: UpdateStatus) => void): () => void {
+    return subscribe<UpdateStatus>(IPC_UPDATE_STATUS, callback)
   },
   platform: process.platform,
   versions: {

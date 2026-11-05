@@ -4,6 +4,7 @@ import {
   CloudDownload,
   CloudUpload,
   Command,
+  Download,
   GitBranch,
   PanelLeft,
   RefreshCw,
@@ -36,6 +37,7 @@ export function TitleBar({ onPalette, onPush }: { onPalette: () => void; onPush:
   const tasks = useStore((state) => state.tasks)
   const consoleOpen = useStore((state) => state.consoleOpen)
   const toggleConsole = useStore((state) => state.toggleConsole)
+  const updateStatus = useStore((state) => state.updateStatus)
   const sidebarOpen = useStore((state) => state.sidebarOpen)
   const setSidebarOpen = useStore((state) => state.setSidebarOpen)
   const notifyError = useStore((state) => state.notifyError)
@@ -152,6 +154,31 @@ export function TitleBar({ onPalette, onPush }: { onPalette: () => void; onPush:
       </div>
 
       <div className="titlebar-right no-drag">
+        {updateStatus && ['available', 'downloading', 'ready'].includes(updateStatus.phase) ? (
+          <button
+            className={`update-chip update-chip-${updateStatus.phase}`}
+            title={
+              updateStatus.phase === 'ready'
+                ? 'An update is downloaded and ready to install'
+                : updateStatus.phase === 'downloading'
+                  ? 'Update download in progress'
+                  : `Commit87 ${updateStatus.version ?? ''} is available`
+            }
+            onClick={() => {
+              useStore.getState().setSettingsTab('updates')
+              useStore.getState().setView('settings')
+            }}
+          >
+            <Download size={13} />
+            <span>
+              {updateStatus.phase === 'ready'
+                ? 'Restart to update'
+                : updateStatus.phase === 'downloading'
+                  ? `Updating ${updateStatus.progress?.percent ?? 0}%`
+                  : `v${updateStatus.version ?? ''} available`}
+            </span>
+          </button>
+        ) : null}
         {task ? (
           <span className="task-chip" title={task.title}>
             <Spinner size={12} />

@@ -18,11 +18,12 @@ npm run typecheck        # strict TS across main, preload, renderer
 | `tests/task-events.test.ts` | streaming task events carry the originating `repoPath` for every phase, and omit it for repository-less tasks |
 | `tests/credentials.test.ts` | identity environment, SSH command quoting, credential-helper argv safety, secret redaction |
 | `tests/ui-logic.test.ts` | unified diff parser (adds/deletes/renames/binary), commit graph lane layout, console tokenizer and allow-list |
+| `tests/updates.test.ts` | update support per packaging format, progress clamping, channel and auto-check preferences, the check → available → download → ready state machine, error sanitization, concurrent checks, install gating and the automatic check timer |
 | `tests/providers.test.ts` | GitHub, GitLab, Bitbucket and Gitea mapping, auth headers, enterprise base paths, error messages, workflow dispatch payloads |
 | `tests/git.integration.test.ts` | real `git` end-to-end: init, status, staged diff, commit with identity, branch create/checkout/merge, annotated tags, worktree add/remove, stash push/apply |
 | `tests/submodule.integration.test.ts` | real `git` end-to-end: add, status/config join, dirty detection and forced clean reset (including nested submodules), checkout drift and update, deinit/reinit, tracked-branch update, URL sync, remove (working tree, module dir, `.gitmodules`, config section), uncommitted-add removal and dirty refusal, linked-worktree isolation, orphan gitlinks, unstaged `.gitmodules` refusal and path validation |
 
-Total: 162 tests. The integration suites create temporary repositories under
+Total: 196 tests. The integration suites create temporary repositories under
 `os.tmpdir()` and remove them afterwards; they require `git` on `PATH`.
 
 ## What is asserted, not just executed
@@ -59,6 +60,43 @@ Total: 162 tests. The integration suites create temporary repositories under
   as tabs through the single-instance deep link, view memory survived switching, the
   window title followed the active repository, `Ctrl+Tab`/`Ctrl+1` switched and closing
   an inactive tab left the active one untouched.
+
+## Update demo harness
+
+`scripts/demo-updates.mjs` serves a local feed with a stable `0.2.0` and a beta
+`0.3.0-beta.1`, throttled so the download state is visible. It also prepares a packaged
+AppImage by extracting it and rewriting only its generated `app-update.yml`:
+
+```bash
+npm run build
+npx electron-builder --config electron-builder.config.cjs --linux --x64 --dir
+# or build a real AppImage:
+npx electron-builder --config electron-builder.config.cjs --linux --x64
+
+node scripts/demo-updates.mjs prepare dist/Commit87-0.1.0-linux-x86_64.AppImage
+node scripts/demo-updates.mjs serve          # terminal 2
+APPIMAGE="$PWD/dist/Commit87-0.1.0-linux-x86_64.AppImage" dist/update-demo/squashfs-root/AppRun
+```
+
+The feed metadata is x64-only (`latest-linux.yml`); use an x64 AppImage. The unpacked
+`dist/linux-unpacked` build can also be used by pointing its
+`resources/app-update.yml` at `http://127.0.0.1:8787/` and launching it with
+`APPIMAGE` set to any executable path.
+
+Open Settings → Updates. The flow to check:
+
+1. Stable channel: Check now → 0.2.0 available → Download → progress → ready to install.
+   The title bar shows the same state.
+2. Switch to Beta and check again: 0.3.0-beta.1 is offered, proving the channel file is
+   used; switching back clears the stale offer and cancels a download in flight.
+3. Toggle automatic checks off and on; with it on, the next launch checks after about
+   12 seconds and downloads in the background.
+4. Unsupported builds are covered in the unit tests and visible in the dev app: Settings →
+   Updates reports "In-place updates are not available for this build" and links to the
+   release page.
+
+Do not press Restart & install with the placeholder artifact: it is not a valid AppImage.
+The demo is for the check, channel, progress, ready and error states only.
 
 ## Manual verification performed
 

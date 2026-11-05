@@ -22,6 +22,26 @@ Artifacts land in `dist/`. CI uploads them per runner
 (`.github/workflows/ci.yml`) and publishes drafts on tags
 (`.github/workflows/release.yml`).
 
+## Update feeds
+
+`electron-builder` writes update metadata next to the artifacts (`latest.yml` on Windows,
+`latest-linux.yml` for the AppImage, `latest-mac.yml` for the zip) because `publish`
+points at the GitHub repository. The app's updater reads that file from the packaged
+`app-update.yml`; the renderer never supplies a URL.
+
+- Stable tags such as `v0.2.0` publish `latest*` and stay drafts until published.
+- Prerelease tags such as `v0.2.0-beta.1` set `COMMIT87_RELEASE_CHANNEL=beta` in the
+  release workflow, so only `beta*` is written, the GitHub release is marked as a
+  pre-release, and stable installs stay put. Only `-beta.N` is accepted; `-rc.1` or
+  `-alpha.1` tags fail the workflow because no client would look for their channel file.
+- The macOS feed must include the `.zip` target next to the `.dmg`; the zip is what the
+  updater downloads and swaps in.
+- A draft GitHub release is invisible to the updater. Publish the release before expecting
+  clients to see it.
+
+`electron-updater` is bundled into `out/main` by `electron-vite`, so the ASAR still ships
+without `node_modules`.
+
 ## Linux packaging details
 
 Building the container formats with `electron-builder` needs host tools that are not

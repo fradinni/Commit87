@@ -102,6 +102,21 @@ trust.**
 - Pushes authenticate with the selected integration account through an ephemeral
   credential helper — tokens never appear in `argv` or in the process list
 
+### Updates
+
+- In-place updates for the AppImage, the Windows NSIS installer and the macOS app bundle
+  (installed from the release zip)
+- Stable and beta channels; prerelease tags publish `beta.yml` and never reach stable
+  installs
+- Automatic check after launch with background download, or a manual check that waits for
+  an explicit Download action
+- Downloads are installed only by the **Restart & install** action, so quitting the app
+  never swaps the binary without confirmation
+- Progress, release notes and failures stay in Settings → Updates without exposing the
+  feed or artifacts to the renderer
+- Flatpak, Snap, portable, zip and package-manager builds are told where to update instead
+  of being patched behind their back
+
 ### Built for the keyboard
 
 | Shortcut | Action |
@@ -277,9 +292,8 @@ tests/               vitest suites (parsers, providers, git integration, securit
 
 Current priorities, in order:
 
-1. **Auto-update channels for AppImage, NSIS and DMG**
-2. **Diff review comments and inline PR review**
-3. **Git LFS status and pull/prune actions**
+1. **Diff review comments and inline PR review**
+2. **Git LFS status and pull/prune actions**
 
 Next up:
 
@@ -287,6 +301,7 @@ Next up:
 
 Shipped:
 
+- [x] Auto-update channels for AppImage, NSIS and DMG, with stable and beta feeds
 - [x] Multiple simultaneous repository tabs, each with per-repository state
 - [x] Interactive rebase editor (todo list, squash, reword) inside the app
 - [x] Submodule management UI

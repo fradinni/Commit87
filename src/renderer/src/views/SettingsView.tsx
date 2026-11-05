@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
   CheckCircle2,
+  Download,
   ExternalLink,
   FolderOpen,
   GitBranch,
@@ -13,18 +14,18 @@ import {
   RefreshCw,
   Settings2,
   ShieldCheck,
+  Sparkles,
   Terminal,
   Trash2,
   UserRound,
   XCircle
 } from 'lucide-react'
-import { PROVIDERS, type AppConfig, type GitIdentity, type IntegrationAccount, type ProviderId } from '@shared/types'
+import { PROVIDERS, type AppConfig, type GitIdentity, type IntegrationAccount, type ProviderId, type UpdatePhase } from '@shared/types'
 import { useStore } from '../store'
 import { call } from '../lib/ipc'
+import { formatBytes, formatRelativeTime } from '../lib/format'
 import { Badge, Button, ConfirmDialog, EmptyState, Field, IconButton, Modal, Select, TextInput, Toggle } from '../components/ui'
 import { IdentitySelect, AccountSelect } from '../components/selectors'
-
-type SettingsTab = 'general' | 'identities' | 'integrations' | 'repository' | 'about'
 
 export function SettingsView() {
   const config = useStore((state) => state.config)
@@ -32,7 +33,8 @@ export function SettingsView() {
   const repoDefaults = useStore((state) => state.repoDefaults)
   const notify = useStore((state) => state.notify)
   const notifyError = useStore((state) => state.notifyError)
-  const [tab, setTab] = useState<SettingsTab>('general')
+  const tab = useStore((state) => state.settingsTab)
+  const setTab = useStore((state) => state.setSettingsTab)
   const [busy, setBusy] = useState(false)
 
   if (!config) return null
@@ -60,6 +62,7 @@ export function SettingsView() {
             ['identities', 'Git identities'],
             ['integrations', 'Integrations'],
             ['repository', 'Repository'],
+            ['updates', 'Updates'],
             ['about', 'About & diagnostics']
           ] as const).map(([id, label]) => (
             <button key={id} className={tab === id ? 'is-active' : ''} onClick={() => setTab(id)}>
@@ -76,6 +79,7 @@ export function SettingsView() {
         {tab === 'repository' ? (
           <RepositorySettings repoDefaults={repoDefaults} />
         ) : null}
+        {tab === 'updates' ? <UpdatesSettings patch={patch} /> : null}
         {tab === 'about' ? <AboutSettings /> : null}
       </div>
     </div>
@@ -716,8 +720,258 @@ function RepositorySettings({ repoDefaults }: { repoDefaults: ReturnType<typeof 
   )
 }
 
+function UpdatesSettings({
+  patch
+}: {
+  patch: (value: Partial<AppConfig>) => Promise<void>
+}) {
+  const config = useStore((state) => state.config)
+  const status = useStore((state) => state.updateStatus)
+
+  if (!config) return null
+
+  const enableAutoCheck = async (enabled: boolean): Promise<void> => {
+    await patch({ autoUpdateCheck: enabled })
+    if (enabled) void useStore.getState().checkForUpdates({ navigate: true })
+  }
+
+  const phase = status?.phase ?? 'idle'
+  const supported = status?.supported ?? false
+  const busy = phase === 'checking' || phase === 'downloading'
+  const channel = config.updateChannel
+
+  return (
+    <div className="settings-sections">
+      <section className="settings-card">
+        <div className="settings-card-head update-card-head">
+          <div>
+            <h3>Commit87 {status?.currentVersion ?? ''}</h3>
+            <p>
+              Updates are downloaded in the background and installed on request. Repositories, identities
+              and settings are preserved.
+            </p>
+          </div>
+          <div className="update-badges">
+            <Badge tone="outline">{channel === 'beta' ? 'Beta channel' : 'Stable channel'}</Badge>
+            <Badge tone={phase === 'ready' ? 'green' : phase === 'error' ? 'red' : 'neutral'}>{phaseLabel(phase)}</Badge>
+          </div>
+        </div>
+
+        {supported ? (
+          <div className="update-preferences">
+            <Field label="Release channel" hint="Beta builds receive prerelease versions before they reach stable.">
+              <Select
+                value={channel}
+                onChange={(event) => void patch({ updateChannel: event.target.value as AppConfig['updateChannel'] })}
+                disabled={phase === 'downloading'}
+              >
+                <option value="stable">Stable</option>
+                <option value="beta">Beta</option>
+              </Select>
+            </Field>
+            <Toggle
+              checked={config.autoUpdateCheck}
+              onChange={(value) => void enableAutoCheck(value)}
+              label="Check for and download updates automatically"
+              hint="Checks after launch and fetches a newer build in the background."
+            />
+          </div>
+        ) : null}
+
+        {!supported ? (
+          <div className="update-unsupported">
+            <AlertTriangle size={16} />
+            <div>
+              <strong>In-place updates are not available for this build</strong>
+              <p>{status?.reason ?? 'Install updates with the package manager that provided Commit87.'}</p>
+              <Button
+                size="sm"
+                variant="outline"
+                icon={<ExternalLink size={13} />}
+                onClick={() => void call('app.openExternal', { url: 'https://github.com/fradinni/Commit87/releases' })}
+              >
+                Open releases
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className={`update-state update-state-${phase}`}>
+              <span className="update-state-icon">{phaseIcon(phase)}</span>
+              <div className="update-state-copy">
+                <strong>{phaseTitle(phase, status?.version, channel)}</strong>
+                <span>{phaseDetail(status, channel)}</span>
+              </div>
+              <div className="update-actions">
+                {phase === 'available' ? (
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    icon={<Download size={13} />}
+                    onClick={() => void useStore.getState().downloadUpdate()}
+                  >
+                    Download
+                  </Button>
+                ) : null}
+                {phase === 'ready' ? (
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    icon={<Sparkles size={13} />}
+                    onClick={() => void useStore.getState().installUpdate()}
+                  >
+                    Restart &amp; install
+                  </Button>
+                ) : null}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<RefreshCw size={13} />}
+                  loading={phase === 'checking'}
+                  disabled={busy || phase === 'ready'}
+                  onClick={() => void useStore.getState().checkForUpdates({ navigate: true })}
+                >
+                  {phase === 'error' ? 'Try again' : 'Check now'}
+                </Button>
+              </div>
+            </div>
+
+            {status?.progress && (phase === 'downloading' || phase === 'ready') ? (
+              <div className="update-progress-block">
+                <div
+                  className="update-progress"
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={status.progress.percent}
+                >
+                  <span style={{ width: `${status.progress.percent}%` }} />
+                </div>
+                <span className="update-progress-meta">
+                  {status.progress.percent}%
+                  {status.progress.total ? ` · ${formatBytes(status.progress.transferred)} of ${formatBytes(status.progress.total)}` : ''}
+                  {phase === 'downloading' && status.progress.bytesPerSecond ? ` · ${formatBytes(status.progress.bytesPerSecond)}/s` : ''}
+                </span>
+              </div>
+            ) : null}
+
+            {status?.releaseNotes && (phase === 'available' || phase === 'downloading' || phase === 'ready') ? (
+              <details className="diagnostics update-notes">
+                <summary>Release notes for {status.version}</summary>
+                <pre>{status.releaseNotes}</pre>
+              </details>
+            ) : null}
+          </>
+        )}
+      </section>
+
+      <section className="settings-card">
+        <h3>How updates work</h3>
+        <p>
+          Commit87 uses signed release artifacts from the project release page. The AppImage replaces itself,
+          the Windows installer runs silently and the macOS bundle is swapped from the release zip. Package
+          manager, portable and sandboxed builds remain on their own update path.
+        </p>
+        <div className="kv-grid">
+          <span>Current version</span><span>{status?.currentVersion ?? '—'}</span>
+          <span>Channel</span><span>{channel === 'beta' ? 'beta (prerelease)' : 'stable (latest)'}</span>
+          <span>Last check</span><span>{status?.checkedAt ? formatRelativeTime(status.checkedAt) : 'never'}</span>
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function phaseLabel(phase: UpdatePhase): string {
+  switch (phase) {
+    case 'unsupported':
+      return 'manual updates'
+    case 'checking':
+      return 'checking'
+    case 'up-to-date':
+      return 'up to date'
+    case 'available':
+      return 'available'
+    case 'downloading':
+      return 'downloading'
+    case 'ready':
+      return 'ready to install'
+    case 'error':
+      return 'check failed'
+    default:
+      return 'idle'
+  }
+}
+
+function phaseTitle(phase: UpdatePhase, version: string | null | undefined, channel: AppConfig['updateChannel']): string {
+  switch (phase) {
+    case 'checking':
+      return 'Checking for updates…'
+    case 'up-to-date':
+      return `You are on the latest ${channel} build`
+    case 'available':
+      return `Commit87 ${version ?? 'update'} is available`
+    case 'downloading':
+      return `Downloading Commit87 ${version ?? 'update'}`
+    case 'ready':
+      return `Commit87 ${version ?? 'update'} is ready to install`
+    case 'error':
+      return 'Update check failed'
+    case 'unsupported':
+      return 'Managed by your installation method'
+    default:
+      return 'No update check yet'
+  }
+}
+
+function phaseDetail(
+  status: ReturnType<typeof useStore.getState>['updateStatus'],
+  channel: AppConfig['updateChannel']
+): string {
+  if (!status) return 'Update status is still loading.'
+  switch (status.phase) {
+    case 'checking':
+      return `Current version ${status.currentVersion} · ${channel} channel`
+    case 'up-to-date':
+      return status.checkedAt ? `Checked ${formatRelativeTime(status.checkedAt)}.` : 'No newer release was found.'
+    case 'available':
+      return status.autoCheck
+        ? 'The download starts automatically. You can also fetch it now.'
+        : 'Download it when you are ready; nothing is installed without your confirmation.'
+    case 'downloading':
+      return 'Keep the app open. The install prompt appears when the download completes.'
+    case 'ready':
+      return 'Restart to finish. Your repositories and settings are kept.'
+    case 'error':
+      return status.error ?? 'The update server could not be reached.'
+    case 'unsupported':
+      return status.reason ?? 'Use the package manager that provided Commit87.'
+    default:
+      return 'Check now, or wait for the automatic check after launch.'
+  }
+}
+
+function phaseIcon(phase: UpdatePhase) {
+  switch (phase) {
+    case 'checking':
+    case 'downloading':
+      return <RefreshCw size={16} className="spin" />
+    case 'up-to-date':
+    case 'ready':
+      return <CheckCircle2 size={16} />
+    case 'error':
+      return <XCircle size={16} />
+    case 'available':
+      return <Download size={16} />
+    default:
+      return <Sparkles size={16} />
+  }
+}
+
 function AboutSettings() {
   const appInfo = useStore((state) => state.appInfo)
+  const config = useStore((state) => state.config)
+  const updateStatus = useStore((state) => state.updateStatus)
   const notify = useStore((state) => state.notify)
   const diagnostics = useMemo(
     () =>
@@ -731,12 +985,15 @@ function AboutSettings() {
           arch: appInfo?.arch,
           git: appInfo?.git,
           configPath: appInfo?.configPath,
-          secretsEncrypted: appInfo?.secretsEncrypted
+          secretsEncrypted: appInfo?.secretsEncrypted,
+          updateChannel: config?.updateChannel,
+          updatePhase: updateStatus?.phase,
+          updateVersion: updateStatus?.version
         },
         null,
         2
       ),
-    [appInfo]
+    [appInfo, config?.updateChannel, updateStatus?.phase, updateStatus?.version]
   )
 
   return (

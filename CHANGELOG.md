@@ -8,6 +8,14 @@ All notable changes to Commit87 are documented here. The format follows
 
 ### Added
 
+- Auto-updates for the AppImage, NSIS installer and macOS app bundle, with stable and beta
+  channels. Settings → Updates shows the installed version, channel, download progress,
+  release notes and the last check; a title-bar chip appears when a build is available or
+  ready to install. Updates check automatically after launch (configurable, including the
+  background download) and install only through **Restart & install**, so quitting never
+  swaps the binary silently. Prerelease tags publish `beta.yml` as a GitHub pre-release so
+  stable installs never see them. Flatpak, Snap, portable, zip and package-manager builds
+  report their own update path instead of being patched in place
 - Repository tabs: keep several repositories open at once, each with its own view,
   commit selection, commit-graph filters and git console output. Open or activate from the tab
   strip, the command palette, recent repositories, worktrees, submodules or a deep link;

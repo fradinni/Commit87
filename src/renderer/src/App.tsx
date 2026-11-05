@@ -80,6 +80,13 @@ export function App() {
         void useStore.getState().openRepo(event.repoPath).catch((error) => useStore.getState().notifyError(error))
       }
     })
+    const unsubscribeUpdates = window.commit87.onUpdateStatus((status) => {
+      const previous = useStore.getState().updateStatus
+      useStore.getState().setUpdateStatus(status)
+      if (status.phase === 'ready' && previous?.phase !== 'ready') {
+        useStore.getState().notify(`Commit87 ${status.version ?? 'update'} is ready — restart to install`, 'success')
+      }
+    })
     const unsubscribeMenu = window.commit87.onMenu((action) => {
       if (action.startsWith('open-path:')) {
         void useStore.getState().openRepo(action.slice('open-path:'.length)).catch((error) => useStore.getState().notifyError(error))
@@ -88,6 +95,10 @@ export function App() {
       switch (action) {
         case 'command-palette':
           useStore.getState().setPaletteOpen(true)
+          break
+        case 'check-updates':
+          // Runs in the background; the update chip and a toast report the result.
+          void useStore.getState().checkForUpdates()
           break
         case 'toggle-console':
           useStore.getState().toggleConsole()
@@ -118,6 +129,7 @@ export function App() {
     return () => {
       unsubscribeTasks()
       unsubscribeMenu()
+      unsubscribeUpdates()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
