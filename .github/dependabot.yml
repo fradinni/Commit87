@@ -1,0 +1,37 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      # electron-vite declares vite as a peer, so the Vite toolchain has to move
+      # in one pull request instead of leaving electron-vite behind.
+      vite-toolchain:
+        patterns:
+          - vite
+          - vitest
+          - '@vitejs/*'
+          - '@vitest/*'
+          - electron-vite
+      electron:
+        patterns:
+          - electron
+          - electron-builder
+          - '@electron/*'
+      minor-and-patch:
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      github-actions:
+        patterns:
+          - '*'
