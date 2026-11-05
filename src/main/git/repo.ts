@@ -82,6 +82,7 @@ export async function resolveRepo(inputPath: string): Promise<RepoInfo> {
     const top = await runGit(['rev-parse', '--show-toplevel'], { cwd })
     root = top.stdout.trim() || candidate
   }
+  const canonicalRoot = await fs.realpath(root).catch(() => path.resolve(root))
   const commonRaw = await tryRunGit(['rev-parse', '--git-common-dir'], { cwd })
   const commonDir = commonRaw?.stdout.trim() ? path.resolve(root, commonRaw.stdout.trim()) : gitDir
   const linkedWorktree = path.resolve(commonDir) !== path.resolve(gitDir)
@@ -114,6 +115,7 @@ export async function resolveRepo(inputPath: string): Promise<RepoInfo> {
 
   return {
     path: root,
+    canonicalPath: canonicalRoot,
     root,
     gitDir,
     name: path.basename(root) || path.basename(candidate),

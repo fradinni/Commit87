@@ -52,8 +52,8 @@ export function SubmodulesView() {
     setBusy(key)
     try {
       await task()
-      await refreshSubmodules()
-      await refreshStatus()
+      await refreshSubmodules(repo.path)
+      await refreshStatus(repo.path)
       if (message) notify(message, 'success')
     } catch (error) {
       notifyError(error)

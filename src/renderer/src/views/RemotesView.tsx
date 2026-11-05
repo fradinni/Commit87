@@ -33,7 +33,7 @@ export function RemotesView() {
     try {
       await task()
       const info = await call('repo.info', { path: repo.path })
-      useStore.setState({ currentRepo: info })
+      useStore.getState().updateTab(repo.path, { currentRepo: info })
       if (message) notify(message, 'success')
     } catch (error) {
       notifyError(error)
@@ -80,7 +80,10 @@ export function RemotesView() {
           integrationByProvider: { ...repoDefaults.integrationByProvider, [provider]: accountId }
         }
       })
-      useStore.setState({ repoDefaults: defaults, detection: await call('provider.detect', { path: repo.path }) })
+      useStore.getState().updateTab(repo.path, {
+        repoDefaults: defaults,
+        detection: await call('provider.detect', { path: repo.path })
+      })
       await useStore.getState().refreshConfig()
       notify('Integration mapping saved', 'success')
     } catch (error) {
@@ -94,7 +97,7 @@ export function RemotesView() {
         path: repo.path,
         defaults: { ...repoDefaults, defaultRemote: value || undefined }
       })
-      useStore.setState({ repoDefaults: defaults })
+      useStore.getState().updateTab(repo.path, { repoDefaults: defaults })
     } catch (error) {
       notifyError(error)
     }
@@ -189,7 +192,7 @@ export function RemotesView() {
                   path: repo.path,
                   defaults: { ...repoDefaults, identityId: event.target.value || undefined }
                 }).then((defaults) => {
-                  useStore.setState({ repoDefaults: defaults })
+                  useStore.getState().updateTab(repo.path, { repoDefaults: defaults })
                   void useStore.getState().refreshConfig()
                 })
               }

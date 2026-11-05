@@ -13,6 +13,7 @@ import {
   X
 } from 'lucide-react'
 import { useStore, activeIdentity } from '../store'
+import { repoPathKey } from '../lib/tabs'
 import { call } from '../lib/ipc'
 import { Badge, IconButton, Spinner } from './ui'
 
@@ -36,6 +37,7 @@ export function TitleBar({ onPalette, onPush }: { onPalette: () => void; onPush:
   const status = useStore((state) => state.status)
   const detection = useStore((state) => state.detection)
   const task = useStore((state) => state.task)
+  const tasks = useStore((state) => state.tasks)
   const consoleOpen = useStore((state) => state.consoleOpen)
   const toggleConsole = useStore((state) => state.toggleConsole)
   const sidebarOpen = useStore((state) => state.sidebarOpen)
@@ -43,7 +45,13 @@ export function TitleBar({ onPalette, onPush }: { onPalette: () => void; onPush:
   const notifyError = useStore((state) => state.notifyError)
   const [maximized, setMaximized] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
-  const isMac = window.gitgrove.platform === 'darwin'
+  const platform = window.gitgrove.platform
+  const isMac = platform === 'darwin'
+  const repoKey = repo ? repoPathKey(repo.path, platform) : null
+  const repoBusy = repoKey
+    ? Object.values(tasks).some((item) => item.repoPath && repoPathKey(item.repoPath, platform) === repoKey)
+    : Object.keys(tasks).length > 0
+  const taskRepo = task?.repoPath?.split(/[\\/]/).filter(Boolean).pop()
 
   useEffect(() => {
     void call('window.isMaximized', undefined).then(setMaximized)
@@ -104,7 +112,23 @@ export function TitleBar({ onPalette, onPush }: { onPalette: () => void; onPush:
                       void useStore.getState().closeRepo()
                     }}
                   >
-                    Back to launchpad
+                    Close tab
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false)
+                      useStore.getState().closeOtherTabs()
+                    }}
+                  >
+                    Close other tabs
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false)
+                      useStore.getState().closeAllTabs()
+                    }}
+                  >
+                    Close all tabs
                   </button>
                   <button
                     onClick={() => {
@@ -135,18 +159,18 @@ export function TitleBar({ onPalette, onPush }: { onPalette: () => void; onPush:
         {task ? (
           <span className="task-chip" title={task.title}>
             <Spinner size={12} />
-            <span>{task.title}</span>
+            <span>{taskRepo ? `${taskRepo} · ` : ''}{task.title}</span>
           </span>
         ) : null}
         {repo ? (
           <>
-            <IconButton label="Fetch (f)" onClick={() => void startSync('fetch')} disabled={Boolean(task)}>
+            <IconButton label="Fetch (f)" onClick={() => void startSync('fetch')} disabled={repoBusy}>
               <CloudDownload size={16} />
             </IconButton>
-            <IconButton label="Pull" onClick={() => void startSync('pull')} disabled={Boolean(task)}>
+            <IconButton label="Pull" onClick={() => void startSync('pull')} disabled={repoBusy}>
               <RefreshCw size={16} />
             </IconButton>
-            <IconButton label="Push…" onClick={onPush} disabled={Boolean(task)}>
+            <IconButton label="Push…" onClick={onPush} disabled={repoBusy}>
               <CloudUpload size={16} />
             </IconButton>
           </>

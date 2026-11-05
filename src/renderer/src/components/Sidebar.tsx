@@ -86,7 +86,7 @@ export function Sidebar() {
                 {repo.path}
               </span>
             </div>
-            <button className="sidebar-repo-close" onClick={() => void closeRepo()} title="Close repository">
+            <button className="sidebar-repo-close" onClick={() => void closeRepo()} title="Close tab">
               ×
             </button>
           </div>

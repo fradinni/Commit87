@@ -40,7 +40,7 @@ export function WorktreesView() {
     setBusy(true)
     try {
       await task()
-      await refreshWorktrees()
+      await refreshWorktrees(repo.path)
       if (message) notify(message, 'success')
     } catch (error) {
       notifyError(error)

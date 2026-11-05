@@ -155,6 +155,8 @@ export interface RemoteInfo {
 
 export interface RepoInfo {
   path: string
+  /** Real path with symlinks resolved; stable identity for a tab. */
+  canonicalPath: string
   root: string
   gitDir: string
   name: string
@@ -482,6 +484,8 @@ export interface TaskEvent {
   stream?: 'stdout' | 'stderr'
   exitCode?: number
   error?: string
+  /** Repository the task belongs to, so background tabs can refresh themselves. */
+  repoPath?: string
 }
 
 export interface CloneInput {

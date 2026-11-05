@@ -51,6 +51,7 @@ area most teams never touch. GitGrove is a **deliberately smaller** take on the 
 | Area | What you get |
 | --- | --- |
 | Repositories | Open, clone (HTTPS/SSH, shallow, bare), init, recent list with pinning |
+| Repository tabs | Keep several repositories open at once, each with its own view, selection, status and console; drag to reorder, middle-click to close |
 | Commit graph | Lane layout, refs and tags, search, branch filter, load more, commit details |
 | History actions | Branch here, tag here, cherry-pick, revert, reset (soft/mixed/hard), detached checkout |
 | Staging | Staged / modified / untracked / conflicted groups, per-file stage, discard with undo |
@@ -59,6 +60,7 @@ area most teams never touch. GitGrove is a **deliberately smaller** take on the 
 | Diffs | Unified diffs with per-file stats, binary detection, rename detection |
 
 ![Commit graph](docs/screenshots/commit-graph.png)
+![Repository tabs](docs/screenshots/repository-tabs.png)
 ![Staging](docs/screenshots/staging.png)
 
 ### Branches, worktrees and refs
@@ -112,6 +114,10 @@ area most teams never touch. GitGrove is a **deliberately smaller** take on the 
 | `Ctrl/Cmd + Shift + O` | Clone repository |
 | `Ctrl/Cmd + R` | Refresh repository |
 | `Ctrl/Cmd + Enter` | Commit from the message box |
+| `Ctrl + Tab` | Next repository tab |
+| `Ctrl + Shift + Tab` | Previous repository tab |
+| `Ctrl/Cmd + 1…9` | Jump to a repository tab |
+| `Ctrl/Cmd + W` | Close the active repository tab |
 
 The git console runs **only git commands, without a shell**, validates subcommands
 against an allow-list, and blocks `-c`, `--git-dir`, alias definitions, `--exec` and
@@ -176,7 +182,7 @@ Requirements: Node.js 24+ and Git 2.30+.
 npm install
 npm run dev          # electron-vite dev server with HMR
 npm run typecheck    # strict TypeScript for main, preload and renderer
-npm test             # 42 unit and integration tests against real git
+npm test             # 162 unit and integration tests against real git
 npm run build        # production bundles in out/
 npm run pack:dir     # unpacked app in dist/linux-unpacked
 ```
@@ -273,17 +279,17 @@ tests/               vitest suites (parsers, providers, git integration, securit
 
 Current priorities, in order:
 
-1. **Multiple simultaneous repository tabs** (state is already per-repository)
-2. **Auto-update channels for AppImage, NSIS and DMG**
-3. **Diff review comments and inline PR review**
+1. **Auto-update channels for AppImage, NSIS and DMG**
+2. **Diff review comments and inline PR review**
+3. **Git LFS status and pull/prune actions**
 
 Next up:
 
-- [ ] Git LFS status and pull/prune actions
 - [ ] Windows ARM64 native ARM build validation on hardware
 
 Shipped:
 
+- [x] Multiple simultaneous repository tabs, each with per-repository state
 - [x] Interactive rebase editor (todo list, squash, reword) inside the app
 - [x] Submodule management UI
 

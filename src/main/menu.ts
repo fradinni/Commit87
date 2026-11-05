@@ -31,7 +31,10 @@ export function installMenu(): void {
         { label: 'Clone Repository…', accelerator: 'CmdOrCtrl+Shift+O', click: () => app.emit('gitgrove:menu', 'clone-repo') },
         { label: 'New Repository…', click: () => app.emit('gitgrove:menu', 'init-repo') },
         { type: 'separator' },
-        isMac ? { role: 'close' } : { role: 'quit' }
+        { label: 'Close Tab', click: () => app.emit('gitgrove:menu', 'close-tab') },
+        { label: 'Close All Tabs', click: () => app.emit('gitgrove:menu', 'close-all-tabs') },
+        { type: 'separator' },
+        ...(isMac ? [] : [{ role: 'quit' as const }])
       ]
     },
     {
@@ -51,6 +54,9 @@ export function installMenu(): void {
       submenu: [
         { label: 'Command Palette', accelerator: 'CmdOrCtrl+K', click: () => app.emit('gitgrove:menu', 'command-palette') },
         { label: 'Git Console', accelerator: 'CmdOrCtrl+J', click: () => app.emit('gitgrove:menu', 'toggle-console') },
+        { type: 'separator' },
+        { label: 'Next Repository Tab', click: () => app.emit('gitgrove:menu', 'next-tab') },
+        { label: 'Previous Repository Tab', click: () => app.emit('gitgrove:menu', 'prev-tab') },
         { type: 'separator' },
         { role: 'reload' },
         { role: 'toggleDevTools' },

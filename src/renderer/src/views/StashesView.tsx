@@ -25,8 +25,8 @@ export function StashesView() {
     setBusy(true)
     try {
       await task()
-      await useStore.getState().refreshAll()
-      await refreshStashes()
+      await useStore.getState().refreshAll(repo.path)
+      await refreshStashes(repo.path)
       if (success) notify(success, 'success')
     } catch (error) {
       notifyError(error)

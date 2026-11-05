@@ -8,6 +8,13 @@ All notable changes to GitGrove are documented here. The format follows
 
 ### Added
 
+- Repository tabs: keep several repositories open at once, each with its own view,
+  commit selection, commit-graph filters and git console output. Open or activate from the tab
+  strip, the command palette, recent repositories, worktrees, submodules or a deep link;
+  drag to reorder, middle-click to close. `Ctrl+Tab` cycles, `Ctrl/Cmd+1…9` jumps and
+  `Ctrl/Cmd+W` closes a tab. Streaming fetch/pull/push/console results are routed to the
+  repository that started them, so a background tab refreshes itself without disturbing
+  the active one
 - Submodule management: list initialized, uninitialized, out-of-sync and conflicted
   submodules with their checked-out or recorded commit, URL, tracked branch and local-change flags;
   initialize and update (including to the tracked branch), sync URLs, add with an optional

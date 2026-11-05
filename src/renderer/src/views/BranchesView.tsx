@@ -63,7 +63,7 @@ export function BranchesView() {
     setBusy(true)
     try {
       await task()
-      await useStore.getState().refreshAll()
+      await useStore.getState().refreshAll(repo.path)
       if (success) notify(success, 'success')
     } catch (error) {
       notifyError(error)

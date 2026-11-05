@@ -167,7 +167,7 @@ export function RebasePlanner() {
         })),
         identityId: activeIdentity()?.id
       })
-      await useStore.getState().refreshAll()
+      await useStore.getState().refreshAll(repoPath)
       if (result.inProgress) {
         closeRebase()
         if (/\bCONFLICT\b|Could not apply/.test(result.output)) {

@@ -815,6 +815,7 @@ export class Router {
       title: `Cloning ${repoName}`,
       args,
       cwd: parent,
+      repoPath: target,
       env: auth.env,
       secrets: [token],
       onExit: async (code) => {
@@ -855,6 +856,7 @@ export class Router {
       title: remote ? `Fetching ${remote}` : 'Fetching all remotes',
       args: fetchArgs,
       cwd: ctx.repo.path,
+      repoPath: ctx.repo.path,
       env,
       secrets: [ctx.token]
     })
@@ -877,6 +879,7 @@ export class Router {
       title: remote ? `Pulling from ${remote}` : 'Pulling',
       args: pullArgs,
       cwd: ctx.repo.path,
+      repoPath: ctx.repo.path,
       env,
       secrets: [ctx.token]
     })
@@ -902,6 +905,7 @@ export class Router {
       title: `Pushing ${branch} to ${remote}`,
       args: pushArgs,
       cwd: ctx.repo.path,
+      repoPath: ctx.repo.path,
       env,
       secrets: [ctx.token]
     })
@@ -920,6 +924,7 @@ export class Router {
       title: `git ${rest.join(' ')}`,
       args: [...ident.args, ...auth.args, ...rest],
       cwd: ctx.repo.path,
+      repoPath: ctx.repo.path,
       env: { ...ident.env, ...auth.env },
       secrets: [ctx.token]
     })

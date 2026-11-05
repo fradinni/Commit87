@@ -21,7 +21,7 @@ export function StatusBar() {
       } else {
         await call('git.abortOperation', { path: repo.path })
       }
-      await useStore.getState().refreshAll()
+      await useStore.getState().refreshAll(repo.path)
       notify(action === 'continue' ? 'Operation continued' : 'Operation aborted', 'success')
     } catch (error) {
       notifyError(error)
@@ -79,7 +79,7 @@ export function StatusBar() {
       ) : task ? (
         <div className="task-banner">
           <Spinner size={12} />
-          <span>{task.title}</span>
+          <span>{task.repoPath ? `${task.repoPath.split(/[\\/]/).filter(Boolean).pop()} · ` : ''}{task.title}</span>
         </div>
       ) : null}
 
@@ -122,7 +122,7 @@ export function RepoOperationBanner() {
   const abort = async (): Promise<void> => {
     try {
       await call('git.abortOperation', { path: repo.path })
-      await useStore.getState().refreshAll()
+      await useStore.getState().refreshAll(repo.path)
     } catch (error) {
       notifyError(error)
     }

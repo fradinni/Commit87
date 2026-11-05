@@ -65,6 +65,15 @@ afterAll(async () => {
 })
 
 describe('git repository service', () => {
+  it.skipIf(process.platform === 'win32')('canonicalises a symlinked repository path', async () => {
+    const link = path.join(root, 'repo-link')
+    await fs.symlink(repoPath, link, 'dir')
+    const direct = await resolveRepo(repoPath)
+    const fromLink = await resolveRepo(link)
+    expect(fromLink.canonicalPath).toBe(direct.canonicalPath)
+    expect(direct.canonicalPath).toBe(await fs.realpath(repoPath))
+  })
+
   it('resolves a repository and a clean status', async () => {
     const info = await resolveRepo(repoPath)
     expect(info.name).toBe('repo')

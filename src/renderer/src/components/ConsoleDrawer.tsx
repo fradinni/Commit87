@@ -12,6 +12,7 @@ export function ConsoleDrawer() {
   const pushLine = useStore((state) => state.pushConsoleLine)
   const repo = useStore((state) => state.currentRepo)
   const detection = useStore((state) => state.detection)
+  const activeTabId = useStore((state) => state.activeTabId)
   const notifyError = useStore((state) => state.notifyError)
   const [command, setCommand] = useState('')
   const [history, setHistory] = useState<string[]>([])
@@ -27,6 +28,13 @@ export function ConsoleDrawer() {
   useEffect(() => {
     if (open) setTimeout(() => inputRef.current?.focus(), 30)
   }, [open])
+
+  // A command typed in one repository must never be submitted to another.
+  useEffect(() => {
+    setCommand('')
+    setHistory([])
+    setHistoryIndex(-1)
+  }, [activeTabId])
 
   if (!open) return null
 
