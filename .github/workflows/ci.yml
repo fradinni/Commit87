@@ -54,7 +54,7 @@ jobs:
       - name: Build AppImage, deb, rpm, pacman and tar.gz
         run: |
           sudo apt-get install -y fakeroot rpm
-          npx electron-builder --linux --${{ matrix.arch }} --publish never
+          npx electron-builder --config electron-builder.config.cjs --linux --${{ matrix.arch }} --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
@@ -89,7 +89,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - name: Build NSIS, portable and zip
-        run: npx electron-builder --win --${{ matrix.arch }} --publish never
+        run: npx electron-builder --config electron-builder.config.cjs --win --${{ matrix.arch }} --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
@@ -121,7 +121,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - name: Build dmg and zip
-        run: npx electron-builder --mac --${{ matrix.arch }} --publish never
+        run: npx electron-builder --config electron-builder.config.cjs --mac --${{ matrix.arch }} --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'

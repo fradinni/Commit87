@@ -69,13 +69,9 @@ module.exports = {
   ],
 
   linux: {
-    target: [
-      { target: 'AppImage', arch: ['x64', 'arm64'] },
-      { target: 'deb', arch: ['x64', 'arm64'] },
-      { target: 'rpm', arch: ['x64', 'arm64'] },
-      { target: 'pacman', arch: ['x64', 'arm64'] },
-      { target: 'tar.gz', arch: ['x64', 'arm64'] }
-    ],
+    // Architectures come from the command line (`--x64`, `--arm64`, or both).
+    // Listing them here would override a single-arch CI build and produce both.
+    target: ['AppImage', 'deb', 'rpm', 'pacman', 'tar.gz'],
     category: 'Development;RevisionControl',
     icon: 'build/icons',
     executableName: 'gitgrove',
@@ -124,11 +120,7 @@ module.exports = {
   },
 
   win: {
-    target: [
-      { target: 'nsis', arch: ['x64', 'arm64'] },
-      { target: 'portable', arch: ['x64', 'arm64'] },
-      { target: 'zip', arch: ['x64', 'arm64'] }
-    ],
+    target: ['nsis', 'portable', 'zip'],
     icon: 'build/icon.ico',
     requestedExecutionLevel: 'asInvoker',
     artifactName: '${productName}-${version}-${arch}.${ext}'
@@ -153,11 +145,7 @@ module.exports = {
   },
 
   mac: {
-    target: [
-      { target: 'dmg', arch: ['x64', 'arm64'] },
-      { target: 'pkg', arch: ['x64', 'arm64'] },
-      { target: 'zip', arch: ['x64', 'arm64'] }
-    ],
+    target: ['dmg', 'pkg', 'zip'],
     category: 'public.app-category.developer-tools',
     icon: 'build/icon.icns',
     hardenedRuntime: true,

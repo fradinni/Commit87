@@ -157,7 +157,7 @@ Package the app:
 
 ```bash
 npm run icons             # regenerate PNG/ICO/ICNS from build/icon.svg
-npm run build:linux       # AppImage, deb, rpm, pacman, tar.gz, snap
+npm run build:linux       # AppImage, deb, rpm, pacman, tar.gz
 npm run build:win         # NSIS, portable, zip
 npm run build:mac         # dmg, zip
 npm run dist:flatpak      # Flatpak bundle (needs flatpak-builder)
