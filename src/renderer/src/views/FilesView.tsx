@@ -18,10 +18,11 @@ import {
 } from 'lucide-react'
 import type { BlameLine, DiffResult, DirEntry, FileContent, StatusFile } from '@shared/types'
 import { activeIdentity, useStore } from '../store'
-import { call } from '../lib/ipc'
+import { call, errorMessage } from '../lib/ipc'
 import { formatRelativeTime, languageFromPath } from '../lib/format'
 import { Badge, Button, ConfirmDialog, EmptyState, Field, IconButton, LoadingBlock, Select, TextArea } from '../components/ui'
 import { DiffView } from '../components/DiffView'
+import { ConflictView } from '../components/ConflictView'
 import { IdentitySelect } from '../components/selectors'
 
 // highlight.js is the largest renderer dependency. Load it only when a file is
@@ -44,6 +45,7 @@ export function FilesView() {
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [diff, setDiff] = useState<DiffResult | null>(null)
   const [diffLoading, setDiffLoading] = useState(false)
+  const [contentError, setContentError] = useState<string | null>(null)
   const [message, setMessage] = useState('')
   const [amend, setAmend] = useState(false)
   const [signoff, setSignoff] = useState(false)
@@ -75,18 +77,25 @@ export function FilesView() {
       if (!repoPath) return
       setDiffLoading(true)
       setDiff(null)
+      setFileContent(null)
+      setContentError(null)
       try {
+        // Git emits a combined diff (diff --cc) for unmerged paths, which the
+        // unified-diff view cannot render. Show the working-tree file with its
+        // conflict markers instead so both sides are visible.
+        if (file.stage === 'untracked' || file.stage === 'conflicted') {
+          const content = await call('git.fileContent', { path: repoPath, file: file.path, from: 'worktree' })
+          setFileContent(content)
+          return
+        }
         const result = await call('git.diff', {
           repoPath,
           path: file.path,
           staged: file.stage === 'staged'
         })
         setDiff(result)
-        if (file.stage === 'untracked') {
-          const content = await call('git.fileContent', { path: repoPath, file: file.path, from: 'worktree' })
-          setFileContent(content)
-        }
       } catch (error) {
+        if (file.stage === 'conflicted') setContentError(errorMessage(error))
         notifyError(error)
       } finally {
         setDiffLoading(false)
@@ -481,6 +490,20 @@ export function FilesView() {
                   <CodeView content={fileContent} loading={diffLoading || contentLoading} />
                 </Suspense>
               </div>
+            ) : selectedStatus?.stage === 'conflicted' ? (
+              <ConflictView
+                file={selectedStatus}
+                content={fileContent}
+                loading={diffLoading}
+                error={contentError}
+                onReload={() => void loadDiff(selectedStatus)}
+                onStage={() => void stageFiles([selectedStatus.path])}
+                onOpen={() =>
+                  void call('app.openPath', { path: `${repo.path}/${selectedStatus.path}` }).then((result) => {
+                    if (!result.ok) notifyError(result.error || 'Could not open file')
+                  })
+                }
+              />
             ) : (
               <DiffView
                 patch={diff?.patch ?? ''}

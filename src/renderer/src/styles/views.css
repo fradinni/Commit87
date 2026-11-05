@@ -1044,6 +1044,133 @@
   margin-left: auto;
 }
 
+/* ----------------------------------------------------------- conflicts */
+
+.conflict-view {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.conflict-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--red-soft);
+  color: var(--red);
+  font-size: 11px;
+  flex: none;
+}
+
+.conflict-banner > svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.conflict-banner-text {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.45;
+}
+
+.conflict-banner-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.conflict-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 0 20px;
+  background: var(--bg-panel);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.conflict-line {
+  display: grid;
+  grid-template-columns: 48px 18px minmax(0, 1fr) auto;
+  min-width: max-content;
+}
+
+.conflict-line:hover {
+  background: var(--bg-hover);
+}
+
+.conflict-number {
+  padding-right: 10px;
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  opacity: 0.6;
+  text-align: right;
+  user-select: none;
+  font-size: 9.5px;
+}
+
+.conflict-sign {
+  color: var(--muted);
+  opacity: 0.7;
+  text-align: center;
+  user-select: none;
+}
+
+.conflict-text {
+  padding-left: 8px;
+  white-space: pre;
+}
+
+.conflict-label {
+  padding: 0 9px;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  user-select: none;
+}
+
+.conflict-line.is-ours {
+  background: var(--blue-soft);
+}
+
+.conflict-line.is-theirs {
+  background: var(--purple-soft);
+}
+
+.conflict-line.is-base {
+  background: var(--amber-soft);
+}
+
+.conflict-line.is-marker {
+  font-weight: 600;
+}
+
+.conflict-line.is-marker.is-ours {
+  color: var(--blue);
+}
+
+.conflict-line.is-marker.is-theirs {
+  color: var(--purple);
+}
+
+.conflict-line.is-marker.is-base {
+  color: var(--amber);
+}
+
+.conflict-line.is-marker .conflict-number,
+.conflict-line.is-marker .conflict-sign {
+  opacity: 1;
+}
+
 /* ------------------------------------------------------------------ diff */
 
 .diff-view {

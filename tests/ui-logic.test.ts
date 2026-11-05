@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parsePatch } from '../src/renderer/src/lib/diff'
+import { hasConflictMarkers, parseConflictContent } from '../src/renderer/src/lib/conflict'
 import { buildGraph, classifyRefs } from '../src/renderer/src/lib/graph'
 import { tokenizeCommand, validateConsoleCommand } from '../src/main/tasks'
 import type { Commit } from '../src/shared/types'
@@ -154,5 +155,58 @@ describe('git console safety', () => {
     expect(() => validateConsoleCommand('git config --local user.name x')).toThrow()
     expect(() => validateConsoleCommand('git submodule foreach rm -rf')).toThrow()
     expect(() => validateConsoleCommand('git rebase --exec "rm -rf /" main')).toThrow()
+  })
+})
+
+describe('conflict marker parser', () => {
+  it('separates ours and theirs in a standard conflict', () => {
+    const lines = parseConflictContent(
+      [
+        'export const app = {',
+        '<<<<<<< HEAD',
+        "  shell: 'shell-v2',",
+        '=======',
+        "  shell: 'sidebar',",
+        '>>>>>>> feature (feat: update app shell)',
+        '}'
+      ].join('\n')
+    )
+    expect(lines.map((line) => [line.side, line.marker])).toEqual([
+      ['normal', false],
+      ['ours', true],
+      ['ours', false],
+      ['theirs', true],
+      ['theirs', false],
+      ['normal', true],
+      ['normal', false]
+    ])
+    expect(hasConflictMarkers(lines)).toBe(true)
+  })
+
+  it('handles diff3 base sections', () => {
+    const lines = parseConflictContent(
+      ['<<<<<<< HEAD', 'ours', '||||||| base', 'base', '=======', 'theirs', '>>>>>>> branch'].join('\n')
+    )
+    expect(lines.map((line) => [line.side, line.marker])).toEqual([
+      ['ours', true],
+      ['ours', false],
+      ['base', true],
+      ['base', false],
+      ['theirs', true],
+      ['theirs', false],
+      ['normal', true]
+    ])
+  })
+
+  it('does not treat a separator outside a conflict as a marker', () => {
+    const lines = parseConflictContent(['a', '=======', 'b'].join('\n'))
+    expect(lines.every((line) => line.side === 'normal')).toBe(true)
+    expect(hasConflictMarkers(lines)).toBe(false)
+    expect(parseConflictContent('plain\nfile').every((line) => !line.marker)).toBe(true)
+  })
+
+  it('handles CRLF working-tree files', () => {
+    const lines = parseConflictContent('a\r\n<<<<<<< HEAD\r\nb\r\n=======\r\nc\r\n>>>>>>> x')
+    expect(lines.map((line) => line.side)).toEqual(['normal', 'ours', 'ours', 'theirs', 'theirs', 'normal'])
   })
 })

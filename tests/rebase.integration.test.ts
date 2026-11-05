@@ -14,6 +14,7 @@ import {
   getOperationState,
   getStatus,
   mergeBranch,
+  readFileContent,
   resolveRepo,
   skipOperation
 } from '../src/main/git/repo'
@@ -180,6 +181,14 @@ describe('interactive rebase bridge', () => {
 
     const editorEnv = await rebaseEditorEnv(repoPath)
     expect(editorEnv.GIT_EDITOR).toBeTruthy()
+
+    // The Files view reads the unmerged working-tree file because `git diff`
+    // returns a combined diff (diff --cc) for it.
+    const conflicted = await readFileContent(repoPath, 'shared.txt', 'worktree')
+    expect(conflicted.binary).toBe(false)
+    expect(conflicted.content).toContain('<<<<<<<')
+    expect(conflicted.content).toContain('=======')
+    expect(conflicted.content).toContain('>>>>>>>')
 
     const resolved = changed('line-09', 'resolved-nine', changed('line-02', 'feature-two'))
     await write('shared.txt', resolved)

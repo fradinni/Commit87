@@ -15,6 +15,9 @@ All notable changes to GitGrove are documented here. The format follows
 
 ### Fixed
 
+- Files & Staging: a conflicted path now shows its working-tree content with the
+  conflict blocks highlighted, instead of an empty diff. Git emits a combined
+  diff (`diff --cc`) for unmerged paths, which the unified-diff view cannot parse
 - Linux packaging: CI installs `libarchive-tools` (bsdtar) before building, so the
   pacman target no longer fails with `fpm` exit code 127 when generating `.MTREE`
 
