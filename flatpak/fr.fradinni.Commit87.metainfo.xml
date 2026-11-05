@@ -34,9 +34,9 @@
     </screenshot>
   </screenshots>
   <releases>
-    <release version="0.1.0" date="2026-11-04">
+    <release version="0.1.0" date="2026-11-06">
       <description>
-        <p>First public preview: repositories, branches, worktrees, tags, stashes, releases, pipelines and multi-account identities.</p>
+        <p>First public release: repositories, branches, worktrees, submodules, tags, stashes, releases, pipelines, repository tabs and multi-account identities.</p>
       </description>
     </release>
   </releases>
