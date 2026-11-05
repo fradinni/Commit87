@@ -14,7 +14,7 @@
 | Windows | NSIS `.exe` | x64, arm64 | `electron-builder` on `windows-2022` |
 | Windows | portable `.exe` | x64, arm64 | `electron-builder` |
 | Windows | `.zip` | x64, arm64 | `electron-builder` |
-| macOS | `.dmg` | x64, arm64 | `electron-builder` on `macos-13` / `macos-14` |
+| macOS | `.dmg` | x64, arm64 | `electron-builder` on `macos-13` / `macos-15` |
 | macOS | `.pkg` | x64, arm64 | `electron-builder` |
 | macOS | `.zip` | x64, arm64 | `electron-builder` |
 
@@ -148,7 +148,7 @@ still run but show a SmartScreen warning.
 - `hardenedRuntime: true`, entitlements in `build/entitlements.mac.plist` (JIT,
   unsigned executable memory, network client, user-selected files, Apple events).
 - Notarization uses `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID`.
-- Builds are separate per architecture (`macos-13` x64, `macos-14` arm64) so the arm64
+- Builds are separate per architecture (`macos-13` x64, `macos-15` arm64) so the arm64
   package is natively built for Apple Silicon rather than cross-compiled.
 
 ## Icons

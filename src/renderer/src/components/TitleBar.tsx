@@ -20,14 +20,10 @@ import { Badge, IconButton, Spinner } from './ui'
 export function Logo({ size = 22 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
-      <rect width="32" height="32" rx="8" fill="#0f2b22" />
-      <path d="M10 8v9.2a4 4 0 0 0 4 4h8" stroke="#3ddc97" strokeWidth="2.4" strokeLinecap="round" />
-      <path d="M10 17.5v6" stroke="#5ba8ff" strokeWidth="2.4" strokeLinecap="round" />
-      <circle cx="10" cy="7.5" r="2.4" fill="#3ddc97" />
-      <circle cx="10" cy="25" r="2.4" fill="#5ba8ff" />
-      <circle cx="22.5" cy="21.2" r="2.4" fill="#c792ea" />
-      <path d="M22.5 21.2v-5" stroke="#c792ea" strokeWidth="2" strokeLinecap="round" />
-      <circle cx="22.5" cy="13.5" r="2.2" fill="#c792ea" />
+      <rect width="32" height="32" rx="8" fill="#0c1518" />
+      <path d="M21.125 9.625A7.625 7.625 0 1 0 21.125 22.375" stroke="#3ddc97" strokeWidth="2.25" strokeLinecap="round" />
+      <circle cx="21.125" cy="22.375" r="2" fill="#f4fbf8" />
+      <circle cx="21.125" cy="22.375" r="0.8125" fill="#0c1518" />
     </svg>
   )
 }

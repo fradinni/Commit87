@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://github.com/fradinni/Commit87">
-    <img src="docs/assets/header.svg" alt="Commit87 — Git, without the noise" width="100%">
+    <img src="docs/assets/header.svg" alt="Commit87 — every commit counts" width="100%">
   </a>
 </div>
 
@@ -20,7 +20,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-24-5FA04E?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![Git](https://img.shields.io/badge/Git-2.30%2B-F05032?logo=git&logoColor=white)](https://git-scm.com/)
 
-**Git, without the noise.** A focused desktop Git client built on the Git you already
+**Every commit counts.** A focused desktop Git client built on the Git you already
 have installed — repositories, branches, worktrees, tags, releases and pipelines, with
 per-repository identities and multi-forge accounts.
 

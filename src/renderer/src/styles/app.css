@@ -135,6 +135,25 @@ a {
   background: var(--bg-app);
 }
 
+/*
+ * Pin every row to its track. RepoTabs renders nothing while no repository is
+ * open, and an absent grid item would shift the body into the auto row and let
+ * the status bar absorb the 1fr row, so the view height would follow its
+ * content instead of the window.
+ */
+.app > .titlebar {
+  grid-row: 1;
+}
+
+.app > .app-body {
+  grid-row: 3;
+}
+
+.app > .statusbar {
+  grid-row: 4;
+}
+
+
 .app-body {
   display: flex;
   min-height: 0;
