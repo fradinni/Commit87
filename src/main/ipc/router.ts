@@ -275,6 +275,17 @@ export class Router {
           commit: asOptionalString(data.commit, 'Commit'),
           compare: asOptionalString(data.compare, 'Compare')
         })
+      case 'git.resolveConflict': {
+        const content = data.content
+        if (typeof content !== 'string') throw new Error('Resolved content must be text')
+        if (content.length > 10 * 1024 * 1024) throw new Error('Resolved content is too large')
+        await repoOps.resolveConflict(
+          requireString(data.repoPath, 'Repository path'),
+          requireString(data.file, 'File'),
+          content
+        )
+        return undefined
+      }
       case 'git.fileTree':
         return repoOps.listTree(
           requireString(data.path, 'Repository path'),

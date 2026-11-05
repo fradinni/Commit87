@@ -503,6 +503,12 @@ export interface CommitInput {
   allowEmpty?: boolean
 }
 
+export interface ResolveConflictInput {
+  repoPath: string
+  file: string
+  content: string
+}
+
 export interface LogInput {
   repoPath: string
   limit?: number

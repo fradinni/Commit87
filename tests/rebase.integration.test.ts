@@ -15,6 +15,7 @@ import {
   getStatus,
   mergeBranch,
   readFileContent,
+  resolveConflict,
   resolveRepo,
   skipOperation
 } from '../src/main/git/repo'
@@ -191,8 +192,13 @@ describe('interactive rebase bridge', () => {
     expect(conflicted.content).toContain('>>>>>>>')
 
     const resolved = changed('line-09', 'resolved-nine', changed('line-02', 'feature-two'))
-    await write('shared.txt', resolved)
-    await runGit(['add', 'shared.txt'], { cwd: repoPath })
+    await expect(resolveConflict(repoPath, 'shared.txt', '<<<<<<< HEAD\nx\n')).rejects.toThrow(/markers/)
+    await expect(resolveConflict(repoPath, 'shared.txt', 'a\0b')).rejects.toThrow(/NUL/)
+    await expect(resolveConflict(repoPath, 'README.md', resolved)).rejects.toThrow(/not in conflict/)
+    await resolveConflict(repoPath, 'shared.txt', resolved)
+    const staged = await getStatus(repoPath)
+    expect(staged.files.find((item) => item.path === 'shared.txt')?.stage).toBe('staged')
+
     const continued = await continueOperation(repoPath, { identity }, editorEnv)
     expect(continued.output).toBeTruthy()
     expect(await getOperationState(repoPath)).toBe('clean')
@@ -333,6 +339,15 @@ describe('interactive rebase bridge', () => {
     const subjects = await runGit(['log', '--all', '--format=%s'], { cwd: repoPath })
     expect(subjects.stdout).not.toContain('Drop me')
     expect((await getStatus(repoPath)).clean).toBe(true)
+  })
+
+  it('treats non-UTF-8 worktree content as binary', async () => {
+    const file = path.join(repoPath, 'latin1.txt')
+    await fs.writeFile(file, Buffer.from([0x6f, 0x75, 0x72, 0x73, 0xe9, 0x0a]))
+    const content = await readFileContent(repoPath, 'latin1.txt', 'worktree')
+    expect(content.binary).toBe(true)
+    expect(content.content).toBe('')
+    await fs.rm(file)
   })
 
   it('rejects ranges that contain merge commits', async () => {

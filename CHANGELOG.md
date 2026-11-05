@@ -12,6 +12,9 @@ All notable changes to GitGrove are documented here. The format follows
   between a base and `HEAD` in one dialog. Reword messages survive conflict stops and
   Continue, and the bridge keeps app-controlled editor scripts in the git dir instead of
   opening an external editor
+- Conflict resolver: for each conflicted block, keep ours, theirs, both or the base, or
+  remove it; the resolved file can be edited manually in the output pane and staged in one
+  action
 
 ### Fixed
 

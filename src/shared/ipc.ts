@@ -40,6 +40,7 @@ import type {
   RebaseResult,
   RepoStatus,
   ResetInput,
+  ResolveConflictInput,
   StashInfo,
   StatusFile,
   TagCreateInput,
@@ -96,6 +97,7 @@ export interface IpcMethods {
   'git.worktrees': { request: { path: string }; response: WorktreeInfo[] }
   'git.stashes': { request: { path: string }; response: StashInfo[] }
   'git.diff': { request: DiffInput; response: DiffResult }
+  'git.resolveConflict': { request: ResolveConflictInput; response: void }
   'git.fileTree': { request: { path: string; dir?: string }; response: DirEntry[] }
   'git.fileContent': { request: { path: string; file: string; from?: 'worktree' | 'head'; commit?: string }; response: FileContent }
   'git.blame': { request: { path: string; file: string; commit?: string }; response: BlameLine[] }

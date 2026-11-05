@@ -492,12 +492,12 @@ export function FilesView() {
               </div>
             ) : selectedStatus?.stage === 'conflicted' ? (
               <ConflictView
+                repoPath={repo.path}
                 file={selectedStatus}
                 content={fileContent}
                 loading={diffLoading}
                 error={contentError}
                 onReload={() => void loadDiff(selectedStatus)}
-                onStage={() => void stageFiles([selectedStatus.path])}
                 onOpen={() =>
                   void call('app.openPath', { path: `${repo.path}/${selectedStatus.path}` }).then((result) => {
                     if (!result.ok) notifyError(result.error || 'Could not open file')

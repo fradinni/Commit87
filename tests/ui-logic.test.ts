@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { parsePatch } from '../src/renderer/src/lib/diff'
-import { hasConflictMarkers, parseConflictContent } from '../src/renderer/src/lib/conflict'
+import {
+  applyConflictChoice,
+  detectLineEnding,
+  hasUnresolvedConflicts,
+  parseConflicts,
+  withLineEndings
+} from '../src/renderer/src/lib/conflict'
 import { buildGraph, classifyRefs } from '../src/renderer/src/lib/graph'
 import { tokenizeCommand, validateConsoleCommand } from '../src/main/tasks'
 import type { Commit } from '../src/shared/types'
@@ -158,55 +164,130 @@ describe('git console safety', () => {
   })
 })
 
-describe('conflict marker parser', () => {
-  it('separates ours and theirs in a standard conflict', () => {
-    const lines = parseConflictContent(
-      [
-        'export const app = {',
-        '<<<<<<< HEAD',
-        "  shell: 'shell-v2',",
-        '=======',
-        "  shell: 'sidebar',",
-        '>>>>>>> feature (feat: update app shell)',
-        '}'
-      ].join('\n')
+describe('conflict resolution model', () => {
+  const content = [
+    'export const app = {',
+    '<<<<<<< HEAD',
+    "  shell: 'shell-v2',",
+    '=======',
+    "  shell: 'sidebar',",
+    '>>>>>>> feature (feat: update app shell)',
+    '}'
+  ].join('\n')
+
+  it('parses regions, labels and both sides', () => {
+    const parsed = parseConflicts(content)
+    expect(parsed.malformed).toBe(false)
+    expect(parsed.regions).toHaveLength(1)
+    expect(parsed.regions[0]).toMatchObject({
+      oursLabel: 'HEAD',
+      theirsLabel: 'feature (feat: update app shell)',
+      baseLabel: null,
+      ours: ["  shell: 'shell-v2',"],
+      theirs: ["  shell: 'sidebar',"],
+      base: null
+    })
+    expect(hasUnresolvedConflicts(content)).toBe(true)
+  })
+
+  it('resolves a region with every choice', () => {
+    expect(applyConflictChoice(content, 0, 'ours')).toBe(
+      ['export const app = {', "  shell: 'shell-v2',", '}'].join('\n')
     )
-    expect(lines.map((line) => [line.side, line.marker])).toEqual([
-      ['normal', false],
-      ['ours', true],
-      ['ours', false],
-      ['theirs', true],
-      ['theirs', false],
-      ['normal', true],
-      ['normal', false]
-    ])
-    expect(hasConflictMarkers(lines)).toBe(true)
-  })
-
-  it('handles diff3 base sections', () => {
-    const lines = parseConflictContent(
-      ['<<<<<<< HEAD', 'ours', '||||||| base', 'base', '=======', 'theirs', '>>>>>>> branch'].join('\n')
+    expect(applyConflictChoice(content, 0, 'theirs')).toBe(
+      ['export const app = {', "  shell: 'sidebar',", '}'].join('\n')
     )
-    expect(lines.map((line) => [line.side, line.marker])).toEqual([
-      ['ours', true],
-      ['ours', false],
-      ['base', true],
-      ['base', false],
-      ['theirs', true],
-      ['theirs', false],
-      ['normal', true]
-    ])
+    expect(applyConflictChoice(content, 0, 'both')).toBe(
+      ['export const app = {', "  shell: 'shell-v2',", "  shell: 'sidebar',", '}'].join('\n')
+    )
+    expect(applyConflictChoice(content, 0, 'none')).toBe(['export const app = {', '}'].join('\n'))
+    const resolved = applyConflictChoice(content, 0, 'ours')
+    expect(parseConflicts(resolved).regions).toHaveLength(0)
+    expect(hasUnresolvedConflicts(resolved)).toBe(false)
   })
 
-  it('does not treat a separator outside a conflict as a marker', () => {
-    const lines = parseConflictContent(['a', '=======', 'b'].join('\n'))
-    expect(lines.every((line) => line.side === 'normal')).toBe(true)
-    expect(hasConflictMarkers(lines)).toBe(false)
-    expect(parseConflictContent('plain\nfile').every((line) => !line.marker)).toBe(true)
+  it('uses the base section of a diff3 conflict', () => {
+    const diff3 = ['<<<<<<< HEAD', 'ours', '||||||| base', 'base', '=======', 'theirs', '>>>>>>> branch'].join('\n')
+    const parsed = parseConflicts(diff3)
+    expect(parsed.regions[0].base).toEqual(['base'])
+    expect(parsed.regions[0].baseLabel).toBe('base')
+    expect(applyConflictChoice(diff3, 0, 'base')).toBe('base')
   })
 
-  it('handles CRLF working-tree files', () => {
-    const lines = parseConflictContent('a\r\n<<<<<<< HEAD\r\nb\r\n=======\r\nc\r\n>>>>>>> x')
-    expect(lines.map((line) => line.side)).toEqual(['normal', 'ours', 'ours', 'theirs', 'theirs', 'normal'])
+  it('resolves one of several regions without touching the others', () => {
+    const two = [
+      '<<<<<<< HEAD',
+      'first ours',
+      '=======',
+      'first theirs',
+      '>>>>>>> branch',
+      'middle',
+      '<<<<<<< HEAD',
+      'second ours',
+      '=======',
+      'second theirs',
+      '>>>>>>> branch'
+    ].join('\n')
+    expect(parseConflicts(two).regions).toHaveLength(2)
+    const after = applyConflictChoice(two, 1, 'ours')
+    expect(after).toContain('first ours')
+    expect(after).toContain('first theirs')
+    expect(after).toContain('second ours')
+    expect(after).not.toContain('second theirs')
+    expect(parseConflicts(after).regions).toHaveLength(1)
+
+    const all = applyConflictChoice(after, 0, 'none')
+    expect(hasUnresolvedConflicts(all)).toBe(false)
+    expect(all).toBe('middle\nsecond ours')
+  })
+
+  it('flags incomplete or unbalanced markers', () => {
+    expect(parseConflicts('a\n<<<<<<< HEAD\nb\n').malformed).toBe(true)
+    expect(parseConflicts('a\n>>>>>>> branch\n').malformed).toBe(true)
+    expect(hasUnresolvedConflicts('a\n<<<<<<< HEAD\nb\n')).toBe(true)
+    expect(parseConflicts('a\n=======\nb').malformed).toBe(false)
+    expect(hasUnresolvedConflicts('a\n=======\nb')).toBe(false)
+  })
+
+  it('normalises CRLF working-tree files to LF output', () => {
+    const crlf = content.replace(/\n/g, '\r\n')
+    const resolved = applyConflictChoice(crlf, 0, 'theirs')
+    expect(resolved).not.toContain('\r')
+    expect(resolved).toBe(['export const app = {', "  shell: 'sidebar',", '}'].join('\n'))
+  })
+
+  it('preserves empty sides and trailing newlines', () => {
+    const empty = 'a\n<<<<<<< HEAD\n=======\ntheirs\n>>>>>>> x\n'
+    const parsed = parseConflicts(empty)
+    expect(parsed.regions[0].ours).toEqual([])
+    expect(parsed.regions[0].theirs).toEqual(['theirs'])
+    expect(applyConflictChoice(empty, 0, 'theirs')).toBe('a\ntheirs\n')
+    expect(applyConflictChoice(empty, 99, 'ours')).toBe(empty)
+  })
+
+  it('resolves adjacent regions', () => {
+    const adjacent = [
+      '<<<<<<< a',
+      'one',
+      '=======',
+      'two',
+      '>>>>>>> b',
+      '<<<<<<< c',
+      'three',
+      '=======',
+      'four',
+      '>>>>>>> d'
+    ].join('\n')
+    expect(parseConflicts(adjacent).regions).toHaveLength(2)
+    const resolved = applyConflictChoice(applyConflictChoice(adjacent, 0, 'ours'), 0, 'theirs')
+    expect(resolved).toBe('one\nfour')
+  })
+
+  it('detects and restores file line endings', () => {
+    expect(detectLineEnding('a\r\nb')).toBe('\r\n')
+    expect(detectLineEnding('a\nb')).toBe('\n')
+    expect(detectLineEnding('a\r\nb\nc')).toBe('\r\n')
+    expect(withLineEndings('a\nb\n', '\r\n')).toBe('a\r\nb\r\n')
+    expect(withLineEndings('a\r\nb', '\n')).toBe('a\nb')
   })
 })

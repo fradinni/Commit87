@@ -264,6 +264,11 @@ then `git switch -c pr-N <ref>` with the integration token used for the fetch.
 - **Interactive rebase**: a modal planner over `onto..HEAD` where commits can be reordered,
   reworded, squashed, fixed up or dropped; it validates the plan in the renderer and again
   in the main process before replaying it.
+- **Conflict resolver**: unmerged files are split into ours/theirs/base regions. Each block
+  can keep a side, keep both, use the base or be removed, while a live editable output pane
+  holds the final file. Saving writes the path (never a symlink or a path outside the repo)
+  and stages it through `git.resolveConflict`. Non-UTF-8, symlinked and oversized paths are
+  read-only here and must be resolved in an external editor.
 - **Diff renderer**: parses unified diffs into files/hunks/lines with old/new line numbers,
   caps rendering at 6 000 lines, and renders untracked files as highlighted code.
 - **Graph renderer**: lane assignment with merge/fork edges as SVG cubic curves, one color
