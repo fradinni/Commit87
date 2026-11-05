@@ -20,9 +20,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-24-5FA04E?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![Git](https://img.shields.io/badge/Git-2.30%2B-F05032?logo=git&logoColor=white)](https://git-scm.com/)
 
-**Every commit counts.** A focused desktop Git client built on the Git you already
-have installed — repositories, branches, worktrees, tags, releases and pipelines, with
-per-repository identities and multi-forge accounts.
+**Every commit counts.** The Git client for people who already like Git.
 
 </div>
 
@@ -30,19 +28,19 @@ per-repository identities and multi-forge accounts.
 
 ## Why another Git client
 
-Most desktop Git clients are large Electron applications that bundle their own Git stack
-(NodeGit/libgit2), require an account for much of their value, and ship a lot of surface
-area most teams never touch. Commit87 is a **deliberately smaller** take on the idea:
+Graphical Git clients usually reimplement Git to build their UI on top of it — and that is
+where your hooks, filters, LFS, GPG signing, SSH config and `includeIf` identities quietly
+stop working. Commit87 takes the other path: **a focused UI on top of the Git you already
+trust.**
 
-- **System Git, not a re-implementation.** Every operation is a real `git` invocation, so
-  hooks, filters, LFS, GPG signing, SSH config, `includeIf` identities, submodules and
-  `git` behaviour you already rely on keep working.
-- **Multi-account by design.** Keep several identities (name/email/SSH key/GPG key) and
-  several forge accounts, then bind them per repository, per remote or per push.
-- **Focused scope.** Repos, code review, worktrees, tags, releases and actions — no
-  boards, no AI chat panel, no issue tracker, no wiki.
-- **Auditable and portable.** Tokens live in the OS credential store when available, the
-  renderer is sandboxed with a strict CSP, and the git console cannot spawn a shell.
+- **Real Git, not a re-implementation.** Every operation is a real `git` invocation, so your
+  existing setup keeps working — including the parts nobody wrote a UI for.
+- **Small by design.** Repositories, review, worktrees, tags, releases and pipelines.
+  No boards, no issue tracker, no wiki, no AI panel.
+- **Multi-account, per repository.** Several identities and forge accounts, bound per
+  repository, per remote or per push.
+- **Auditable.** Tokens in the OS credential store, a sandboxed renderer behind a strict CSP,
+  and a git console that cannot spawn a shell.
 
 ## Features
 
