@@ -39,7 +39,7 @@ jobs:
           #   runner: macos-13
           - target: mac
             arch: arm64
-            runner: macos-14
+            runner: macos-15
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
