@@ -6,6 +6,13 @@ All notable changes to GitGrove are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Interactive rebase planner: pick, reword, squash, fixup, drop and reorder the commits
+  between a base and `HEAD` in one dialog. Reword messages survive conflict stops and
+  Continue, and the bridge keeps app-controlled editor scripts in the git dir instead of
+  opening an external editor
+
 ### Fixed
 
 - Linux packaging: CI installs `libarchive-tools` (bsdtar) before building, so the

@@ -2563,3 +2563,132 @@
   .remotes-layout { grid-template-columns: 1fr; }
   .remote-settings { border-left: 0; border-top: 1px solid var(--border); }
 }
+
+/* ------------------------------------------------------ interactive rebase */
+
+.rebase-planner {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rebase-summary {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+
+.rebase-base {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+
+.rebase-base .mono {
+  flex: none;
+  color: var(--text);
+}
+
+.rebase-base .ellipsis {
+  min-width: 0;
+}
+
+.rebase-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 46vh;
+  overflow-y: auto;
+  padding-right: 3px;
+}
+
+.rebase-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+}
+
+.rebase-row.is-dropped {
+  opacity: 0.55;
+  border-style: dashed;
+}
+
+.rebase-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rebase-row-main > .mono {
+  flex: none;
+  color: var(--muted);
+}
+
+.rebase-row-subject {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.rebase-row.is-dropped .rebase-row-subject {
+  text-decoration: line-through;
+}
+
+.rebase-row-meta {
+  flex: none;
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.rebase-row .rebase-action {
+  flex: none;
+  width: 96px;
+  padding: 5px 7px;
+  font-size: 11.5px;
+}
+
+.rebase-row-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.rebase-row-actions .icon-btn {
+  width: 22px;
+  height: 22px;
+}
+
+.rebase-row-message {
+  min-height: 46px;
+  resize: vertical;
+}
+
+.rebase-error {
+  margin: 0;
+  color: var(--red);
+  font-size: 11.5px;
+}
+
+.rebase-warning {
+  margin: 0;
+  color: var(--amber);
+  font-size: 11.5px;
+}

@@ -7,6 +7,7 @@ import {
   GitBranch,
   GitMerge,
   GitPullRequestArrow,
+  ListTree,
   MoreHorizontal,
   Plus,
   RefreshCw,
@@ -253,6 +254,14 @@ export function BranchesView() {
                     <IconButton label="Rebase current branch onto this" onClick={() => setConfirmRebase(branch)}>
                       <ArrowUpRight size={14} />
                     </IconButton>
+                    {!branch.isCurrent ? (
+                      <IconButton
+                        label="Interactive rebase onto this branch"
+                        onClick={() => useStore.getState().openRebase(branch.shortName)}
+                      >
+                        <ListTree size={14} />
+                      </IconButton>
+                    ) : null}
                     <IconButton label="Add worktree" onClick={() => { setWorktreeFor(branch); setWorktreePath('') }}>
                       <Waypoints size={14} />
                     </IconButton>

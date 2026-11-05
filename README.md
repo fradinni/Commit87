@@ -268,7 +268,7 @@ tests/               vitest suites (parsers, providers, git integration, securit
 
 ## Roadmap
 
-- [ ] Interactive rebase editor (todo list, squash, reword) inside the app
+- [x] Interactive rebase editor (todo list, squash, reword) inside the app
 - [ ] Submodule management UI
 - [ ] Git LFS status and pull/prune actions
 - [ ] Diff review comments and inline PR review

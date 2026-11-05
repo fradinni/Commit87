@@ -10,6 +10,8 @@ import { AppStore } from '../store'
 import { TaskManager, validateConsoleCommand } from '../tasks'
 import { buildAuthArgs, buildIdentityEnv, detectGit, runGit } from '../git/runner'
 import * as repoOps from '../git/repo'
+import * as rebaseOps from '../git/rebase'
+import { parseRebaseTodoItems } from '../git/rebase-plan'
 import { normalizeBaseUrl, detectProviderFromUrl, providerFromHost } from '../providers/remote'
 import { ProviderService } from '../providers/service'
 
@@ -402,6 +404,24 @@ export class Router {
           { identity: ctx.identity }
         )
       }
+      case 'git.rebasePlan':
+        return rebaseOps.getRebasePlan(
+          requireString(data.repoPath, 'Repository path'),
+          requireString(data.onto, 'Rebase base')
+        )
+      case 'git.rebaseInteractive': {
+        const repoPath = requireString(data.repoPath, 'Repository path')
+        const ctx = await this.repoAuth(repoPath, asOptionalString(data.identityId, 'Identity id'))
+        return rebaseOps.rebaseInteractive(
+          {
+            repoPath,
+            onto: requireString(data.onto, 'Rebase base'),
+            items: parseRebaseTodoItems(data.items),
+            identityId: asOptionalString(data.identityId, 'Identity id')
+          },
+          { identity: ctx.identity }
+        )
+      }
       case 'git.cherryPick': {
         const ctx = await this.repoAuth(requireString(data.path, 'Repository path'), asOptionalString(data.identityId, 'Identity id'))
         return repoOps.cherryPick(
@@ -425,16 +445,27 @@ export class Router {
           data.mode === 'soft' || data.mode === 'mixed' || data.mode === 'hard' ? data.mode : 'mixed'
         )
         return undefined
-      case 'git.abortOperation':
-        await repoOps.abortOperation(requireString(data.path, 'Repository path'))
+      case 'git.abortOperation': {
+        const repoPath = requireString(data.path, 'Repository path')
+        await repoOps.abortOperation(repoPath)
+        await rebaseOps.cleanupRebaseSession(repoPath)
         return undefined
-      case 'git.continueOperation': {
-        const ctx = await this.repoAuth(requireString(data.path, 'Repository path'), asOptionalString(data.identityId, 'Identity id'))
-        return repoOps.continueOperation(requireString(data.path, 'Repository path'), { identity: ctx.identity })
       }
-      case 'git.skipOperation':
-        await repoOps.skipOperation(requireString(data.path, 'Repository path'))
+      case 'git.continueOperation': {
+        const repoPath = requireString(data.path, 'Repository path')
+        const ctx = await this.repoAuth(repoPath, asOptionalString(data.identityId, 'Identity id'))
+        const editorEnv = await rebaseOps.rebaseEditorEnv(repoPath)
+        const result = await repoOps.continueOperation(repoPath, { identity: ctx.identity }, editorEnv)
+        await rebaseOps.cleanupRebaseSessionIfIdle(repoPath)
+        return result
+      }
+      case 'git.skipOperation': {
+        const repoPath = requireString(data.path, 'Repository path')
+        const editorEnv = await rebaseOps.rebaseEditorEnv(repoPath)
+        await repoOps.skipOperation(repoPath, editorEnv)
+        await rebaseOps.cleanupRebaseSessionIfIdle(repoPath)
         return undefined
+      }
 
       case 'git.tagCreate': {
         const repoPath = requireString(data.repoPath, 'Repository path')

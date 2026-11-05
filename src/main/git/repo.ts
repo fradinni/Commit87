@@ -102,7 +102,7 @@ export async function resolveRepo(inputPath: string): Promise<RepoInfo> {
     }
   })
 
-  const state = await detectRepoState(root)
+  const state = await getOperationState(root)
 
   return {
     path: root,
@@ -123,7 +123,7 @@ export async function resolveRepo(inputPath: string): Promise<RepoInfo> {
   }
 }
 
-async function detectRepoState(repoPath: string): Promise<RepoInfo['state']> {
+export async function getOperationState(repoPath: string): Promise<RepoInfo['state']> {
   const paths = [
     ['MERGE_HEAD', 'merging'],
     ['rebase-merge', 'rebasing'],
@@ -482,7 +482,7 @@ export async function resetTo(repoPath: string, commit: string, mode: ResetInput
 }
 
 export async function abortOperation(repoPath: string): Promise<void> {
-  const state = await detectRepoState(repoPath)
+  const state = await getOperationState(repoPath)
   switch (state) {
     case 'merging':
       await runGit(['merge', '--abort'], { cwd: repoPath })
@@ -507,10 +507,16 @@ export async function abortOperation(repoPath: string): Promise<void> {
   }
 }
 
-export async function continueOperation(repoPath: string, ctx: GitAuthContext): Promise<{ output: string }> {
-  const state = await detectRepoState(repoPath)
+export async function continueOperation(
+  repoPath: string,
+  ctx: GitAuthContext,
+  extraEnv: NodeJS.ProcessEnv = {}
+): Promise<{ output: string }> {
+  const state = await getOperationState(repoPath)
   const { args, env } = contextArgs(ctx)
-  // GIT_EDITOR is forced non-interactive by the runner.
+  const runEnv = { ...env, ...extraEnv }
+  // GIT_EDITOR is forced non-interactive by the runner unless the rebase bridge
+  // installs its message editor for a still-running interactive rebase.
   const command =
     state === 'rebasing'
       ? 'rebase'
@@ -522,19 +528,23 @@ export async function continueOperation(repoPath: string, ctx: GitAuthContext): 
             ? 'am'
             : 'merge'
   if (state === 'merging') {
-    await runGit([...args, 'commit', '--no-edit'], { cwd: repoPath, env })
+    await runGit([...args, 'commit', '--no-edit'], { cwd: repoPath, env: runEnv })
     return { output: 'Merge commit created' }
   }
-  const result = await runGit([...args, command, '--continue'], { cwd: repoPath, env, allowFailure: true })
+  const result = await runGit([...args, command, '--continue'], {
+    cwd: repoPath,
+    env: runEnv,
+    allowFailure: true
+  })
   return { output: result.stdout + result.stderr }
 }
 
-export async function skipOperation(repoPath: string): Promise<void> {
-  const state = await detectRepoState(repoPath)
-  if (state === 'rebasing') await runGit(['rebase', '--skip'], { cwd: repoPath })
-  else if (state === 'cherry-picking') await runGit(['cherry-pick', '--skip'], { cwd: repoPath })
-  else if (state === 'reverting') await runGit(['revert', '--skip'], { cwd: repoPath })
-  else if (state === 'applying') await runGit(['am', '--skip'], { cwd: repoPath })
+export async function skipOperation(repoPath: string, extraEnv: NodeJS.ProcessEnv = {}): Promise<void> {
+  const state = await getOperationState(repoPath)
+  if (state === 'rebasing') await runGit(['rebase', '--skip'], { cwd: repoPath, env: extraEnv })
+  else if (state === 'cherry-picking') await runGit(['cherry-pick', '--skip'], { cwd: repoPath, env: extraEnv })
+  else if (state === 'reverting') await runGit(['revert', '--skip'], { cwd: repoPath, env: extraEnv })
+  else if (state === 'applying') await runGit(['am', '--skip'], { cwd: repoPath, env: extraEnv })
   else throw new Error('Nothing to skip')
 }
 

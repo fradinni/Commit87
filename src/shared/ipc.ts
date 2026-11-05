@@ -35,6 +35,9 @@ import type {
   RepoConfigEntry,
   RepoDefaults,
   RepoInfo,
+  RebasePlan,
+  RebasePlanInput,
+  RebaseResult,
   RepoStatus,
   ResetInput,
   StashInfo,
@@ -110,6 +113,8 @@ export interface IpcMethods {
   'git.setUpstream': { request: { path: string; branch: string; upstream: string }; response: void }
   'git.merge': { request: MergeInput; response: { output: string } }
   'git.rebase': { request: { path: string; onto: string; identityId?: string }; response: { output: string } }
+  'git.rebasePlan': { request: { repoPath: string; onto: string }; response: RebasePlan }
+  'git.rebaseInteractive': { request: RebasePlanInput; response: RebaseResult }
   'git.cherryPick': { request: { path: string; sha: string; identityId?: string }; response: { output: string } }
   'git.revert': { request: { path: string; sha: string; identityId?: string }; response: { output: string } }
   'git.reset': { request: ResetInput; response: void }
