@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://github.com/fradinni/Commit87">
-    <img src="docs/assets/header.svg" alt="Commit87 — Git, without the noise" width="100%">
+    <img src="docs/assets/header.svg" alt="Commit87 — every commit counts" width="100%">
   </a>
 </div>
 
