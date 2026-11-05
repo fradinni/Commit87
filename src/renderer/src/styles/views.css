@@ -402,7 +402,7 @@
 
 .commit-head {
   display: grid;
-  grid-template-columns: var(--refs-w, 176px) var(--graph-w, 44px) minmax(240px, 1fr) 150px 92px 72px;
+  grid-template-columns: var(--refs-w, 176px) max(52px, var(--graph-w, 44px)) minmax(240px, 1fr) 150px 92px 72px;
   align-items: center;
   gap: 0;
   height: 28px;
@@ -457,7 +457,7 @@
 
 .commit-row {
   display: grid;
-  grid-template-columns: var(--refs-w, 176px) var(--graph-w, 44px) minmax(240px, 1fr) 150px 92px 72px;
+  grid-template-columns: var(--refs-w, 176px) max(52px, var(--graph-w, 44px)) minmax(240px, 1fr) 150px 92px 72px;
   align-items: center;
   gap: 0;
   height: var(--row-h);
