@@ -114,7 +114,7 @@ jobs:
           # - arch: x64
           #   runner: macos-13
           - arch: arm64
-            runner: macos-14
+            runner: macos-15
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
