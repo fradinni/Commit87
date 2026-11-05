@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowRight,
+  Boxes,
   CloudDownload,
   CloudUpload,
   Command,
@@ -23,7 +24,7 @@ import {
 import { activeIdentity, useStore, type ViewId } from '../store'
 import { call } from '../lib/ipc'
 
-export type PaletteAction = 'open' | 'clone' | 'init' | 'new-branch' | 'new-tag' | 'new-worktree' | 'push'
+export type PaletteAction = 'open' | 'clone' | 'init' | 'new-branch' | 'new-tag' | 'new-worktree' | 'new-submodule' | 'push'
 
 interface PaletteCommand {
   id: string
@@ -77,6 +78,7 @@ export function CommandPalette({ action }: { action: (action: PaletteAction) => 
       view('files', 'Files & staging', <Layers size={15} />),
       view('branches', 'Branches', <GitBranch size={15} />),
       view('worktrees', 'Worktrees', <Waypoints size={15} />),
+      view('submodules', 'Submodules', <Boxes size={15} />),
       view('tags', 'Tags', <Tag size={15} />),
       view('pulls', 'Pull requests', <GitPullRequest size={15} />),
       view('releases', 'Releases', <Rocket size={15} />),
@@ -122,7 +124,8 @@ export function CommandPalette({ action }: { action: (action: PaletteAction) => 
           run: () => openRebase(repo.upstream ?? undefined)
         },
         { id: 'new-tag', label: 'Create tag…', group: 'Git', icon: <Tag size={15} />, run: () => action('new-tag') },
-        { id: 'new-worktree', label: 'Add worktree…', group: 'Git', icon: <Waypoints size={15} />, run: () => action('new-worktree') }
+        { id: 'new-worktree', label: 'Add worktree…', group: 'Git', icon: <Waypoints size={15} />, run: () => action('new-worktree') },
+        { id: 'new-submodule', label: 'Add submodule…', group: 'Git', icon: <Boxes size={15} />, run: () => action('new-submodule') }
       )
       for (const branch of branches.filter((item) => item.type === 'branch').slice(0, 30)) {
         items.push({

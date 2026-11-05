@@ -18,6 +18,9 @@ import type {
   RepoStatus,
   ResetInput,
   StashInfo,
+  SubmoduleAddInput,
+  SubmoduleInfo,
+  SubmoduleUpdateInput,
   TagCreateInput,
   TagInfo,
   WorktreeAddInput,
@@ -34,6 +37,9 @@ import {
   parseRemotes,
   parseStashes,
   parseStatus,
+  normalizeSubmodulePath,
+  parseSubmoduleConfig,
+  parseSubmodules,
   parseTags,
   parseWorktrees
 } from './parsers'
@@ -43,11 +49,13 @@ export interface GitAuthContext {
   identity?: GitIdentity | null
   account?: IntegrationAccount | null
   token?: string | null
+  /** Scope the credential helper to this URL origin (used for submodule add). */
+  authOrigin?: string
 }
 
 function contextArgs(ctx: GitAuthContext): { args: string[]; env: NodeJS.ProcessEnv } {
   const ident = buildIdentityEnv(ctx.identity)
-  const auth = buildAuthArgs(ctx.account ?? null, ctx.token ?? null)
+  const auth = buildAuthArgs(ctx.account ?? null, ctx.token ?? null, ctx.authOrigin)
   return { args: [...ident.args, ...auth.args], env: { ...ident.env, ...auth.env } }
 }
 
@@ -234,6 +242,247 @@ export async function getWorktrees(repoPath: string): Promise<WorktreeInfo[]> {
 export async function getStashes(repoPath: string): Promise<StashInfo[]> {
   const raw = await runGit(['stash', 'list', '--format=%gd%x1f%H%x1f%gs%x1f%ct'], { cwd: repoPath })
   return parseStashes(raw.stdout)
+}
+
+export async function getSubmodules(repoPath: string): Promise<SubmoduleInfo[]> {
+  const repo = await resolveRepo(repoPath)
+  if (repo.isBare) return []
+
+  const [status, config] = await Promise.all([
+    // Only top-level entries: nested submodules are owned by their parent
+    // checkout, so the superproject cannot update, sync or remove them by path.
+    // "Update all" passes --recursive and still advances nested checkouts.
+    tryRunGit(['submodule', 'status'], { cwd: repo.path }),
+    readSubmoduleConfig(repo.path)
+  ])
+  // A broken or unmapped .gitmodules must not make the repository impossible
+  // to open; the submodule view simply has nothing to show.
+  if (!status || status.exitCode !== 0) return []
+  const submodules = parseSubmodules(status.stdout, config)
+
+  // The status flag only compares the submodule HEAD with the recorded
+  // gitlink. Report uncommitted work inside each initialized checkout too.
+  await Promise.all(
+    submodules.map(async (submodule) => {
+      if (!submodule.initialized) return
+      try {
+        const worktree = safeJoin(repo.path, submodule.path)
+        const dirty = await tryRunGit(['status', '--porcelain', '--untracked-files=normal'], { cwd: worktree })
+        if (dirty && dirty.exitCode === 0 && dirty.stdout.trim()) submodule.dirty = true
+      } catch {
+        // A missing or inaccessible checkout leaves dirty false; the state
+        // flag still tells the user the submodule needs attention.
+      }
+    })
+  )
+  return submodules
+}
+
+export async function addSubmodule(input: SubmoduleAddInput, ctx: GitAuthContext): Promise<void> {
+  const repo = await resolveRepo(input.repoPath)
+  if (repo.isBare) throw new Error('Submodules need a working tree')
+  const url = input.url.trim()
+  if (!url) throw new Error('Submodule URL is required')
+  if (url.length > 2048 || /[\0\r\n]/.test(url)) throw new Error('Invalid submodule URL')
+  const submodulePath = input.path !== undefined ? validateSubmodulePath(repo.path, input.path) : undefined
+  if (input.branch) validateRefName(repo.path, input.branch)
+
+  const { args, env } = contextArgs(ctx)
+  const addArgs = [...args, 'submodule', 'add']
+  if (input.branch) addArgs.push('-b', input.branch)
+  if (input.force) addArgs.push('--force')
+  addArgs.push('--', url)
+  if (submodulePath) addArgs.push(submodulePath)
+  await runGit(addArgs, { cwd: repo.path, env, timeoutMs: 600_000 })
+}
+
+export async function updateSubmodules(
+  input: SubmoduleUpdateInput,
+  identity?: GitIdentity | null
+): Promise<{ output: string }> {
+  const repo = await resolveRepo(input.repoPath)
+  if (repo.isBare) throw new Error('Submodules need a working tree')
+  const submodulePath = input.submodulePath ? validateSubmodulePath(repo.path, input.submodulePath) : undefined
+  if (input.clean && !input.force) throw new Error('Cleaning a submodule requires a forced update')
+
+  const listed = await getSubmodules(repo.path)
+  if (submodulePath && !listed.some((submodule) => submodule.path === submodulePath)) {
+    throw new Error(`Not a tracked submodule: ${submodulePath}`)
+  }
+
+  const ident = buildIdentityEnv(identity)
+  const updateArgs = [...ident.args, 'submodule', 'update']
+  if (input.init) updateArgs.push('--init')
+  if (input.recursive) updateArgs.push('--recursive')
+  if (input.remote) updateArgs.push('--remote')
+  if (input.force) updateArgs.push('--force')
+  if (submodulePath) updateArgs.push('--', submodulePath)
+  // No credential helper is installed for updates: `.gitmodules` can point at
+  // any host, and the superproject's token must never be offered to it.
+  const result = await runGit(updateArgs, { cwd: repo.path, env: ident.env, timeoutMs: 600_000 })
+
+  if (input.clean) {
+    const targets = submodulePath
+      ? [submodulePath]
+      : (await getSubmodules(repo.path))
+          .filter((submodule) => submodule.initialized)
+          .map((submodule) => submodule.path)
+    for (const target of targets) await cleanSubmoduleCheckout(repo.path, target)
+  }
+  return { output: result.stdout + result.stderr }
+}
+
+export async function syncSubmodules(repoPath: string, submodulePath?: string, recursive = false): Promise<void> {
+  const repo = await resolveRepo(repoPath)
+  if (repo.isBare) throw new Error('Submodules need a working tree')
+  const relative = submodulePath ? validateSubmodulePath(repo.path, submodulePath) : undefined
+  if (relative) {
+    const listed = await getSubmodules(repo.path)
+    if (!listed.some((submodule) => submodule.path === relative)) {
+      throw new Error(`Not a tracked submodule: ${relative}`)
+    }
+  }
+  const args = ['submodule', 'sync']
+  if (recursive) args.push('--recursive')
+  if (relative) args.push('--', relative)
+  await runGit(args, { cwd: repo.path })
+}
+
+/**
+ * Remove a tracked submodule: unregister it, remove the working tree and the
+ * gitlink, then clean the module directory under the current worktree's git
+ * dir. Only paths that appear in `git submodule status` are accepted, so this
+ * can never delete an arbitrary folder.
+ */
+export async function removeSubmodule(repoPath: string, submodulePath: string, force = false): Promise<void> {
+  const repo = await resolveRepo(repoPath)
+  if (repo.isBare) throw new Error('Submodules need a working tree')
+  const relative = validateSubmodulePath(repo.path, submodulePath)
+
+  const submodules = await getSubmodules(repo.path)
+  const entry = submodules.find((submodule) => submodule.path === relative)
+  if (!entry) throw new Error(`Not a tracked submodule: ${relative}`)
+  if (!force && (entry.dirty || entry.modified || entry.conflicted)) {
+    throw new Error('The submodule has local changes or unpushed commits; use force removal to discard them')
+  }
+
+  const configs = parseSubmoduleConfig(await readSubmoduleConfig(repo.path))
+  const configured = [...configs.entries()].find(([, config]) => normalizeSubmodulePath(config.path) === relative)
+  const name = configured?.[0] ?? entry.name
+
+  // `git submodule deinit` unregisters the checkout before `git rm` runs, so
+  // reject an unstaged .gitmodules first: otherwise a failed rm would leave a
+  // deinitialized submodule behind. Staged changes (for example a submodule
+  // added but not committed yet) are safe to remove.
+  const status = await getStatus(repo.path)
+  const gitmodules = status.files.find((file) => file.path.toLowerCase() === '.gitmodules')
+  if (gitmodules?.stage === 'conflicted' || (gitmodules && gitmodules.worktree !== '.' && gitmodules.worktree !== '?')) {
+    throw new Error('Commit or stash changes to .gitmodules before removing a submodule')
+  }
+
+  // A submodule that only exists as a staged addition has no HEAD gitlink;
+  // deinit would refuse it, so `git rm -f` removes the addition directly.
+  const headTree = await tryRunGit(['ls-tree', 'HEAD', '--', relative], { cwd: repo.path })
+  const committedInHead = headTree?.stdout.split('\t')[0]?.trim().startsWith('160000') ?? false
+
+  if (committedInHead) {
+    await runGit(['submodule', 'deinit', ...(force ? ['-f'] : []), '--', relative], { cwd: repo.path })
+  }
+  try {
+    await runGit(['rm', ...(force || !committedInHead ? ['-f'] : []), '--', relative], { cwd: repo.path })
+  } catch (error) {
+    // Restore the checkout we just unregistered so a refused removal does not
+    // leave the submodule half-removed.
+    if (committedInHead && entry.initialized) {
+      const restore = await tryRunGit(['submodule', 'update', '--init', '--recursive', '--', relative], {
+        cwd: repo.path
+      })
+      if (!restore || restore.exitCode !== 0) {
+        const message = error instanceof Error ? error.message : String(error)
+        throw new Error(`${message}\nThe submodule checkout could not be restored automatically.`)
+      }
+    }
+    throw error
+  }
+
+  // A staged-only addition may not be covered by `submodule deinit`; leave no
+  // stale submodule.<name> section behind either way.
+  if (configured) {
+    await runGit(['config', '--remove-section', `submodule.${name}`], {
+      cwd: repo.path,
+      allowFailure: true
+    })
+  }
+
+  const moduleDir = await submoduleModuleDir(repo, name)
+  if (moduleDir) await fs.rm(moduleDir, { recursive: true, force: true })
+
+  // `git rm` leaves an empty .gitmodules behind when the last submodule is
+  // removed. Drop the file too so the change set is a single clean deletion.
+  const remaining = parseSubmoduleConfig(await readSubmoduleConfig(repo.path))
+  if (remaining.size === 0) {
+    const gitmodulesPath = path.join(repo.path, '.gitmodules')
+    const content = await fs.readFile(gitmodulesPath, 'utf8').catch(() => null)
+    if (content !== null && content.trim() === '') {
+      await runGit(['rm', '-f', '--', '.gitmodules'], { cwd: repo.path, allowFailure: true })
+    }
+  }
+}
+
+async function readSubmoduleConfig(repoPath: string): Promise<string> {
+  const result = await tryRunGit(
+    ['config', '-f', '.gitmodules', '-z', '--get-regexp', '^submodule\\..*\\.(path|url|branch)$'],
+    { cwd: repoPath }
+  )
+  return result?.stdout ?? ''
+}
+
+function validateSubmodulePath(repoPath: string, submodulePath: string): string {
+  if (!submodulePath.trim() || /[\0\r\n]/.test(submodulePath)) throw new Error('Invalid submodule path')
+  if (path.isAbsolute(submodulePath)) throw new Error('Submodule path must be relative to the repository')
+  const posix = submodulePath.replace(/\\/g, '/')
+  if (path.posix.isAbsolute(posix)) throw new Error('Submodule path must be relative to the repository')
+  const normalized = path.posix.normalize(posix).replace(/\/+$/, '')
+  if (!normalized || normalized === '.' || normalized === '..' || normalized.startsWith('../')) {
+    throw new Error('Submodule path escapes the repository')
+  }
+  const segments = normalized.split('/')
+  // Trailing dots and spaces alias `.git`/`.gitmodules` on some filesystems.
+  const metadata = segments.map((segment) => segment.replace(/[. ]+$/, '').toLowerCase())
+  if (metadata.includes('.git') || metadata.join('/') === '.gitmodules') {
+    throw new Error('Submodule path cannot point inside Git metadata')
+  }
+  const absolute = safeJoin(repoPath, normalized)
+  if (path.resolve(absolute) === path.resolve(repoPath)) {
+    throw new Error('Submodule path must be a subfolder of the repository')
+  }
+  return normalized
+}
+
+/**
+ * Resolve the module dir for the current worktree. `git rev-parse --git-path`
+ * is authoritative: the main worktree uses `<git-dir>/modules`, while a linked
+ * worktree uses its own `<git-dir>/worktrees/<id>/modules`.
+ */
+async function submoduleModuleDir(repo: RepoInfo, name: string): Promise<string | null> {
+  const modulesRoot = path.resolve(repo.gitDir, 'modules')
+  const raw = await tryRunGit(['rev-parse', '--git-path', `modules/${name}`], { cwd: repo.root })
+  const reported = raw?.stdout.trim()
+  const candidate = reported ? path.resolve(repo.root, reported) : path.resolve(modulesRoot, name)
+  if (candidate === modulesRoot || !isInside(modulesRoot, candidate)) return null
+  return candidate
+}
+
+/** Remove untracked files from a checkout and every nested submodule inside it. */
+async function cleanSubmoduleCheckout(repoPath: string, relative: string): Promise<void> {
+  const root = safeJoin(repoPath, relative)
+  const nested = await tryRunGit(['submodule', 'status', '--recursive'], { cwd: root })
+  const nestedPaths = nested && nested.exitCode === 0 ? parseSubmodules(nested.stdout, '').map((item) => item.path) : []
+  for (const target of ['', ...nestedPaths]) {
+    const dir = target ? safeJoin(root, target) : root
+    const dirty = await tryRunGit(['status', '--porcelain', '--untracked-files=normal'], { cwd: dir })
+    if (dirty && dirty.exitCode === 0 && dirty.stdout.trim()) await runGit(['clean', '-ffd'], { cwd: dir })
+  }
 }
 
 export async function getDiff(input: DiffInput): Promise<DiffResult> {

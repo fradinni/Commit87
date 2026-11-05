@@ -1,3 +1,4 @@
+import path from 'node:path'
 import type {
   BlameLine,
   Commit,
@@ -7,6 +8,7 @@ import type {
   RepoInfo,
   StashInfo,
   StatusFile,
+  SubmoduleInfo,
   TagInfo,
   WorktreeInfo
 } from '@shared/types'
@@ -309,6 +311,119 @@ export function parseStashes(output: string): StashInfo[] {
     })
   }
   return stashes
+}
+
+export interface ParsedSubmoduleConfig {
+  path: string
+  url: string
+  branch?: string
+}
+
+/** `.gitmodules` paths are POSIX, but tolerate `./`, `\\` and trailing slashes. */
+export function normalizeSubmodulePath(value: string): string {
+  const posix = value.replace(/\\/g, '/').replace(/\/+/g, '/')
+  return path.posix.normalize(posix).replace(/\/+$/, '')
+}
+
+/**
+ * Parse `git config -f .gitmodules -z --get-regexp` output. Each record is
+ * `submodule.<name>.<field>\n<value>` and records are NUL-delimited, so values
+ * may contain spaces and paths keep their exact spelling.
+ */
+export function parseSubmoduleConfig(output: string): Map<string, ParsedSubmoduleConfig> {
+  const configs = new Map<string, ParsedSubmoduleConfig>()
+  for (const record of output.split('\0')) {
+    if (!record) continue
+    const separator = record.indexOf('\n')
+    if (separator <= 0) continue
+    const key = record.slice(0, separator)
+    const value = record.slice(separator + 1)
+    const match = /^submodule\.(.+)\.(path|url|branch)$/.exec(key)
+    if (!match) continue
+    const name = match[1]
+    const field = match[2]
+    const entry = configs.get(name) ?? { path: '', url: '' }
+    if (field === 'path') entry.path = value
+    else if (field === 'url') entry.url = value
+    else entry.branch = value
+    configs.set(name, entry)
+  }
+  return configs
+}
+
+/**
+ * Parse `git submodule status` and join it with the `.gitmodules`
+ * configuration by path. Status is one line per submodule:
+ * ` <sha> <path> (<describe>)`, prefixed with `-` when uninitialized,
+ * `+` when the checkout does not match the recorded gitlink and `U` when the
+ * gitlink is unmerged.
+ */
+export function parseSubmodules(statusOutput: string, configOutput: string): SubmoduleInfo[] {
+  const configs = parseSubmoduleConfig(configOutput)
+  const byPath = new Map<string, { name: string; config: ParsedSubmoduleConfig }>()
+  for (const [name, config] of configs) {
+    if (config.path) byPath.set(normalizeSubmodulePath(config.path), { name, config })
+  }
+
+  const submodules: SubmoduleInfo[] = []
+  for (const rawLine of statusOutput.split(/\r?\n/)) {
+    if (!rawLine.trim()) continue
+    const flag = rawLine[0]
+    if (flag !== ' ' && flag !== '-' && flag !== '+' && flag !== 'U') continue
+    const match = /^([0-9a-f]{4,64}) (.+)$/.exec(rawLine.slice(1))
+    if (!match) continue
+    const sha = match[1]
+    let rawPath = match[2]
+    let describe: string | undefined
+    // Only up-to-date and out-of-sync lines carry a ` (describe)` suffix.
+    // Prefer a known .gitmodules path as the delimiter so parentheses inside
+    // the describe or the path itself are preserved.
+    if ((flag === ' ' || flag === '+') && rawPath.endsWith(')')) {
+      const exact = normalizeSubmodulePath(rawPath)
+      if (!byPath.has(exact)) {
+        const known = [...byPath.keys()]
+          .filter((candidate) => rawPath.startsWith(`${candidate} (`))
+          .sort((a, b) => b.length - a.length)[0]
+        if (known) {
+          describe = rawPath.slice(known.length + 2, -1)
+          rawPath = known
+        } else {
+          const open = rawPath.lastIndexOf(' (')
+          if (open > 0) {
+            describe = rawPath.slice(open + 2, -1)
+            rawPath = rawPath.slice(0, open)
+          }
+        }
+      }
+    }
+    const submodulePath = normalizeSubmodulePath(rawPath)
+    const config = byPath.get(submodulePath)
+    const initialized = flag !== '-'
+    const conflicted = flag === 'U'
+    const modified = flag === '+'
+    const state: SubmoduleInfo['state'] = conflicted
+      ? 'conflicted'
+      : !initialized
+        ? 'uninitialized'
+        : modified
+          ? 'modified'
+          : 'initialized'
+    submodules.push({
+      path: submodulePath,
+      name: config?.name ?? submodulePath,
+      url: config?.config.url ?? '',
+      branch: config?.config.branch || undefined,
+      sha,
+      shortSha: sha.slice(0, 8),
+      describe: describe || undefined,
+      state,
+      initialized,
+      modified,
+      conflicted,
+      dirty: false
+    })
+  }
+  return submodules
 }
 
 export function parseNumstat(output: string): DiffFileStat[] {

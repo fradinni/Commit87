@@ -12,7 +12,7 @@ import { buildAuthArgs, buildIdentityEnv, detectGit, runGit } from '../git/runne
 import * as repoOps from '../git/repo'
 import * as rebaseOps from '../git/rebase'
 import { parseRebaseTodoItems } from '../git/rebase-plan'
-import { normalizeBaseUrl, detectProviderFromUrl, providerFromHost } from '../providers/remote'
+import { normalizeBaseUrl, accountMatchesHost, detectProviderFromUrl, providerFromHost } from '../providers/remote'
 import { ProviderService } from '../providers/service'
 
 type GetWindow = () => BrowserWindow | null
@@ -267,6 +267,8 @@ export class Router {
         return repoOps.getWorktrees(requireString(data.path, 'Repository path'))
       case 'git.stashes':
         return repoOps.getStashes(requireString(data.path, 'Repository path'))
+      case 'git.submodules':
+        return repoOps.getSubmodules(requireString(data.path, 'Repository path'))
       case 'git.diff':
         return repoOps.getDiff({
           repoPath: requireString(data.repoPath, 'Repository path'),
@@ -575,6 +577,56 @@ export class Router {
           requireNumber(data.index, 'Stash index')
         )
         return undefined
+      case 'git.submoduleAdd': {
+        const repoPath = requireString(data.repoPath, 'Repository path')
+        const url = requireString(data.url, 'Submodule URL')
+        // Credentials follow the *submodule* URL, never the parent remote.
+        const auth = await this.submoduleAuth(repoPath, url, asOptionalString(data.accountId, 'Account id'))
+        const token = auth.account ? await this.store.getToken(auth.account.id) : null
+        const identity = this.store.resolveIdentity(this.store.getRepoDefaults(repoPath).identityId)
+        await repoOps.addSubmodule(
+          {
+            repoPath,
+            url,
+            path: asOptionalString(data.path, 'Submodule path'),
+            branch: asOptionalString(data.branch, 'Branch'),
+            force: Boolean(data.force),
+            accountId: asOptionalString(data.accountId, 'Account id')
+          },
+          { identity, account: auth.account, token, authOrigin: auth.origin }
+        )
+        return undefined
+      }
+      case 'git.submoduleUpdate': {
+        const repoPath = requireString(data.repoPath, 'Repository path')
+        const identity = this.store.resolveIdentity(this.store.getRepoDefaults(repoPath).identityId)
+        return repoOps.updateSubmodules(
+          {
+            repoPath,
+            submodulePath: asOptionalString(data.submodulePath, 'Submodule path'),
+            init: Boolean(data.init),
+            recursive: Boolean(data.recursive),
+            remote: Boolean(data.remote),
+            force: Boolean(data.force),
+            clean: Boolean(data.clean)
+          },
+          identity
+        )
+      }
+      case 'git.submoduleSync':
+        await repoOps.syncSubmodules(
+          requireString(data.repoPath, 'Repository path'),
+          asOptionalString(data.submodulePath, 'Submodule path'),
+          Boolean(data.recursive)
+        )
+        return undefined
+      case 'git.submoduleRemove':
+        await repoOps.removeSubmodule(
+          requireString(data.repoPath, 'Repository path'),
+          requireString(data.submodulePath, 'Submodule path'),
+          Boolean(data.force)
+        )
+        return undefined
       case 'git.remoteAdd':
         await repoOps.addRemote(
           requireString(data.path, 'Repository path'),
@@ -875,6 +927,83 @@ export class Router {
 
   // -------------------------------------------------------------------------
   // Auth helpers
+
+  private async submoduleAuth(
+    repoPath: string,
+    url: string,
+    explicitId?: string
+  ): Promise<{ account?: IntegrationAccount; origin?: string }> {
+    const target = await this.submoduleTarget(repoPath, url)
+    if (explicitId) {
+      const explicit = this.store.integrationById(explicitId)
+      if (!explicit) throw new Error('Unknown integration account')
+      if (!target?.host) throw new Error('An integration account needs a submodule URL with a host')
+      if (!accountMatchesHost(explicit, target.host)) {
+        throw new Error(`Integration account does not match the submodule host ${target.host}`)
+      }
+      return { account: explicit, origin: target.origin }
+    }
+    if (!target?.host) return {}
+    const host = target.host
+
+    const preferred = target.provider
+      ? this.store.getRepoDefaults(repoPath).integrationByProvider[target.provider]
+      : undefined
+    const candidates = this.store
+      .listIntegrations()
+      .filter(
+        (account) =>
+          (!target.provider || account.provider === target.provider) && accountMatchesHost(account, host)
+      )
+    return {
+      account: candidates.find((account) => account.id === preferred) ?? candidates[0],
+      origin: target.origin
+    }
+  }
+
+  /** Resolve the host a submodule URL will contact, including relative URLs. */
+  private async submoduleTarget(
+    repoPath: string,
+    url: string
+  ): Promise<{ host: string; provider?: ProviderId; origin?: string } | null> {
+    const direct = detectProviderFromUrl(url)
+    if (direct?.host) return { host: direct.host, provider: direct.provider, origin: this.originOf(url) }
+    if (!/^\.{1,2}\//.test(url.trim())) return null
+
+    const repo = await repoOps.resolveRepo(repoPath)
+    // Git resolves a relative submodule URL against the current branch's
+    // remote (falling back to origin), never against an arbitrary remote.
+    let remoteName: string | undefined
+    if (repo.currentBranch) {
+      const configured = await runGit(['config', '--get', `branch.${repo.currentBranch}.remote`], {
+        cwd: repo.root,
+        allowFailure: true
+      })
+      remoteName = configured.stdout.trim() || undefined
+      if (remoteName === '.') remoteName = undefined
+    }
+    const defaults = this.store.getRepoDefaults(repo.path)
+    const remote =
+      repo.remotes.find((item) => item.name === remoteName) ??
+      repo.remotes.find((item) => item.name === 'origin') ??
+      (defaults.defaultRemote ? repo.remotes.find((item) => item.name === defaults.defaultRemote) : undefined)
+    if (!remote) return null
+
+    const detected = detectProviderFromUrl(remote.fetchUrl) ?? detectProviderFromUrl(remote.pushUrl)
+    if (!detected?.host) return null
+    return { host: detected.host, provider: detected.provider, origin: this.originOf(remote.fetchUrl) }
+  }
+
+  private originOf(url: string): string | undefined {
+    const raw = url.trim()
+    if (!/^https?:\/\//i.test(raw)) return undefined
+    try {
+      const parsed = new URL(raw)
+      return `${parsed.protocol}//${parsed.host.toLowerCase()}`
+    } catch {
+      return undefined
+    }
+  }
 
   private async repoAuth(repoPath: string, identityId?: string, accountId?: string, remoteName?: string) {
     const repo = await repoOps.resolveRepo(repoPath)

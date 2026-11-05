@@ -8,6 +8,12 @@ All notable changes to GitGrove are documented here. The format follows
 
 ### Added
 
+- Submodule management: list initialized, uninitialized, out-of-sync and conflicted
+  submodules with their checked-out or recorded commit, URL, tracked branch and local-change flags;
+  initialize and update (including to the tracked branch), sync URLs, add with an optional
+  branch, remove with an explicit force option, and open the nested repository. Removal is
+  staged, cleans the current worktree's module clone, and refuses before touching the
+  checkout when `.gitmodules` has unstaged changes
 - Interactive rebase planner: pick, reword, squash, fixup, drop and reorder the commits
   between a base and `HEAD` in one dialog. Reword messages survive conflict stops and
   Continue, and the bridge keeps app-controlled editor scripts in the git dir instead of

@@ -70,6 +70,9 @@ area most teams never touch. GitGrove is a **deliberately smaller** take on the 
   cherry-pick, revert and `git am`
 - Worktrees: add from a branch or a new branch, open side by side, lock/unlock with a
   reason, prune, force-remove
+- Submodules: initialize, update to the recorded commit or the tracked branch, sync URLs,
+  add with an optional branch, reset local work, remove (with an explicit force option) and
+  open the nested repository; local changes and out-of-sync checkouts are flagged
 - Tags: annotated or lightweight, push to a remote, delete locally and remotely
 - Stashes: push (with untracked), apply, pop, drop
 
@@ -208,7 +211,7 @@ src/
 │  ├─ tasks.ts                streaming git tasks, console allow-list
 │  ├─ git/
 │  │  ├─ runner.ts            spawn wrapper, identity and credential env
-│  │  ├─ parsers.ts           porcelain v2, log, refs, worktrees, blame
+│  │  ├─ parsers.ts           porcelain v2, log, refs, worktrees, submodules, blame
 │  │  └─ repo.ts              typed operations over system git
 │  ├─ providers/              GitHub, GitLab, Bitbucket, Gitea clients
 │  └─ ipc/router.ts           one validated channel table, no dynamic IPC
@@ -269,7 +272,7 @@ tests/               vitest suites (parsers, providers, git integration, securit
 ## Roadmap
 
 - [x] Interactive rebase editor (todo list, squash, reword) inside the app
-- [ ] Submodule management UI
+- [x] Submodule management UI
 - [ ] Git LFS status and pull/prune actions
 - [ ] Diff review comments and inline PR review
 - [ ] Multiple simultaneous repository tabs (state is already per-repository)

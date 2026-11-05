@@ -243,6 +243,43 @@ export interface StashInfo {
   date: number
 }
 
+export type SubmoduleState = 'initialized' | 'uninitialized' | 'modified' | 'conflicted'
+
+export interface SubmoduleInfo {
+  path: string
+  name: string
+  url: string
+  branch?: string
+  sha: string
+  shortSha: string
+  describe?: string
+  state: SubmoduleState
+  initialized: boolean
+  modified: boolean
+  conflicted: boolean
+  dirty: boolean
+}
+
+export interface SubmoduleAddInput {
+  repoPath: string
+  url: string
+  path?: string
+  branch?: string
+  force?: boolean
+  accountId?: string
+}
+
+export interface SubmoduleUpdateInput {
+  repoPath: string
+  submodulePath?: string
+  init?: boolean
+  recursive?: boolean
+  remote?: boolean
+  force?: boolean
+  /** Remove untracked files from the checkout after updating. */
+  clean?: boolean
+}
+
 export type FileStage = 'staged' | 'unstaged' | 'untracked' | 'conflicted'
 
 export interface StatusFile {

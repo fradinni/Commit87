@@ -16,6 +16,7 @@ import type {
   RepoInfo,
   RepoStatus,
   StashInfo,
+  SubmoduleInfo,
   TagInfo,
   TaskEvent,
   WorktreeInfo
@@ -29,6 +30,7 @@ export type ViewId =
   | 'worktrees'
   | 'tags'
   | 'stashes'
+  | 'submodules'
   | 'remotes'
   | 'pulls'
   | 'releases'
@@ -69,6 +71,7 @@ interface StoreState {
   tags: TagInfo[]
   worktrees: WorktreeInfo[]
   stashes: StashInfo[]
+  submodules: SubmoduleInfo[]
   pulls: PullRequest[]
   workflows: ActionWorkflow[]
   runs: ActionRun[]
@@ -101,6 +104,7 @@ interface StoreState {
   refreshTags: () => Promise<void>
   refreshWorktrees: () => Promise<void>
   refreshStashes: () => Promise<void>
+  refreshSubmodules: () => Promise<void>
   setView: (view: ViewId) => void
   selectCommit: (sha: string | null) => void
   selectFile: (path: string | null) => void
@@ -151,6 +155,7 @@ export const useStore = create<StoreState>((set, get) => ({
   tags: [],
   worktrees: [],
   stashes: [],
+  submodules: [],
   pulls: [],
   workflows: [],
   runs: [],
@@ -206,14 +211,15 @@ export const useStore = create<StoreState>((set, get) => ({
     set({ repoLoading: true })
     try {
       const repo = await call('repo.open', { path })
-      const [defaults, detection, status, branches, tags, worktrees, stashes] = await Promise.all([
+      const [defaults, detection, status, branches, tags, worktrees, stashes, submodules] = await Promise.all([
         call('repo.getDefaults', { path: repo.path }),
         call('provider.detect', { path: repo.path }),
         call('git.status', { path: repo.path }),
         call('git.branches', { path: repo.path }),
         call('git.tags', { path: repo.path }),
         call('git.worktrees', { path: repo.path }),
-        call('git.stashes', { path: repo.path })
+        call('git.stashes', { path: repo.path }),
+        call('git.submodules', { path: repo.path })
       ])
       const limit = get().config?.maxCommits ?? 500
       const commits = await call('git.log', { repoPath: repo.path, limit, all: true })
@@ -226,6 +232,7 @@ export const useStore = create<StoreState>((set, get) => ({
         tags,
         worktrees,
         stashes,
+        submodules,
         commits,
         selectedCommit: commits[0]?.sha ?? null,
         selectedFile: null,
@@ -248,6 +255,7 @@ export const useStore = create<StoreState>((set, get) => ({
       tags: [],
       worktrees: [],
       stashes: [],
+      submodules: [],
       pulls: [],
       workflows: [],
       runs: [],
@@ -267,7 +275,8 @@ export const useStore = create<StoreState>((set, get) => ({
       get().refreshBranches(),
       get().refreshTags(),
       get().refreshWorktrees(),
-      get().refreshStashes()
+      get().refreshStashes(),
+      get().refreshSubmodules()
     ])
     const limit = get().config?.maxCommits ?? 500
     const commits = await call('git.log', { repoPath: repo.path, limit, all: true })
@@ -338,6 +347,16 @@ export const useStore = create<StoreState>((set, get) => ({
     if (!repo) return
     try {
       set({ stashes: await call('git.stashes', { path: repo.path }) })
+    } catch (error) {
+      get().notifyError(error)
+    }
+  },
+
+  async refreshSubmodules() {
+    const repo = get().currentRepo
+    if (!repo) return
+    try {
+      set({ submodules: await call('git.submodules', { path: repo.path }) })
     } catch (error) {
       get().notifyError(error)
     }

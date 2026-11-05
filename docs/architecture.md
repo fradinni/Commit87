@@ -78,6 +78,21 @@ implementing it fails compilation.
   escapes the repository (including `..` and absolute paths).
 - Branch and tag names are checked for Git's reserved characters and leading dashes.
 - File lists for stage/unstage/discard are re-validated; no path may be absolute.
+- Submodule paths must be repository-relative, stay inside the worktree and avoid `.git`
+  and `.gitmodules` after normalization (including `./`, trailing slashes and
+  filesystem aliases). Removal only accepts a path reported by `git submodule status`,
+  refuses local changes or unpushed commits without `force`, refuses an unstaged
+  `.gitmodules`, deinitializes and `git rm`s the checkout, restores
+  it if the remove is refused, then cleans the module directory for the *current*
+  worktree (`git rev-parse --git-path modules/<name>`). Nested submodules are not listed
+  individually; recursive "Update all" advances them, and reset cleans every nested
+  checkout inside the selected submodule.
+- Submodule add resolves the account with an exact host match against the submodule URL
+  and scopes the credential helper to that URL origin. Relative URLs use the current
+  branch's remote (falling back to `origin`/the repository default), matching Git's own
+  resolution. Updates install no credential helper, so app tokens are never offered to an
+  arbitrary `.gitmodules` URL; they use the ambient credential helper/SSH agent and the
+  repository identity's SSH key.
 - Remote names are restricted to `[A-Za-z0-9._-]+`.
 - Provider base URLs are parsed as URLs before storage.
 
@@ -131,6 +146,7 @@ Everything user-visible is parsed from stable porcelain formats:
 | Branches | `for-each-ref` with `%(upstream:track)` | ahead/behind without a second call |
 | Tags | `for-each-ref refs/tags` | annotated vs lightweight via `%(objecttype)` |
 | Worktrees | `worktree list --porcelain` | lock reasons, prunable, main vs linked |
+| Submodules | `submodule status` + `config -f .gitmodules -z` | top-level flags joined to URL/branch by normalized path; local dirtiness from each checkout |
 | Stashes | `stash list --format=%gd%x1f…` | `%x1f`, not `%1f`, for real separators |
 | Remotes | `remote -v` | fetch and push URLs merged |
 | Blame | `blame --line-porcelain` | grouped by commit blocks |
@@ -259,8 +275,8 @@ then `git switch -c pr-N <ref>` with the integration token used for the fetch.
 
 - **State**: a single zustand store with the current repo, derived collections (commits,
   branches, tags, worktrees, stashes, pulls, runs), loading flags, toasts and task state.
-- **Views**: launchpad, commit graph, files/staging, branches, worktrees, tags, stashes,
-  remotes, pull requests, releases, pipelines, settings.
+- **Views**: launchpad, commit graph, files/staging, branches, worktrees, submodules, tags,
+  stashes, remotes, pull requests, releases, pipelines, settings.
 - **Interactive rebase**: a modal planner over `onto..HEAD` where commits can be reordered,
   reworded, squashed, fixed up or dropped; it validates the plan in the renderer and again
   in the main process before replaying it.
@@ -269,6 +285,13 @@ then `git switch -c pr-N <ref>` with the integration token used for the fetch.
   holds the final file. Saving writes the path (never a symlink or a path outside the repo)
   and stages it through `git.resolveConflict`. Non-UTF-8, symlinked and oversized paths are
   read-only here and must be resolved in an external editor.
+- **Submodules**: cards show the checked-out commit (or the recorded gitlink when
+  uninitialized), `.gitmodules` URL, tracked branch and status
+  flag (`up to date`, `not initialized`, `out of sync`, `conflict`) plus uncommitted work
+  inside the checkout. Update, tracked-branch update, sync, add and remove are explicit
+  actions; remove reports that the change is staged, never touches the remote, and refuses
+  before modifying anything when `.gitmodules` has unstaged edits. Reset discards tracked
+  changes and removes untracked files after confirmation.
 - **Diff renderer**: parses unified diffs into files/hunks/lines with old/new line numbers,
   caps rendering at 6 000 lines, and renders untracked files as highlighted code.
 - **Graph renderer**: lane assignment with merge/fork edges as SVG cubic curves, one color

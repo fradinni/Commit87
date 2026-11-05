@@ -14,6 +14,7 @@ import { GraphView } from './views/GraphView'
 import { FilesView } from './views/FilesView'
 import { BranchesView } from './views/BranchesView'
 import { WorktreesView } from './views/WorktreesView'
+import { SubmodulesView } from './views/SubmodulesView'
 import { TagsView } from './views/TagsView'
 import { StashesView } from './views/StashesView'
 import { RemotesView } from './views/RemotesView'
@@ -263,6 +264,7 @@ export function App() {
     else if (action === 'new-branch') useStore.getState().setView('branches')
     else if (action === 'new-tag') useStore.getState().setView('tags')
     else if (action === 'new-worktree') useStore.getState().setView('worktrees')
+    else if (action === 'new-submodule') useStore.getState().setView('submodules')
     else if (action === 'push') openPush()
   }, [openPush, pickAndOpen])
 
@@ -311,6 +313,7 @@ export function App() {
                 {view === 'files' ? <FilesView /> : null}
                 {view === 'branches' ? <BranchesView /> : null}
                 {view === 'worktrees' ? <WorktreesView /> : null}
+                {view === 'submodules' ? <SubmodulesView /> : null}
                 {view === 'tags' ? <TagsView /> : null}
                 {view === 'stashes' ? <StashesView /> : null}
                 {view === 'remotes' ? <RemotesView /> : null}
