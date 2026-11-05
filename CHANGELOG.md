@@ -6,6 +6,11 @@ All notable changes to GitGrove are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Linux packaging: CI installs `libarchive-tools` (bsdtar) before building, so the
+  pacman target no longer fails with `fpm` exit code 127 when generating `.MTREE`
+
 ### Changed
 
 - Commit graph: compact lane assignment closes merged lanes instead of drawing stray

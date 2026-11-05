@@ -46,6 +46,12 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Install Linux packaging tools
+        if: matrix.target == 'linux'
+        # deb/rpm/pacman go through electron-builder's bundled fpm, which needs
+        # fakeroot and rpm on the host and bsdtar (libarchive-tools) for the
+        # pacman .MTREE index.
+        run: sudo apt-get update && sudo apt-get install -y fakeroot rpm libarchive-tools
       - run: node scripts/sync-version.mjs "${GITHUB_REF_NAME#v}"
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash

@@ -51,10 +51,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - name: Install Linux packaging tools
+        # fpm (bundled by electron-builder) builds deb/rpm/pacman archives and the
+        # pacman .MTREE index with bsdtar, which Ubuntu does not include by default.
+        run: sudo apt-get update && sudo apt-get install -y fakeroot rpm libarchive-tools
       - name: Build AppImage, deb, rpm, pacman and tar.gz
-        run: |
-          sudo apt-get install -y fakeroot rpm
-          npx electron-builder --config electron-builder.config.cjs --linux --${{ matrix.arch }} --publish never
+        run: npx electron-builder --config electron-builder.config.cjs --linux --${{ matrix.arch }} --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v5

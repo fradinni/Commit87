@@ -24,6 +24,24 @@ Artifacts land in `dist/`. CI uploads them per runner
 
 ## Linux packaging details
 
+Building the container formats with `electron-builder` needs host tools that are not
+always preinstalled:
+
+- `fakeroot` and `rpm` (the bundled `fpm` drives both the deb and rpm paths)
+- `bsdtar` (`libarchive-tools` on Debian/Ubuntu, `libarchive` on Fedora/Arch), which
+  `fpm` invokes for the pacman `.MTREE` index. Without it the pacman target fails with
+  exit code `127` after the AppImage, deb, rpm and tar.gz artifacts are already written.
+
+```bash
+sudo apt-get install -y fakeroot rpm libarchive-tools   # Debian/Ubuntu CI runners
+sudo dnf install -y fakeroot rpm libarchive             # Fedora
+sudo pacman -S --needed fakeroot rpm libarchive         # Arch
+```
+
+The `linux` release matrix and the CI `package-linux` job install these before
+packaging. Alternatively, `scripts/package-linux.py` builds deb, rpm and pacman without
+`fpm` and falls back to GNU `tar` when `bsdtar` is missing.
+
 All Linux packages install the app to `/opt/GitGrove`, add `/usr/bin/gitgrove`,
 `/usr/share/applications/gitgrove.desktop`, hicolor icons from 16 to 1024 px, and the
 license. The wrapper is a one-line `exec /opt/GitGrove/gitgrove "$@"`, which keeps

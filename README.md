@@ -167,6 +167,9 @@ python3 scripts/package-linux.py deb rpm pacman   # no-fpm fallback packager
 
 Do not use `--publish always` for a dry run; pass `--publish never` as CI does.
 
+Linux packaging with `electron-builder` also needs `fakeroot`, `rpm` and `bsdtar`
+(`libarchive-tools`); see [docs/packaging.md](docs/packaging.md#linux-packaging-details).
+
 ## Architecture
 
 ```
