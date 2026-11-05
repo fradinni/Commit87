@@ -135,7 +135,7 @@ export function Sidebar() {
             <span>Open, clone or create a repository to get started.</span>
           </div>
           <nav className="nav">
-            <button className="nav-item" onClick={() => void closeRepo()}>
+            <button className="nav-item" onClick={() => setView('graph')}>
               <span className="nav-icon"><Boxes size={16} /></span>
               <span className="nav-label">Launchpad</span>
             </button>

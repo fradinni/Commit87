@@ -54,7 +54,7 @@ export function Launchpad({
       <section className="launch-hero">
         <div className="launch-hero-text">
           <div className="launch-eyebrow">
-            <Sparkles size={13} /> Git, without the noise
+            <Sparkles size={13} /> Every commit counts
           </div>
           <h1>
             Your repo,
