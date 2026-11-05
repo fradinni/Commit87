@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC_INVOKE, IPC_MENU, IPC_TASK_EVENT, IPC_WINDOW_STATE } from '@shared/ipc'
 import type { IpcChannel, IpcEnvelope, IpcRequest, IpcResponse, TaskEventEnvelope, WindowStateEvent } from '@shared/ipc'
-import type { GitGroveBridge } from '@shared/bridge'
+import type { Commit87Bridge } from '@shared/bridge'
 import type { TaskEvent } from '@shared/types'
 
 async function invoke<K extends IpcChannel>(channel: K, payload: IpcRequest<K>): Promise<IpcResponse<K>> {
@@ -20,7 +20,7 @@ function subscribe<T>(channel: string, callback: (value: T) => void): () => void
   return () => ipcRenderer.removeListener(channel, listener)
 }
 
-const api: GitGroveBridge = {
+const api: Commit87Bridge = {
   invoke,
   onTaskEvent(callback: (event: TaskEvent) => void): () => void {
     return subscribe<TaskEventEnvelope>(IPC_TASK_EVENT, (envelope) => callback(envelope.event))
@@ -39,6 +39,6 @@ const api: GitGroveBridge = {
   }
 }
 
-contextBridge.exposeInMainWorld('gitgrove', api)
+contextBridge.exposeInMainWorld('commit87', api)
 
-export type GitGroveApi = typeof api
+export type Commit87Api = typeof api

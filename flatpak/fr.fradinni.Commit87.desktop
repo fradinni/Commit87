@@ -1,12 +1,13 @@
 [Desktop Entry]
-Name=GitGrove
+Name=Commit87
 GenericName=Git Client
 Comment=Manage repositories, branches, worktrees, releases and pipelines
-Exec=gitgrove %U
-Icon=${SNAP}/meta/gui/gitgrove.png
+Exec=commit87-run %U
+Icon=fr.fradinni.Commit87
 Terminal=false
 Type=Application
 Categories=Development;RevisionControl;
 Keywords=git;scm;version control;repository;branch;worktree;
-StartupWMClass=GitGrove
-MimeType=x-scheme-handler/gitgrove;
+StartupWMClass=Commit87
+StartupNotify=true
+MimeType=x-scheme-handler/commit87;

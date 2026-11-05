@@ -56,17 +56,17 @@ function shaFor(commits: Array<{ sha: string; subject: string }>, subject: strin
 
 async function sessionDir(repoPathToUse: string): Promise<string> {
   const info = await resolveRepo(repoPathToUse)
-  return path.join(info.gitDir, 'gitgrove', 'rebase')
+  return path.join(info.gitDir, 'commit87', 'rebase')
 }
 
 beforeAll(async () => {
-  root = await fs.mkdtemp(path.join(os.tmpdir(), 'gitgrove-rebase-test-'))
+  root = await fs.mkdtemp(path.join(os.tmpdir(), 'commit87-rebase-test-'))
   repoPath = path.join(root, 'repo')
   await fs.mkdir(repoPath)
   await runGit(['init', '-b', 'main'], { cwd: repoPath })
   await runGit(['config', 'user.name', identity.name], { cwd: repoPath })
   await runGit(['config', 'user.email', identity.email], { cwd: repoPath })
-  await write('README.md', '# GitGrove\n')
+  await write('README.md', '# Commit87\n')
   await commit('Initial commit')
 
   await createBranch(repoPath, 'feature', 'main', true)

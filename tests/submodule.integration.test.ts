@@ -50,7 +50,7 @@ beforeAll(async () => {
   process.env.GIT_CONFIG_KEY_0 = 'protocol.file.allow'
   process.env.GIT_CONFIG_VALUE_0 = 'always'
 
-  root = await fs.mkdtemp(path.join(os.tmpdir(), 'gitgrove-submodule-'))
+  root = await fs.mkdtemp(path.join(os.tmpdir(), 'commit87-submodule-'))
   remotePath = path.join(root, 'remote-lib')
   repoPath = path.join(root, 'app')
   submodulePath = path.join(repoPath, 'vendor', 'lib')

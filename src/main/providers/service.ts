@@ -184,13 +184,13 @@ export class ProviderService {
 }
 
 function buildRemoteAuth(account: IntegrationAccount, token: string): { args: string[]; env: NodeJS.ProcessEnv } {
-  const username = account.username?.trim() || (account.provider === 'github' ? 'x-access-token' : account.provider === 'gitlab' ? 'oauth2' : 'gitgrove')
+  const username = account.username?.trim() || (account.provider === 'github' ? 'x-access-token' : account.provider === 'gitlab' ? 'oauth2' : 'commit87')
   const helper =
     '!f() { if test "$1" = get; then ' +
-    'printf "username=%s\\npassword=%s\\n" "$GITGROVE_USERNAME" "$GITGROVE_TOKEN"; ' +
+    'printf "username=%s\\npassword=%s\\n" "$COMMIT87_USERNAME" "$COMMIT87_TOKEN"; ' +
     'fi; }; f'
   return {
     args: ['-c', 'credential.helper=', '-c', `credential.helper=${helper}`],
-    env: { GITGROVE_USERNAME: username, GITGROVE_TOKEN: token }
+    env: { COMMIT87_USERNAME: username, COMMIT87_TOKEN: token }
   }
 }

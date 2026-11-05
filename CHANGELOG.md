@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to GitGrove are documented here. The format follows
+All notable changes to Commit87 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
@@ -39,6 +39,13 @@ All notable changes to GitGrove are documented here. The format follows
 
 ### Changed
 
+- Renamed the application to Commit87: the window, installers, Linux packages,
+  Flatpak and Snap manifests, the package id (`fr.fradinni.Commit87`),
+  `commit87://` deep links, `COMMIT87_*` environment variables, the preload
+  bridge and the executable all use the new name. On first launch the previous
+  profile (`config.json`, `secrets.json`) is copied from the old user-data
+  directory; tokens encrypted under the old app identity may need to be entered
+  again
 - Commit graph: compact lane assignment closes merged lanes instead of drawing stray
   lines, and a dedicated Branch / Tag column shows local branches, remotes, tags and
   detached HEAD next to a narrower graph and denser rows
@@ -46,7 +53,7 @@ All notable changes to GitGrove are documented here. The format follows
   covers renderer start-up, the initial bundle no longer loads `highlight.js`, and the
   ASAR excludes bundled production dependencies
 - AppImage uses gzip compression instead of xz for faster reads; opt-in startup tracing is
-  available through `GITGROVE_STARTUP_TRACE=1`
+  available through `COMMIT87_STARTUP_TRACE=1`
 
 ## [0.1.0] — 2026-11-04
 
@@ -79,7 +86,7 @@ First public preview.
   default plus per-repository override, per-commit picker
 - Git console with a strict allow-list, no shell, output streaming and history
 - Command palette with commands, views, branches and recent repositories
-- Hardened Electron configuration: sandboxed renderer, custom `gitgrove://` protocol,
+- Hardened Electron configuration: sandboxed renderer, custom `commit87://` protocol,
   strict CSP, hardened fuses, ASAR integrity
 - Encrypted token storage through the OS credential store with a plaintext fallback that
   is reported in the UI

@@ -42,9 +42,9 @@ The `linux` release matrix and the CI `package-linux` job install these before
 packaging. Alternatively, `scripts/package-linux.py` builds deb, rpm and pacman without
 `fpm` and falls back to GNU `tar` when `bsdtar` is missing.
 
-All Linux packages install the app to `/opt/GitGrove`, add `/usr/bin/gitgrove`,
-`/usr/share/applications/gitgrove.desktop`, hicolor icons from 16 to 1024 px, and the
-license. The wrapper is a one-line `exec /opt/GitGrove/gitgrove "$@"`, which keeps
+All Linux packages install the app to `/opt/Commit87`, add `/usr/bin/commit87`,
+`/usr/share/applications/commit87.desktop`, hicolor icons from 16 to 1024 px, and the
+license. The wrapper is a one-line `exec /opt/Commit87/commit87 "$@"`, which keeps
 `argv[0]` and working-directory behaviour predictable for deep links and file-manager
 integration.
 
@@ -80,7 +80,7 @@ The script prints size and SHA-256 for every artifact.
 
 ### Snap
 
-`snap/snapcraft.yaml` is `core24`, strict confinement, `gitgrove` app, with Git, git-lfs,
+`snap/snapcraft.yaml` is `core24`, strict confinement, `commit87` app, with Git, git-lfs,
 OpenSSH and CA certificates staged. The launcher (`snap/local/command.sh`) sets
 `GIT_EXEC_PATH`, `PATH`, `GIT_SSL_CAINFO` and starts Electron with `--no-sandbox` (Chromium's
 sandbox cannot be used under strict confinement). Plugs include `home`,
@@ -88,23 +88,23 @@ sandbox cannot be used under strict confinement). Plugs include `home`,
 
 ```bash
 npm run dist:snap          # snapcraft pack --destructive-mode
-sudo snap install --dangerous gitgrove_0.1.0_amd64.snap
+sudo snap install --dangerous commit87_0.1.0_amd64.snap
 ```
 
 ### Flatpak
 
-`flatpak/dev.gitgrove.GitGrove.yml` uses the `org.freedesktop.Platform` 24.08 runtime with
+`flatpak/fr.fradinni.Commit87.yml` uses the `org.freedesktop.Platform` 24.08 runtime with
 `org.electronjs.Electron2.BaseApp`, builds Git 2.51.2 from source inside the sandbox, and
-installs the unpacked Electron build to `/app/gitgrove`. Finish args grant `home`,
+installs the unpacked Electron build to `/app/commit87`. Finish args grant `home`,
 `removable-media`, wayland/X11, network, DRI, `~/.ssh:ro`, `xdg-run/gnupg:ro` and access to
 the Secret Service.
 
 ```bash
 npm run dist:flatpak
-flatpak install --user dist/GitGrove-0.1.0-x86_64.flatpak
+flatpak install --user dist/Commit87-0.1.0-x86_64.flatpak
 ```
 
-App ID: `dev.gitgrove.GitGrove`.
+App ID: `fr.fradinni.Commit87`.
 
 ## Cold start and AppImage
 
@@ -125,10 +125,10 @@ in-app splash cannot cover that phase. Everything after it is optimised:
 Measure a build with the opt-in trace:
 
 ```bash
-GITGROVE_STARTUP_TRACE=1 ./dist/GitGrove-0.1.0-linux-x86_64.AppImage
-# [gitgrove:startup] main process loaded … +0ms
-# [gitgrove:startup] app ready … +249ms
-# [gitgrove:startup] main window ready … +1290ms
+COMMIT87_STARTUP_TRACE=1 ./dist/Commit87-0.1.0-linux-x86_64.AppImage
+# [commit87:startup] main process loaded … +0ms
+# [commit87:startup] app ready … +249ms
+# [commit87:startup] main window ready … +1290ms
 ```
 
 ## Windows
@@ -170,11 +170,11 @@ Built and inspected on Fedora 44 x86_64:
 
 | Artifact | Result |
 | --- | --- |
-| `GitGrove-0.1.0-linux-x86_64.AppImage` (94 MB) | builds; app launches |
-| `GitGrove-0.1.0-linux-x64.tar.gz` (116 MB) | builds |
-| `GitGrove-0.1.0-amd64.deb` (82 MB) | `ar` members and control fields verified |
-| `GitGrove-0.1.0-x86_64.rpm` (79 MB) | `rpm -qip` / `rpm -qlp` verified, no duplicate entries |
-| `GitGrove-0.1.0-x86_64.pkg.tar.zst` (109 MB) | `.PKGINFO` and tree verified |
+| `Commit87-0.1.0-linux-x86_64.AppImage` (94 MB) | builds; app launches |
+| `Commit87-0.1.0-linux-x64.tar.gz` (116 MB) | builds |
+| `Commit87-0.1.0-amd64.deb` (82 MB) | `ar` members and control fields verified |
+| `Commit87-0.1.0-x86_64.rpm` (79 MB) | `rpm -qip` / `rpm -qlp` verified, no duplicate entries |
+| `Commit87-0.1.0-x86_64.pkg.tar.zst` (109 MB) | `.PKGINFO` and tree verified |
 | `dist/linux-unpacked` | launches and loads the renderer from the ASAR |
 
 Snap, Flatpak, Windows and macOS artifacts require their native toolchains and are

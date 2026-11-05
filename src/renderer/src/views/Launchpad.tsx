@@ -142,7 +142,7 @@ export function Launchpad({
             <EmptyState
               icon={<FolderGit2 size={22} />}
               title="Open your first repository"
-              description="GitGrove works with any local Git repository, including linked worktrees."
+              description="Commit87 works with any local Git repository, including linked worktrees."
               action={
                 <div className="row-gap">
                   <Button variant="primary" size="sm" onClick={onOpen}>
@@ -216,7 +216,7 @@ export function Launchpad({
             <p>
               {hasToken
                 ? `${integrations.filter((item) => item.hasToken).length} connected — GitHub, GitLab, Bitbucket or Gitea.`
-                : 'Connect a token to manage pull requests, releases and pipelines from GitGrove.'}
+                : 'Connect a token to manage pull requests, releases and pipelines from Commit87.'}
             </p>
           </div>
           <Button size="sm" variant={hasToken ? 'ghost' : 'outline'} onClick={() => setView('settings')}>
@@ -239,7 +239,7 @@ export function Launchpad({
 
       <footer className="launch-foot">
         <span>
-          GitGrove {appInfo?.version ?? '0.1.0'} · Electron {appInfo?.electron ?? '—'} · {appInfo?.arch ?? ''}
+          Commit87 {appInfo?.version ?? '0.1.0'} · Electron {appInfo?.electron ?? '—'} · {appInfo?.arch ?? ''}
         </span>
         <span>{appInfo?.configPath}</span>
       </footer>

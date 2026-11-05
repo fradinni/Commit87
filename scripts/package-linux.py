@@ -28,14 +28,14 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 DIST = ROOT / "dist"
 APP_DIR = DIST / "linux-unpacked"
 ICONS = ROOT / "build" / "icons"
-PKG_NAME = "gitgrove"
-DISPLAY_NAME = "GitGrove"
-VERSION = os.environ.get("GITGROVE_VERSION") or __import__("json").loads((ROOT / "package.json").read_text())["version"]
-INSTALL_DIR = "/opt/GitGrove"
-MAINTAINER = "GitGrove Contributors <hello@gitgrove.dev>"
-HOMEPAGE = "https://gitgrove.dev"
+PKG_NAME = "commit87"
+DISPLAY_NAME = "Commit87"
+VERSION = os.environ.get("COMMIT87_VERSION") or __import__("json").loads((ROOT / "package.json").read_text())["version"]
+INSTALL_DIR = "/opt/Commit87"
+MAINTAINER = "Commit87 Contributors <contact@fradinni.fr>"
+HOMEPAGE = "https://commit87.fradinni.fr"
 DESCRIPTION = (
-    "GitGrove is a fast desktop Git client built on the system Git binary. It manages "
+    "Commit87 is a fast desktop Git client built on the system Git binary. It manages "
     "repositories, branches, worktrees, tags, releases and pipelines, with multi-account "
     "identity support for GitHub, GitLab, Bitbucket and Gitea."
 )
@@ -53,22 +53,22 @@ RPM_REQUIRES = ["git", "gtk3", "libnotify", "nss", "libXScrnSaver", "libXtst", "
 PACMAN_DEPENDS = ["git", "gtk3", "libnotify", "nss", "libxss", "libxtst", "xdg-utils", "at-spi2-core", "libsecret"]
 
 DESKTOP = """[Desktop Entry]
-Name=GitGrove
+Name=Commit87
 GenericName=Git Client
 Comment=Manage repositories, branches, worktrees, releases and pipelines
-Exec=gitgrove %U
-Icon=gitgrove
+Exec=commit87 %U
+Icon=commit87
 Terminal=false
 Type=Application
 Categories=Development;RevisionControl;
 Keywords=git;scm;version control;repository;branch;worktree;
-StartupWMClass=GitGrove
+StartupWMClass=Commit87
 StartupNotify=true
-MimeType=x-scheme-handler/gitgrove;
+MimeType=x-scheme-handler/commit87;
 """
 
 WRAPPER = """#!/bin/sh
-exec /opt/GitGrove/gitgrove "$@"
+exec /opt/Commit87/commit87 "$@"
 """
 
 
@@ -116,10 +116,10 @@ def tree_entries() -> list[tuple[str, pathlib.Path, int]]:
         entries.append((f"{INSTALL_DIR}/{rel}", path, mode))
     for size in (16, 24, 32, 48, 64, 128, 256, 512, 1024):
         source = ICONS / f"{size}x{size}.png"
-        entries.append((f"/usr/share/icons/hicolor/{size}x{size}/apps/gitgrove.png", source, 0o644))
-    entries.append(("/usr/share/applications/gitgrove.desktop", None, 0o644))
-    entries.append(("/usr/bin/gitgrove", None, 0o755))
-    entries.append(("/usr/share/licenses/gitgrove/LICENSE", ROOT / "LICENSE", 0o644))
+        entries.append((f"/usr/share/icons/hicolor/{size}x{size}/apps/commit87.png", source, 0o644))
+    entries.append(("/usr/share/applications/commit87.desktop", None, 0o644))
+    entries.append(("/usr/bin/commit87", None, 0o755))
+    entries.append(("/usr/share/licenses/commit87/LICENSE", ROOT / "LICENSE", 0o644))
     return entries
 
 
@@ -147,7 +147,7 @@ def add_tree(archive: tarfile.TarFile, entries) -> None:
         if source is None:
             if destination.endswith(".desktop"):
                 add_generated(archive, name, DESKTOP.encode(), mode)
-            elif destination == "/usr/bin/gitgrove":
+            elif destination == "/usr/bin/commit87":
                 add_generated(archive, name, WRAPPER.encode(), mode)
             continue
         if source.is_dir():
@@ -167,7 +167,7 @@ def add_tree(archive: tarfile.TarFile, entries) -> None:
 
 
 def build_deb(arch: str) -> pathlib.Path:
-    out = DIST / f"GitGrove-{VERSION}-{arch}.deb"
+    out = DIST / f"Commit87-{VERSION}-{arch}.deb"
     control = DIST / "deb-control"
     shutil.rmtree(control, ignore_errors=True)
     (control / "DEBIAN").mkdir(parents=True)
@@ -176,7 +176,7 @@ def build_deb(arch: str) -> pathlib.Path:
     for destination, source, _ in tree_entries():
         if source is None or source.is_dir():
             continue
-        if destination.startswith("/usr/bin/gitgrove"):
+        if destination.startswith("/usr/bin/commit87"):
             continue
         md5sums.append(f"{hashlib.md5(source.read_bytes()).hexdigest()}  {destination.lstrip('/')}")
     md5sums.sort(key=lambda line: line.split("  ", 1)[1])
@@ -252,7 +252,7 @@ def build_rpm(arch: str) -> pathlib.Path:
             if destination.endswith(".desktop"):
                 target.write_text(DESKTOP)
                 target.chmod(0o644)
-            elif destination == "/usr/bin/gitgrove":
+            elif destination == "/usr/bin/commit87":
                 target.write_text(WRAPPER)
                 target.chmod(0o755)
         elif source.is_dir():
@@ -279,7 +279,7 @@ Release:        1%{{?dist}}
 Summary:        {SUMMARY}
 License:        {LICENSE}
 URL:            {HOMEPAGE}
-Vendor:         GitGrove
+Vendor:         Commit87
 Packager:       {MAINTAINER}
 BuildArch:      {arch}
 AutoReqProv:    no
@@ -320,7 +320,7 @@ cp -a {payload}/. %{{buildroot}}/
     built = list((top / "RPMS").rglob("*.rpm"))
     if not built:
         raise SystemExit("rpmbuild produced no package")
-    out = DIST / f"GitGrove-{VERSION}-{arch}.rpm"
+    out = DIST / f"Commit87-{VERSION}-{arch}.rpm"
     shutil.copy2(built[0], out)
     shutil.rmtree(top, ignore_errors=True)
     return out
@@ -364,7 +364,7 @@ def build_pacman(arch: str) -> pathlib.Path:
             if destination.endswith(".desktop"):
                 target.write_text(DESKTOP)
                 target.chmod(0o644)
-            elif destination == "/usr/bin/gitgrove":
+            elif destination == "/usr/bin/commit87":
                 target.write_text(WRAPPER)
                 target.chmod(0o755)
         elif source.is_dir():
@@ -373,7 +373,7 @@ def build_pacman(arch: str) -> pathlib.Path:
             shutil.copy2(source, target)
             target.chmod(mode)
 
-    out = DIST / f"GitGrove-{VERSION}-{arch}.pkg.tar.zst"
+    out = DIST / f"Commit87-{VERSION}-{arch}.pkg.tar.zst"
     subprocess.run(
         [
             "bsdtar" if shutil.which("bsdtar") else "tar",

@@ -1,9 +1,9 @@
-app: gitgrove
+app: commit87
 base: core24
 version: '0.1.0'
 summary: Focused desktop Git client
 description: |
-  GitGrove is a fast desktop Git client built on the system Git binary.
+  Commit87 is a fast desktop Git client built on the system Git binary.
   It manages repositories, branches, worktrees, tags, releases and
   pipelines, and supports multiple Git identities for commits and pushes.
 
@@ -17,11 +17,11 @@ description: |
 grade: stable
 confinement: strict
 compression: lzo
-icon: gui/gitgrove.png
+icon: gui/commit87.png
 license: MIT
-website: https://gitgrove.dev
-source-code: https://github.com/gitgrove/gitgrove
-issues: https://github.com/gitgrove/gitgrove/issues
+website: https://commit87.fradinni.fr
+source-code: https://github.com/fradinni/Commit87
+issues: https://github.com/fradinni/Commit87/issues
 
 platforms:
   amd64:
@@ -38,9 +38,9 @@ plugs:
   removable-media:
 
 apps:
-  gitgrove:
+  commit87:
     command: bin/command.sh
-    desktop: share/applications/gitgrove.desktop
+    desktop: share/applications/commit87.desktop
     extensions: [gnome]
     plugs:
       - home
@@ -59,7 +59,7 @@ apps:
       - libsecret
 
 parts:
-  gitgrove:
+  commit87:
     plugin: dump
     source: ../dist/linux-unpacked
     source-type: local
@@ -70,23 +70,23 @@ parts:
       - ca-certificates
       - libsecret-1-0
     organize:
-      gitgrove: usr/lib/gitgrove/gitgrove
-      resources: usr/lib/gitgrove/resources
-      locales: usr/lib/gitgrove/locales
-      chrome_100_percent.pak: usr/lib/gitgrove/chrome_100_percent.pak
-      chrome_200_percent.pak: usr/lib/gitgrove/chrome_200_percent.pak
-      icudtl.dat: usr/lib/gitgrove/icudtl.dat
-      resources.pak: usr/lib/gitgrove/resources.pak
-      snapshot_blob.bin: usr/lib/gitgrove/snapshot_blob.bin
-      v8_context_snapshot.bin: usr/lib/gitgrove/v8_context_snapshot.bin
-      libEGL.so: usr/lib/gitgrove/libEGL.so
-      libGLESv2.so: usr/lib/gitgrove/libGLESv2.so
-      libffmpeg.so: usr/lib/gitgrove/libffmpeg.so
-      libvk_swiftshader.so: usr/lib/gitgrove/libvk_swiftshader.so
-      libvulkan.so.1: usr/lib/gitgrove/libvulkan.so.1
-      vk_swiftshader_icd.json: usr/lib/gitgrove/vk_swiftshader_icd.json
+      commit87: usr/lib/commit87/commit87
+      resources: usr/lib/commit87/resources
+      locales: usr/lib/commit87/locales
+      chrome_100_percent.pak: usr/lib/commit87/chrome_100_percent.pak
+      chrome_200_percent.pak: usr/lib/commit87/chrome_200_percent.pak
+      icudtl.dat: usr/lib/commit87/icudtl.dat
+      resources.pak: usr/lib/commit87/resources.pak
+      snapshot_blob.bin: usr/lib/commit87/snapshot_blob.bin
+      v8_context_snapshot.bin: usr/lib/commit87/v8_context_snapshot.bin
+      libEGL.so: usr/lib/commit87/libEGL.so
+      libGLESv2.so: usr/lib/commit87/libGLESv2.so
+      libffmpeg.so: usr/lib/commit87/libffmpeg.so
+      libvk_swiftshader.so: usr/lib/commit87/libvk_swiftshader.so
+      libvulkan.so.1: usr/lib/commit87/libvulkan.so.1
+      vk_swiftshader_icd.json: usr/lib/commit87/vk_swiftshader_icd.json
     prime:
-      - usr/lib/gitgrove
+      - usr/lib/commit87
       - usr/bin/git
       - usr/lib/git-core
       - usr/share/git-core
@@ -99,4 +99,4 @@ parts:
     source: local
     organize:
       command.sh: bin/command.sh
-      gitgrove.desktop: share/applications/gitgrove.desktop
+      commit87.desktop: share/applications/commit87.desktop

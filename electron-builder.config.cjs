@@ -1,5 +1,5 @@
 /**
- * electron-builder configuration for GitGrove.
+ * electron-builder configuration for Commit87.
  *
  * Linux   : AppImage, deb, rpm, pacman, tar.gz, snap (Flatpak via scripts/build-flatpak.sh)
  * Windows : NSIS installer, portable exe, zip
@@ -23,9 +23,9 @@ if (!existsSync(mainEntry)) {
 }
 
 module.exports = {
-  appId: 'dev.gitgrove.GitGrove',
-  productName: 'GitGrove',
-  copyright: 'Copyright © 2026 GitGrove Contributors',
+  appId: 'fr.fradinni.Commit87',
+  productName: 'Commit87',
+  copyright: 'Copyright © 2026 Commit87 Contributors',
   artifactName: '${productName}-${version}-${os}-${arch}.${ext}',
   directories: {
     buildResources: 'build',
@@ -63,8 +63,8 @@ module.exports = {
   },
   protocols: [
     {
-      name: 'GitGrove',
-      schemes: ['gitgrove']
+      name: 'Commit87',
+      schemes: ['commit87']
     }
   ],
 
@@ -74,21 +74,21 @@ module.exports = {
     target: ['AppImage', 'deb', 'rpm', 'pacman', 'tar.gz'],
     category: 'Development;RevisionControl',
     icon: 'build/icons',
-    executableName: 'gitgrove',
-    maintainer: 'GitGrove Contributors <hello@gitgrove.dev>',
-    vendor: 'GitGrove',
+    executableName: 'commit87',
+    maintainer: 'Commit87 Contributors <contact@fradinni.fr>',
+    vendor: 'Commit87',
     synopsis: 'A focused desktop Git client',
     description:
-      'GitGrove is a fast desktop Git client built on system Git. It manages repositories, branches, worktrees, tags, releases and pipelines, with multi-account identity support for GitHub, GitLab, Bitbucket and Gitea.',
+      'Commit87 is a fast desktop Git client built on system Git. It manages repositories, branches, worktrees, tags, releases and pipelines, with multi-account identity support for GitHub, GitLab, Bitbucket and Gitea.',
     desktop: {
       entry: {
-        Name: 'GitGrove',
+        Name: 'Commit87',
         GenericName: 'Git Client',
         Comment: 'Manage repositories, branches, worktrees, releases and pipelines',
         Keywords: 'git;scm;version control;repository;branch;worktree;',
         Categories: 'Development;RevisionControl;',
-        StartupWMClass: 'GitGrove',
-        MimeType: 'x-scheme-handler/gitgrove;'
+        StartupWMClass: 'Commit87',
+        MimeType: 'x-scheme-handler/commit87;'
       }
     }
   },
@@ -115,7 +115,7 @@ module.exports = {
     summary: 'Focused desktop Git client',
     plugs: ['default', 'home', 'removable-media', 'password-manager-service', 'ssh-keys'],
     environment: {
-      GITGROVE_GIT: '/usr/bin/git'
+      COMMIT87_GIT: '/usr/bin/git'
     }
   },
 
@@ -133,8 +133,8 @@ module.exports = {
     allowToChangeInstallationDirectory: true,
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
-    shortcutName: 'GitGrove',
-    uninstallDisplayName: 'GitGrove',
+    shortcutName: 'Commit87',
+    uninstallDisplayName: 'Commit87',
     deleteAppDataOnUninstall: false,
     include: 'build/installer.nsh',
     artifactName: '${productName}-${version}-${arch}-setup.${ext}'
@@ -154,15 +154,15 @@ module.exports = {
     entitlements: 'build/entitlements.mac.plist',
     entitlementsInherit: 'build/entitlements.mac.plist',
     extendInfo: {
-      NSDocumentsFolderUsageDescription: 'GitGrove needs access to repositories you choose to open.',
-      NSDownloadsFolderUsageDescription: 'GitGrove needs access to repositories you choose to clone.',
-      NSDesktopFolderUsageDescription: 'GitGrove needs access to repositories you choose to open.'
+      NSDocumentsFolderUsageDescription: 'Commit87 needs access to repositories you choose to open.',
+      NSDownloadsFolderUsageDescription: 'Commit87 needs access to repositories you choose to clone.',
+      NSDesktopFolderUsageDescription: 'Commit87 needs access to repositories you choose to open.'
     },
     artifactName: '${productName}-${version}-${arch}.${ext}'
   },
 
   dmg: {
-    title: 'GitGrove ${version}',
+    title: 'Commit87 ${version}',
     contents: [
       { x: 140, y: 200, type: 'file' },
       { x: 400, y: 200, type: 'link', path: '/Applications' }
@@ -172,8 +172,8 @@ module.exports = {
   publish: [
     {
       provider: 'github',
-      owner: 'gitgrove',
-      repo: 'gitgrove',
+      owner: 'fradinni',
+      repo: 'Commit87',
       releaseType: 'draft'
     }
   ]

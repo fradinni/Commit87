@@ -63,7 +63,7 @@ Total: 162 tests. The integration suites create temporary repositories under
 ## Manual verification performed
 
 `bash scripts/demo-tabs.sh` seeds throwaway repositories (including a linked worktree and
-uncommitted changes) under `/tmp/gitgrove-tabs` for exercising tabs locally.
+uncommitted changes) under `/tmp/commit87-tabs` for exercising tabs locally.
 
 The production build (`out/`), the unpacked package (`dist/linux-unpacked`) and the
 AppImage were launched on Linux/Wayland and driven through the Chrome DevTools protocol:

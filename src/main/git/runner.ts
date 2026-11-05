@@ -44,7 +44,7 @@ export function setGitBinary(binary: string | null): void {
 
 export function getGitBinary(): string {
   if (gitBinaryOverride) return gitBinaryOverride
-  return process.env.GITGROVE_GIT || 'git'
+  return process.env.COMMIT87_GIT || 'git'
 }
 
 export function gitBaseArgs(): string[] {
@@ -212,7 +212,7 @@ const PROVIDER_USERNAME: Record<ProviderId, string> = {
   github: 'x-access-token',
   gitlab: 'oauth2',
   bitbucket: 'x-token-auth',
-  gitea: 'gitgrove'
+  gitea: 'commit87'
 }
 
 export function buildAuthArgs(
@@ -224,11 +224,11 @@ export function buildAuthArgs(
   const username = account.username?.trim() || PROVIDER_USERNAME[account.provider]
   const helper =
     '!f() { if test "$1" = get; then ' +
-    'printf "username=%s\\npassword=%s\\n" "$GITGROVE_USERNAME" "$GITGROVE_TOKEN"; ' +
+    'printf "username=%s\\npassword=%s\\n" "$COMMIT87_USERNAME" "$COMMIT87_TOKEN"; ' +
     'fi; }; f'
   const env = {
-    GITGROVE_USERNAME: username,
-    GITGROVE_TOKEN: token
+    COMMIT87_USERNAME: username,
+    COMMIT87_TOKEN: token
   }
   if (origin) {
     // Clear ambient helpers, then scope the app helper to the exact URL origin

@@ -30,12 +30,12 @@ import type { RebaseTodoEntry } from './rebase-plan'
  *   file and reads `messages/<sha>.txt`. A skipped or emptied commit never
  *   invokes the editor, so it can never rewrite a different commit.
  *
- * The todo file and scripts live under <git-dir>/gitgrove/rebase, which keeps
+ * The todo file and scripts live under <git-dir>/commit87/rebase, which keeps
  * them across a conflict stop and an app restart but out of the working tree.
  * They are removed as soon as the rebase is no longer in progress.
  */
 
-const REBASE_STATE_DIR = ['gitgrove', 'rebase'] as const
+const REBASE_STATE_DIR = ['commit87', 'rebase'] as const
 const LOG_FORMAT =
   '--pretty=format:%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ce%x1f%ct%x1f%D%x1f%s%x1f%b%x1e'
 
@@ -223,14 +223,14 @@ async function prepareSession(gitDir: string, entries: RebaseTodoEntry[]): Promi
   await writeScript(
     sequenceEditorScript,
     `#!/bin/sh
-# GitGrove: install the prepared interactive rebase todo list.
+# Commit87: install the prepared interactive rebase todo list.
 cat ${quoteForGitShell(todoPath)} > "$1"
 `
   )
   await writeScript(
     messageEditorScript,
     `#!/bin/sh
-# GitGrove: install a reword message supplied by the planner.
+# Commit87: install a reword message supplied by the planner.
 # The last line of git's done file names the commit git is rewording.
 done=${quoteForGitShell(donePath)}
 messages=${quoteForGitShell(messagesDir)}

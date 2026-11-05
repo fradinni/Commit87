@@ -2,13 +2,13 @@
 
 ## Reporting a vulnerability
 
-Email `security@gitgrove.dev` with a description, affected version, and a reproduction if
+Email `contact@fradinni.fr` with a description, affected version, and a reproduction if
 possible. Please do not open a public issue for security reports. We aim to acknowledge
 within 72 hours and to publish a fix and advisory for confirmed issues.
 
 ## Threat model
 
-GitGrove is a local desktop application that:
+Commit87 is a local desktop application that:
 
 - executes the user's `git` binary against repositories the user chooses
 - stores forge API tokens to call provider APIs
@@ -28,7 +28,7 @@ Trust boundaries:
 ## Controls
 
 - `contextIsolation`, `sandbox`, no `nodeIntegration`, no `webview`, no remote module
-- Renderer served from `gitgrove://` with a strict CSP (`object-src 'none'`,
+- Renderer served from `commit87://` with a strict CSP (`object-src 'none'`,
   `base-uri 'none'`, `form-action 'none'`, no remote or inline scripts)
 - Navigation, popups and `will-attach-webview` blocked; http(s) links open externally
 - Electron fuses: no `runAsNode`, no `NODE_OPTIONS`, no CLI inspect, ASAR-only loading,
@@ -47,7 +47,7 @@ Trust boundaries:
 ## Out of scope
 
 - Malicious repositories exploiting `git` itself (hooks run only when you invoke git
-  operations, exactly as in a terminal; GitGrove does not `git config core.hooksPath` or
+  operations, exactly as in a terminal; Commit87 does not `git config core.hooksPath` or
   install hook shims)
 - Malicious forge servers reachable only by a token you configured
 - Compromise of the OS keychain or of the user account

@@ -1,19 +1,19 @@
 <div align="center">
-  <a href="https://github.com/fradinni/GitGrove">
-    <img src="docs/assets/header.svg" alt="GitGrove — Git, without the noise" width="100%">
+  <a href="https://github.com/fradinni/Commit87">
+    <img src="docs/assets/header.svg" alt="Commit87 — Git, without the noise" width="100%">
   </a>
 </div>
 
 <div align="center">
 
-[![CI](https://github.com/fradinni/GitGrove/actions/workflows/ci.yml/badge.svg)](https://github.com/fradinni/GitGrove/actions/workflows/ci.yml)
-[![Dependabot Updates](https://github.com/fradinni/GitGrove/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/fradinni/GitGrove/actions/workflows/dependabot/dependabot-updates)
-[![Release](https://github.com/fradinni/GitGrove/actions/workflows/release.yml/badge.svg)](https://github.com/fradinni/GitGrove/actions/workflows/release.yml)
+[![CI](https://github.com/fradinni/Commit87/actions/workflows/ci.yml/badge.svg)](https://github.com/fradinni/Commit87/actions/workflows/ci.yml)
+[![Dependabot Updates](https://github.com/fradinni/Commit87/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/fradinni/Commit87/actions/workflows/dependabot/dependabot-updates)
+[![Release](https://github.com/fradinni/Commit87/actions/workflows/release.yml/badge.svg)](https://github.com/fradinni/Commit87/actions/workflows/release.yml)
 
-[![Latest release](https://img.shields.io/github/v/release/fradinni/GitGrove?color=3ddc97&label=latest)](https://github.com/fradinni/GitGrove/releases)
-[![License](https://img.shields.io/github/license/fradinni/GitGrove?color=3ddc97)](LICENSE)
-[![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-5ba8ff)](https://github.com/fradinni/GitGrove/releases)
-[![Vitest](https://img.shields.io/badge/tests-Vitest-6E9F18?logo=vitest&logoColor=white)](https://github.com/fradinni/GitGrove/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/fradinni/Commit87?color=3ddc97&label=latest)](https://github.com/fradinni/Commit87/releases)
+[![License](https://img.shields.io/github/license/fradinni/Commit87?color=3ddc97)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-5ba8ff)](https://github.com/fradinni/Commit87/releases)
+[![Vitest](https://img.shields.io/badge/tests-Vitest-6E9F18?logo=vitest&logoColor=white)](https://github.com/fradinni/Commit87/actions/workflows/ci.yml)
 
 [![Electron](https://img.shields.io/badge/Electron-41-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev/)
@@ -32,7 +32,7 @@ per-repository identities and multi-forge accounts.
 
 Most desktop Git clients are large Electron applications that bundle their own Git stack
 (NodeGit/libgit2), require an account for much of their value, and ship a lot of surface
-area most teams never touch. GitGrove is a **deliberately smaller** take on the idea:
+area most teams never touch. Commit87 is a **deliberately smaller** take on the idea:
 
 - **System Git, not a re-implementation.** Every operation is a real `git` invocation, so
   hooks, filters, LFS, GPG signing, SSH config, `includeIf` identities, submodules and
@@ -140,24 +140,24 @@ Prebuilt packages are produced by CI for every target and architecture:
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./GitGrove-0.1.0-amd64.deb
+sudo apt install ./Commit87-0.1.0-amd64.deb
 
 # Fedora / RHEL
-sudo dnf install ./GitGrove-0.1.0-x86_64.rpm
+sudo dnf install ./Commit87-0.1.0-x86_64.rpm
 
 # Arch
-sudo pacman -U GitGrove-0.1.0-x86_64.pkg.tar.zst
+sudo pacman -U Commit87-0.1.0-x86_64.pkg.tar.zst
 
 # Any distro, no install
-chmod +x GitGrove-0.1.0-linux-x86_64.AppImage
-./GitGrove-0.1.0-linux-x86_64.AppImage
+chmod +x Commit87-0.1.0-linux-x86_64.AppImage
+./Commit87-0.1.0-linux-x86_64.AppImage
 
 # Flatpak
-flatpak install --user GitGrove-0.1.0-x86_64.flatpak
-flatpak run dev.gitgrove.GitGrove
+flatpak install --user Commit87-0.1.0-x86_64.flatpak
+flatpak run fr.fradinni.Commit87
 
 # Snap
-sudo snap install --dangerous gitgrove_0.1.0_amd64.snap
+sudo snap install --dangerous commit87_0.1.0_amd64.snap
 ```
 
 Every Linux package depends on the system `git`; Flatpak and Snap additionally bundle
@@ -211,7 +211,7 @@ src/
 ├─ main/                      Electron main process (Node, full privileges)
 │  ├─ index.ts                lifecycle, single instance, deep links
 │  ├─ window.ts               hardened BrowserWindow, navigation guards
-│  ├─ protocol.ts             gitgrove:// app scheme (no file:// renderer)
+│  ├─ protocol.ts             commit87:// app scheme (no file:// renderer)
 │  ├─ menu.ts                 native menu
 │  ├─ store.ts                config + encrypted secrets, repo defaults
 │  ├─ tasks.ts                streaming git tasks, console allow-list
@@ -228,7 +228,7 @@ src/
 ```
 
 **Process boundaries.** The renderer never sees a token, a path outside the chosen repo,
-or a `child_process`. It calls a single `gitgrove:invoke` channel with a discriminated
+or a `child_process`. It calls a single `commit87:invoke` channel with a discriminated
 envelope; the router re-validates every argument, resolves identity/account permissions
 and returns either a value or a sanitized error.
 
@@ -243,7 +243,7 @@ and inline `-c user.*` values, and sets `GIT_SSH_COMMAND` for per-identity SSH k
 `buildAuthArgs` installs a throwaway credential helper that reads the username and token
 from the environment, so secrets never appear in `argv`, `ps`, shell history or task logs.
 
-**Renderer serving.** The production renderer is served by a privileged `gitgrove://`
+**Renderer serving.** The production renderer is served by a privileged `commit87://`
 scheme instead of `file://`. That allows `grantFileProtocolExtraPrivileges: false` and
 `onlyLoadAppFromAsar: true` while keeping ES modules and a strict CSP working.
 

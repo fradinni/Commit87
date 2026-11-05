@@ -47,7 +47,7 @@ export class Router {
       case 'app.info': {
         const git = await detectGit()
         return {
-          name: 'GitGrove',
+          name: 'Commit87',
           version: APP_VERSION,
           electron: process.versions.electron,
           chrome: process.versions.chrome,

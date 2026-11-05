@@ -3,7 +3,7 @@
 # Usage: bash scripts/demo-tabs.sh [target-dir]
 set -euo pipefail
 
-root="${1:-/tmp/gitgrove-tabs}"
+root="${1:-/tmp/commit87-tabs}"
 if [[ "$root" == *..* ]]; then
   echo "Refusing a path containing '..': $root" >&2
   exit 1

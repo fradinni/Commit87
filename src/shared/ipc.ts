@@ -184,10 +184,10 @@ export interface WindowStateEvent {
   maximized: boolean
 }
 
-export const IPC_INVOKE = 'gitgrove:invoke' as const
-export const IPC_TASK_EVENT = 'gitgrove:task-event' as const
-export const IPC_WINDOW_STATE = 'gitgrove:window-state' as const
-export const IPC_MENU = 'gitgrove:menu' as const
+export const IPC_INVOKE = 'commit87:invoke' as const
+export const IPC_TASK_EVENT = 'commit87:task-event' as const
+export const IPC_WINDOW_STATE = 'commit87:window-state' as const
+export const IPC_MENU = 'commit87:menu' as const
 
 export interface IpcEnvelope<K extends IpcChannel = IpcChannel> {
   channel: K

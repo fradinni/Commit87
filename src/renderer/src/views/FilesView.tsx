@@ -466,7 +466,7 @@ export function FilesView() {
                 Commit{status.stagedCount ? ` ${status.stagedCount} file${status.stagedCount === 1 ? '' : 's'}` : ''}
               </Button>
               <p className="commit-hint">
-                {identity ? `${identity.name} <${identity.email}>` : 'No identity configured'} · {window.gitgrove.platform === 'darwin' ? '⌘' : 'Ctrl'}+Enter
+                {identity ? `${identity.name} <${identity.email}>` : 'No identity configured'} · {window.commit87.platform === 'darwin' ? '⌘' : 'Ctrl'}+Enter
               </p>
             </div>
           </aside>

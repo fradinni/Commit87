@@ -3,7 +3,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promises as fs } from 'node:fs'
 
-export const APP_SCHEME = 'gitgrove'
+export const APP_SCHEME = 'commit87'
 export const APP_ORIGIN = `${APP_SCHEME}://app`
 export const APP_ENTRY = `${APP_ORIGIN}/index.html`
 

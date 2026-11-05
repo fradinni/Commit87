@@ -81,7 +81,7 @@ export function ActionsView() {
         <EmptyState
           icon={<Rocket size={22} />}
           title="Connect a forge to see pipelines"
-          description="GitGrove reads GitHub Actions, GitLab CI, Bitbucket Pipelines and Gitea Actions from the forge API. Connect an account and map it to this repository."
+          description="Commit87 reads GitHub Actions, GitLab CI, Bitbucket Pipelines and Gitea Actions from the forge API. Connect an account and map it to this repository."
           action={<Button size="sm" variant="primary" onClick={() => setView('settings')}>Open integrations</Button>}
         />
       </div>
