@@ -9,6 +9,7 @@ import {
   parseRemotes,
   parseStashes,
   parseStatus,
+  parseSubmodules,
   parseTags,
   parseWorktrees
 } from '../src/main/git/parsers'
@@ -168,5 +169,88 @@ describe('remotes, worktrees, stashes, numstat, blame, config', () => {
     const entries = parseConfig('local\tuser.name\tAlice\nglobal\tuser.email\ta@example.com\nsystem\tcore.autocrlf\tfalse\n')
     expect(entries).toHaveLength(3)
     expect(entries[0]).toEqual({ scope: 'local', key: 'user.name', value: 'Alice' })
+  })
+})
+
+describe('submodule status and .gitmodules parser', () => {
+  const config = [
+    'submodule.vendor/lib.path\nvendor/lib',
+    'submodule.vendor/lib.url\nhttps://github.com/acme/lib.git',
+    'submodule.vendor/lib.branch\nmain',
+    'submodule.tools/cli.path\ntools/cli',
+    'submodule.tools/cli.url\n../cli.git',
+    ''
+  ].join('\0')
+
+  it('joins status flags with paths, URLs and tracked branches', () => {
+    const status = [
+      ' 1111111111111111111111111111111111111111 vendor/lib (heads/main)',
+      ' 2222222222222222222222222222222222222222 tools/cli (v2.1.0)',
+      ''
+    ].join('\n')
+    const submodules = parseSubmodules(status, config)
+    expect(submodules).toHaveLength(2)
+    expect(submodules[0]).toMatchObject({
+      path: 'vendor/lib',
+      name: 'vendor/lib',
+      url: 'https://github.com/acme/lib.git',
+      branch: 'main',
+      shortSha: '11111111',
+      describe: 'heads/main',
+      state: 'initialized',
+      initialized: true,
+      modified: false,
+      conflicted: false,
+      dirty: false
+    })
+    expect(submodules[1]).toMatchObject({ path: 'tools/cli', url: '../cli.git', describe: 'v2.1.0' })
+    expect(submodules[1].branch).toBeUndefined()
+  })
+
+  it('recognises uninitialized, out-of-sync and conflicted checkouts', () => {
+    const status = [
+      '-1111111111111111111111111111111111111111 vendor/lib',
+      '+2222222222222222222222222222222222222222 tools/cli (heads/main)',
+      'U3333333333333333333333333333333333333333 nested/conflict',
+      ''
+    ].join('\n')
+    const submodules = parseSubmodules(status, '')
+    expect(submodules.map((item) => item.state)).toEqual(['uninitialized', 'modified', 'conflicted'])
+    expect(submodules[0]).toMatchObject({ initialized: false, modified: false, conflicted: false, url: '' })
+    expect(submodules[1]).toMatchObject({ initialized: true, modified: true, conflicted: false })
+    expect(submodules[2]).toMatchObject({ initialized: true, conflicted: true })
+  })
+
+  it('keeps paths with spaces and skips malformed lines', () => {
+    const status = [
+      ' 4444444444444444444444444444444444444444 libs/my library (heads/main)',
+      'not a submodule line',
+      ''
+    ].join('\n')
+    const submodules = parseSubmodules(status, '')
+    expect(submodules).toHaveLength(1)
+    expect(submodules[0].path).toBe('libs/my library')
+  })
+
+  it('normalizes .gitmodules paths and only strips describe from initialized lines', () => {
+    const config = [
+      'submodule.lib.path\n./vendor/./lib/',
+      'submodule.lib.url\nhttps://example.com/lib.git',
+      ''
+    ].join('\0')
+    const joined = parseSubmodules(' 1111111111111111111111111111111111111111 vendor/lib (heads/main)\n', config)
+    expect(joined[0]).toMatchObject({ path: 'vendor/lib', url: 'https://example.com/lib.git', describe: 'heads/main' })
+
+    const uninitialized = parseSubmodules('-2222222222222222222222222222222222222222 libs/paren (x)\n', '')
+    expect(uninitialized[0]).toMatchObject({ path: 'libs/paren (x)', describe: undefined })
+
+    const parenthesizedConfig = ['submodule.p.path\nlibs/foo (bar)', 'submodule.p.url\nhttps://example.com/p.git', ''].join('\0')
+    const exact = parseSubmodules(' 3333333333333333333333333333333333333333 libs/foo (bar)\n', parenthesizedConfig)
+    expect(exact[0]).toMatchObject({ path: 'libs/foo (bar)', url: 'https://example.com/p.git', describe: undefined })
+    const described = parseSubmodules(
+      ' 4444444444444444444444444444444444444444 libs/foo (bar) (heads/main)\n',
+      parenthesizedConfig
+    )
+    expect(described[0]).toMatchObject({ path: 'libs/foo (bar)', describe: 'heads/main' })
   })
 })

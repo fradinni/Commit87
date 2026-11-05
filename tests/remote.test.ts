@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { detectProviderFromUrl, parseRemoteUrl, providerFromHost, webUrlFor, normalizeBaseUrl } from '../src/main/providers/remote'
+import { accountMatchesHost, detectProviderFromUrl, parseRemoteUrl, providerFromHost, webUrlFor, normalizeBaseUrl } from '../src/main/providers/remote'
 import type { IntegrationAccount } from '../src/shared/types'
 
 describe('remote URL parsing', () => {
@@ -56,6 +56,28 @@ describe('remote URL parsing', () => {
     expect(providerFromHost('git.example.com', accounts)).toBe('gitea')
     expect(providerFromHost('github.com', accounts)).toBe('github')
     expect(providerFromHost('unknown.tld', accounts)).toBeUndefined()
+  })
+
+  it('matches credentials only to the configured host', () => {
+    const account = (id: string, provider: IntegrationAccount['provider'], baseUrl: string): IntegrationAccount => ({
+      id,
+      provider,
+      label: id,
+      username: 'me',
+      baseUrl,
+      hasToken: true,
+      createdAt: 0
+    })
+    const gitlab = account('gitlab', 'gitlab', 'https://gitlab.company.com')
+    const github = account('github', 'github', 'https://api.github.com')
+    const bitbucket = account('bitbucket', 'bitbucket', 'https://api.bitbucket.org/2.0')
+
+    expect(accountMatchesHost(gitlab, 'gitlab.company.com')).toBe(true)
+    expect(accountMatchesHost(gitlab, 'gitlab.evil.example')).toBe(false)
+    expect(accountMatchesHost(github, 'github.com')).toBe(true)
+    expect(accountMatchesHost(github, 'github.evil.example')).toBe(false)
+    expect(accountMatchesHost(bitbucket, 'bitbucket.org')).toBe(true)
+    expect(accountMatchesHost(bitbucket, 'bitbucket.evil.example')).toBe(false)
   })
 
   it('builds web URLs and base URLs', () => {

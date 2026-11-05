@@ -43,6 +43,9 @@ import type {
   ResolveConflictInput,
   StashInfo,
   StatusFile,
+  SubmoduleAddInput,
+  SubmoduleInfo,
+  SubmoduleUpdateInput,
   TagCreateInput,
   TagInfo,
   TaskEvent,
@@ -96,6 +99,7 @@ export interface IpcMethods {
   'git.remotes': { request: { path: string }; response: RepoInfo['remotes'] }
   'git.worktrees': { request: { path: string }; response: WorktreeInfo[] }
   'git.stashes': { request: { path: string }; response: StashInfo[] }
+  'git.submodules': { request: { path: string }; response: SubmoduleInfo[] }
   'git.diff': { request: DiffInput; response: DiffResult }
   'git.resolveConflict': { request: ResolveConflictInput; response: void }
   'git.fileTree': { request: { path: string; dir?: string }; response: DirEntry[] }
@@ -136,6 +140,10 @@ export interface IpcMethods {
   'git.stashApply': { request: { path: string; index: number }; response: void }
   'git.stashPop': { request: { path: string; index: number }; response: void }
   'git.stashDrop': { request: { path: string; index: number }; response: void }
+  'git.submoduleAdd': { request: SubmoduleAddInput; response: void }
+  'git.submoduleUpdate': { request: SubmoduleUpdateInput; response: { output: string } }
+  'git.submoduleSync': { request: { repoPath: string; submodulePath?: string; recursive?: boolean }; response: void }
+  'git.submoduleRemove': { request: { repoPath: string; submodulePath: string; force?: boolean }; response: void }
   'git.remoteAdd': { request: { path: string; name: string; url: string }; response: void }
   'git.remoteRemove': { request: { path: string; name: string }; response: void }
   'git.remoteSetUrl': { request: { path: string; name: string; url: string; push?: boolean }; response: void }

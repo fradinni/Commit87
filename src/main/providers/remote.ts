@@ -106,6 +106,21 @@ export function providerFromHost(host: string | undefined, accounts: Integration
   return undefined
 }
 
+/**
+ * Strict host match for credentials. Unlike `providerFromHost`, a provider
+ * heuristic is not enough: a token must never be offered to `gitlab.evil.example`
+ * just because it contains "gitlab".
+ */
+export function accountMatchesHost(account: IntegrationAccount, host: string): boolean {
+  const target = host.toLowerCase()
+  const accountHost = baseUrlHost(account.baseUrl)?.toLowerCase()
+  if (!accountHost) return false
+  if (accountHost === target) return true
+  if (account.provider === 'github' && accountHost === 'api.github.com' && target === 'github.com') return true
+  if (account.provider === 'bitbucket' && accountHost === 'api.bitbucket.org' && target === 'bitbucket.org') return true
+  return false
+}
+
 export function webUrlFor(provider: ProviderId | undefined, host: string, owner: string, repo: string): string {
   switch (provider) {
     case 'github':

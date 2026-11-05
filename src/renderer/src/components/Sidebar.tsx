@@ -35,6 +35,7 @@ export function Sidebar() {
   const tags = useStore((state) => state.tags)
   const worktrees = useStore((state) => state.worktrees)
   const stashes = useStore((state) => state.stashes)
+  const submodules = useStore((state) => state.submodules)
   const pulls = useStore((state) => state.pulls)
   const detection = useStore((state) => state.detection)
   const appInfo = useStore((state) => state.appInfo)
@@ -53,6 +54,7 @@ export function Sidebar() {
       count: branches.filter((branch) => branch.type === 'branch').length
     },
     { id: 'worktrees', label: 'Worktrees', icon: <Waypoints size={16} />, count: worktrees.length },
+    { id: 'submodules', label: 'Submodules', icon: <Boxes size={16} />, count: submodules.length },
     { id: 'tags', label: 'Tags', icon: <Tag size={16} />, count: tags.length },
     { id: 'stashes', label: 'Stashes', icon: <History size={16} />, count: stashes.length }
   ]

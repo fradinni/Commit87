@@ -215,19 +215,33 @@ const PROVIDER_USERNAME: Record<ProviderId, string> = {
   gitea: 'gitgrove'
 }
 
-export function buildAuthArgs(account: IntegrationAccount | null, token: string | null): { args: string[]; env: NodeJS.ProcessEnv } {
+export function buildAuthArgs(
+  account: IntegrationAccount | null,
+  token: string | null,
+  origin?: string
+): { args: string[]; env: NodeJS.ProcessEnv } {
   if (!account || !token) return { args: [], env: {} }
   const username = account.username?.trim() || PROVIDER_USERNAME[account.provider]
   const helper =
     '!f() { if test "$1" = get; then ' +
     'printf "username=%s\\npassword=%s\\n" "$GITGROVE_USERNAME" "$GITGROVE_TOKEN"; ' +
     'fi; }; f'
+  const env = {
+    GITGROVE_USERNAME: username,
+    GITGROVE_TOKEN: token
+  }
+  if (origin) {
+    // Clear ambient helpers, then scope the app helper to the exact URL origin
+    // so a redirect or a mistaken host selection cannot offer this token to a
+    // different server.
+    return {
+      args: ['-c', 'credential.helper=', '-c', `credential.${origin}.helper=${helper}`],
+      env
+    }
+  }
   return {
     args: ['-c', 'credential.helper=', '-c', `credential.helper=${helper}`],
-    env: {
-      GITGROVE_USERNAME: username,
-      GITGROVE_TOKEN: token
-    }
+    env
   }
 }
 
