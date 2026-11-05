@@ -19,7 +19,7 @@
 ```
 ┌──────────────────────────── Electron main (Node) ────────────────────────────┐
 │  window.ts       hardened BrowserWindow + navigation guards                   │
-│  protocol.ts     gitgrove://app scheme, serving out/renderer                  │
+│  protocol.ts     commit87://app scheme, serving out/renderer                  │
 │  store.ts        config.json + secrets.json (safeStorage), repo defaults       │
 │  tasks.ts        TaskManager, git console allow-list                          │
 │  git/            runner (spawn), parsers, repo operations                     │
@@ -28,7 +28,7 @@
 └──────────────▲───────────────────────────────┬───────────────────────────────┘
                │ ipcRenderer.invoke            │ webContents.send
 ┌──────────────┴───────────────────────────────▼───────────────────────────────┐
-│  Preload (contextBridge → window.gitgrove)                                   │
+│  Preload (contextBridge → window.commit87)                                   │
 │    invoke(channel, payload) · onTaskEvent · onWindowState · onMenu            │
 └──────────────▲───────────────────────────────┬───────────────────────────────┘
                │                               │
@@ -41,7 +41,7 @@
 ### Why a custom protocol instead of `file://`
 
 Electron 41 disables extra `file://` privileges by default. Serving the renderer from
-`gitgrove://app` lets us keep `grantFileProtocolExtraPrivileges: false` **and**
+`commit87://app` lets us keep `grantFileProtocolExtraPrivileges: false` **and**
 `onlyLoadAppFromAsar: true`, while ES modules, `fetch()` for bundled assets and the strict
 CSP all work. The handler:
 
@@ -124,7 +124,7 @@ commands. `GitError` keeps `argv`, `stderr` and the exit code for diagnostics.
 The interactive rebase planner is the one caller allowed to override those two editor
 variables, and only with app-controlled files. Git has no machine-readable todo interface,
 so `git/rebase.ts` prepares `todo`, `sequence-editor.sh`, `edit-message.sh` and
-`messages/<sha>.txt` under `<git-dir>/gitgrove/rebase`, then runs
+`messages/<sha>.txt` under `<git-dir>/commit87/rebase`, then runs
 `git rebase --interactive` with deterministic rebase config. The sequence editor copies
 the prepared todo and the message editor replaces the message of a native `reword` action.
 It identifies the commit from the last line of git's own `rebase-merge/done` file, so a
@@ -163,7 +163,7 @@ needs subjects; the body is fetched on demand by `git.commitDetail`.
 ### Streaming tasks
 
 `TaskManager.start(spec)` spawns Git, splits output into lines, redacts every known secret
-(token, passphrase) and emits `TaskEvent`s over `gitgrove:task-event`:
+(token, passphrase) and emits `TaskEvent`s over `commit87:task-event`:
 
 ```ts
 { taskId, kind: 'clone' | 'fetch' | 'pull' | 'push' | 'console', phase: 'start' | 'output' | 'end' | 'error', repoPath? }
@@ -221,10 +221,10 @@ For HTTPS Git operations the token is injected through an ephemeral credential h
 
 ```
 -c credential.helper=
--c credential.helper=!f() { if test "$1" = get; then printf "username=%s\npassword=%s\n" "$GITGROVE_USERNAME" "$GITGROVE_TOKEN"; fi; }; f
+-c credential.helper=!f() { if test "$1" = get; then printf "username=%s\npassword=%s\n" "$COMMIT87_USERNAME" "$COMMIT87_TOKEN"; fi; }; f
 ```
 
-with `GITGROVE_USERNAME` / `GITGROVE_TOKEN` in the child environment. Tokens never enter
+with `COMMIT87_USERNAME` / `COMMIT87_TOKEN` in the child environment. Tokens never enter
 `argv`, so they do not appear in `ps`, shell history, task output or crash dumps. Task
 output is additionally redacted before leaving the main process.
 
@@ -234,9 +234,9 @@ output is additionally redacted before leaving the main process.
 Otherwise the token is stored in `secrets.json` with mode `0600`, and Settings shows an
 explicit warning. Config lives in `app.getPath('userData')`:
 
-- Linux: `~/.config/GitGrove/{config.json,secrets.json}`
-- macOS: `~/Library/Application Support/GitGrove/…`
-- Windows: `%APPDATA%\GitGrove\…`
+- Linux: `~/.config/Commit87/{config.json,secrets.json}`
+- macOS: `~/Library/Application Support/Commit87/…`
+- Windows: `%APPDATA%\Commit87\…`
 
 ## Providers
 
@@ -252,7 +252,7 @@ listWorkflows() / listRuns() / triggerAction()
 ```
 
 `providers/http.ts` centralizes authentication, timeouts (30 s, `AbortSignal.timeout`),
-error description (401/403/404 hints) and a `GitGrove/0.1` user agent. Authentication per
+error description (401/403/404 hints) and a `Commit87/0.1` user agent. Authentication per
 provider:
 
 | Provider | Header |

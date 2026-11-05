@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" width="1200" height="400" role="img" aria-labelledby="headerTitle headerDesc">
-  <title id="headerTitle">GitGrove</title>
-  <desc id="headerDesc">The GitGrove branch logo and wordmark over an animated aurora background with drifting grid lines and floating light particles.</desc>
+  <title id="headerTitle">Commit87</title>
+  <desc id="headerDesc">The Commit87 branch logo and wordmark over an animated aurora background with drifting grid lines and floating light particles.</desc>
 
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
@@ -159,8 +159,8 @@
   </g>
 
   <g>
-    <text x="486" y="238" font-family="Inter, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="96" font-weight="800" letter-spacing="-2.5" fill="#3ddc97" opacity="0.22" filter="url(#textGlow)">GitGrove</text>
-    <text x="486" y="238" font-family="Inter, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="96" font-weight="800" letter-spacing="-2.5" fill="url(#wordmark)">GitGrove</text>
+    <text x="486" y="238" font-family="Inter, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="96" font-weight="800" letter-spacing="-2.5" fill="#3ddc97" opacity="0.22" filter="url(#textGlow)">Commit87</text>
+    <text x="486" y="238" font-family="Inter, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="96" font-weight="800" letter-spacing="-2.5" fill="url(#wordmark)">Commit87</text>
     <text x="490" y="282" font-family="Inter, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="23" font-weight="400" fill="#a3c4ba">Git, without the noise.</text>
   </g>
 

@@ -120,7 +120,7 @@ function GeneralSettings({
     <div className="settings-sections">
       <section className="settings-card">
         <h3>Appearance</h3>
-        <p>GitGrove follows the theme across all views and the git console.</p>
+        <p>Commit87 follows the theme across all views and the git console.</p>
         <Field label="Theme">
           <Select value={config.theme} onChange={(event) => void patch({ theme: event.target.value as 'dark' | 'light' | 'system' })}>
             <option value="dark">Dark</option>
@@ -153,7 +153,7 @@ function GeneralSettings({
 
       <section className="settings-card">
         <h3>System Git</h3>
-        <p>GitGrove shells out to the Git installed on this machine. No bundled Git, no libgit2.</p>
+        <p>Commit87 shells out to the Git installed on this machine. No bundled Git, no libgit2.</p>
         <div className="git-status-row">
           <span className={`git-status-dot ${appInfo?.git.available ? 'is-ok' : 'is-bad'}`} />
           <span>
@@ -745,7 +745,7 @@ function AboutSettings() {
         <div className="about-brand">
           <Laptop size={28} />
           <div>
-            <h3>GitGrove {appInfo?.version}</h3>
+            <h3>Commit87 {appInfo?.version}</h3>
             <p>
               A focused Git desktop client built on your system Git, with multi-account identities and
               multi-forge integrations.

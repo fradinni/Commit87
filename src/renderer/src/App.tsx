@@ -73,14 +73,14 @@ export function App() {
         }
       })
       .finally(() => setBootComplete(true))
-    const unsubscribeTasks = window.gitgrove.onTaskEvent((event) => {
+    const unsubscribeTasks = window.commit87.onTaskEvent((event) => {
       useStore.getState().handleTaskEvent(event)
       // A finished clone opens (or activates) a tab for the new repository.
       if (event.kind === 'clone' && event.phase === 'end' && event.repoPath) {
         void useStore.getState().openRepo(event.repoPath).catch((error) => useStore.getState().notifyError(error))
       }
     })
-    const unsubscribeMenu = window.gitgrove.onMenu((action) => {
+    const unsubscribeMenu = window.commit87.onMenu((action) => {
       if (action.startsWith('open-path:')) {
         void useStore.getState().openRepo(action.slice('open-path:'.length)).catch((error) => useStore.getState().notifyError(error))
         return
@@ -130,7 +130,7 @@ export function App() {
   }, [config?.theme, ready])
 
   useEffect(() => {
-    document.title = repo ? `${repo.name} — GitGrove` : 'GitGrove'
+    document.title = repo ? `${repo.name} — Commit87` : 'Commit87'
   }, [repo?.name])
 
   useEffect(() => {
@@ -201,7 +201,7 @@ export function App() {
       const state = useStore.getState()
       const activeId = state.activeTabId
       const activeBusy = Object.values(state.tasks).some(
-        (item) => item.repoPath && repoPathKey(item.repoPath, window.gitgrove.platform) === activeId
+        (item) => item.repoPath && repoPathKey(item.repoPath, window.commit87.platform) === activeId
       )
       if (document.visibilityState === 'visible' && !activeBusy) {
         void state.refreshStatus()
@@ -321,7 +321,7 @@ export function App() {
     return (
       <div className="app-boot">
         <Logo size={40} />
-        <span>GitGrove</span>
+        <span>Commit87</span>
         <div className="boot-bar">
           <span />
         </div>
@@ -333,7 +333,7 @@ export function App() {
     return (
       <div className="fatal-screen">
         <Logo size={38} />
-        <h1>GitGrove could not start</h1>
+        <h1>Commit87 could not start</h1>
         <pre>{fatal}</pre>
         <Button variant="primary" onClick={() => window.location.reload()}>
           Retry

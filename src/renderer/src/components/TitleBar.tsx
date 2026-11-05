@@ -45,7 +45,7 @@ export function TitleBar({ onPalette, onPush }: { onPalette: () => void; onPush:
   const notifyError = useStore((state) => state.notifyError)
   const [maximized, setMaximized] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
-  const platform = window.gitgrove.platform
+  const platform = window.commit87.platform
   const isMac = platform === 'darwin'
   const repoKey = repo ? repoPathKey(repo.path, platform) : null
   const repoBusy = repoKey
@@ -55,7 +55,7 @@ export function TitleBar({ onPalette, onPush }: { onPalette: () => void; onPush:
 
   useEffect(() => {
     void call('window.isMaximized', undefined).then(setMaximized)
-    return window.gitgrove.onWindowState((state) => setMaximized(state.maximized))
+    return window.commit87.onWindowState((state) => setMaximized(state.maximized))
   }, [])
 
   const startSync = async (kind: 'fetch' | 'pull'): Promise<void> => {
@@ -82,12 +82,12 @@ export function TitleBar({ onPalette, onPush }: { onPalette: () => void; onPush:
         {!isMac ? (
           <div className="titlebar-brand">
             <Logo />
-            <span className="brand-name">GitGrove</span>
+            <span className="brand-name">Commit87</span>
           </div>
         ) : (
           <div className="titlebar-brand mac-offset">
             <Logo />
-            <span className="brand-name">GitGrove</span>
+            <span className="brand-name">Commit87</span>
           </div>
         )}
         <IconButton label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'} onClick={() => setSidebarOpen(!sidebarOpen)} className="no-drag">
@@ -181,7 +181,7 @@ export function TitleBar({ onPalette, onPush }: { onPalette: () => void; onPush:
         <button className="palette-trigger" onClick={onPalette} title="Command palette (Ctrl/Cmd+K)">
           <Command size={14} />
           <span>Commands</span>
-          <kbd>{window.gitgrove.platform === 'darwin' ? '⌘K' : 'Ctrl K'}</kbd>
+          <kbd>{window.commit87.platform === 'darwin' ? '⌘K' : 'Ctrl K'}</kbd>
         </button>
         {!isMac ? (
           <div className="window-controls">

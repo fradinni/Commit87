@@ -1,10 +1,10 @@
-app-id: dev.gitgrove.GitGrove
+app-id: fr.fradinni.Commit87
 runtime: org.freedesktop.Platform
 runtime-version: '24.08'
 sdk: org.freedesktop.Sdk
 base: org.electronjs.Electron2.BaseApp
 base-version: '24.08'
-command: gitgrove-run
+command: commit87-run
 separate-locales: false
 finish-args:
   - --share=ipc
@@ -22,7 +22,7 @@ finish-args:
   - --talk-name=org.freedesktop.Notifications
   - --talk-name=org.gnome.keyring
   - --talk-name=org.kde.StatusNotifierWatcher
-  - --env=GITGROVE_FLATPAK=1
+  - --env=COMMIT87_FLATPAK=1
 
 modules:
   - name: git
@@ -40,27 +40,27 @@ modules:
           project-id: 5350
           url-template: https://mirrors.edge.kernel.org/pub/software/scm/git/git-$version.tar.xz
 
-  - name: gitgrove
+  - name: commit87
     buildsystem: simple
     build-commands:
-      - install -Dm755 gitgrove.sh /app/bin/gitgrove-run
-      - cp -r gitgrove /app/gitgrove
-      - install -Dm644 icons/512x512.png /app/share/icons/hicolor/512x512/apps/dev.gitgrove.GitGrove.png
-      - install -Dm644 icons/128x128.png /app/share/icons/hicolor/128x128/apps/dev.gitgrove.GitGrove.png
-      - install -Dm644 icons/64x64.png /app/share/icons/hicolor/64x64/apps/dev.gitgrove.GitGrove.png
-      - install -Dm644 dev.gitgrove.GitGrove.desktop /app/share/applications/dev.gitgrove.GitGrove.desktop
-      - install -Dm644 dev.gitgrove.GitGrove.metainfo.xml /app/share/metainfo/dev.gitgrove.GitGrove.metainfo.xml
-      - install -Dm644 LICENSE /app/share/licenses/dev.gitgrove.GitGrove/LICENSE
+      - install -Dm755 commit87.sh /app/bin/commit87-run
+      - cp -r commit87 /app/commit87
+      - install -Dm644 icons/512x512.png /app/share/icons/hicolor/512x512/apps/fr.fradinni.Commit87.png
+      - install -Dm644 icons/128x128.png /app/share/icons/hicolor/128x128/apps/fr.fradinni.Commit87.png
+      - install -Dm644 icons/64x64.png /app/share/icons/hicolor/64x64/apps/fr.fradinni.Commit87.png
+      - install -Dm644 fr.fradinni.Commit87.desktop /app/share/applications/fr.fradinni.Commit87.desktop
+      - install -Dm644 fr.fradinni.Commit87.metainfo.xml /app/share/metainfo/fr.fradinni.Commit87.metainfo.xml
+      - install -Dm644 LICENSE /app/share/licenses/fr.fradinni.Commit87/LICENSE
     sources:
       - type: file
-        path: gitgrove.sh
+        path: commit87.sh
       - type: file
-        path: dev.gitgrove.GitGrove.desktop
+        path: fr.fradinni.Commit87.desktop
       - type: file
-        path: dev.gitgrove.GitGrove.metainfo.xml
+        path: fr.fradinni.Commit87.metainfo.xml
       - type: dir
         path: ../dist/linux-unpacked
-        dest: gitgrove
+        dest: commit87
       - type: dir
         path: ../build/icons
         dest: icons

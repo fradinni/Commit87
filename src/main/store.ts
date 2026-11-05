@@ -36,6 +36,45 @@ const DEFAULT_CONFIG: AppConfig = {
   autoFetchOnOpen: false
 }
 
+/** App name used before the Commit87 rename; profiles were stored under it. */
+const LEGACY_APP_NAME = 'GitGrove'
+const PROFILE_FILES = ['config.json', 'secrets.json'] as const
+
+async function fileExists(target: string): Promise<boolean> {
+  try {
+    await fs.stat(target)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Electron keys `userData` by app name, so a rename starts from an empty profile.
+ * Copy the previous profile once, file by file, to keep repositories, identities
+ * and integrations. The legacy directory is left in place so a rollback works.
+ */
+async function migrateLegacyProfile(dir: string): Promise<void> {
+  if (await fileExists(path.join(dir, 'config.json'))) return
+  const legacy = path.join(path.dirname(dir), LEGACY_APP_NAME)
+  if (path.resolve(legacy) === path.resolve(dir)) return
+  if (!(await fileExists(path.join(legacy, 'config.json')))) return
+  try {
+    await fs.mkdir(dir, { recursive: true, mode: 0o700 })
+    for (const name of PROFILE_FILES) {
+      const source = path.join(legacy, name)
+      if (!(await fileExists(source))) continue
+      const target = path.join(dir, name)
+      await fs.copyFile(source, target)
+      await fs.chmod(target, 0o600)
+    }
+  } catch (error) {
+    // A failed migration must not block startup: the user can sign in again.
+    const detail = error instanceof Error ? error.message : String(error)
+    console.warn(`[commit87] could not migrate the previous profile from ${legacy}: ${detail}`)
+  }
+}
+
 export class AppStore {
   private config: AppConfig = { ...DEFAULT_CONFIG }
   private secrets: SecretsFile = { version: 1, encrypted: false, tokens: {} }
@@ -45,6 +84,7 @@ export class AppStore {
 
   async init(): Promise<void> {
     const dir = app.getPath('userData')
+    await migrateLegacyProfile(dir)
     await fs.mkdir(dir, { recursive: true, mode: 0o700 })
     this.configPath = path.join(dir, 'config.json')
     this.secretsPath = path.join(dir, 'secrets.json')

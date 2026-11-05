@@ -1,17 +1,17 @@
 {
-  "name": "gitgrove",
+  "name": "commit87",
   "version": "0.1.0",
   "description": "A focused desktop Git client for repos, branches, worktrees, releases and pipelines",
   "main": "./out/main/index.js",
   "author": {
-    "name": "GitGrove Contributors",
-    "email": "hello@gitgrove.dev"
+    "name": "Commit87 Contributors",
+    "email": "contact@fradinni.fr"
   },
   "license": "MIT",
-  "homepage": "https://gitgrove.dev",
+  "homepage": "https://commit87.fradinni.fr",
   "repository": {
     "type": "git",
-    "url": "https://github.com/gitgrove/gitgrove.git"
+    "url": "https://github.com/fradinni/Commit87.git"
   },
   "private": false,
   "scripts": {
@@ -57,5 +57,5 @@
   "engines": {
     "node": ">=24"
   },
-  "desktopName": "gitgrove.desktop"
+  "desktopName": "commit87.desktop"
 }

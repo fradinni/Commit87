@@ -103,7 +103,7 @@ const SPLASH_HTML = `<!doctype html>
         <path d="M22.5 21.2v-5" stroke="#c792ea" stroke-width="2" stroke-linecap="round" />
         <circle cx="22.5" cy="13.5" r="2.2" fill="#c792ea" />
       </svg>
-      <span>GitGrove</span>
+      <span>Commit87</span>
     </div>
     <div class="tagline">Opening repositories…</div>
     <div class="bar"><span></span></div>

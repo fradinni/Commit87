@@ -63,5 +63,5 @@ All three must pass. Keep commits focused and describe *why* in the message body
 
 ## Reporting bugs
 
-Include the GitGrove version (Settings → About), OS and architecture, Git version, and the
+Include the Commit87 version (Settings → About), OS and architecture, Git version, and the
 exact steps. Use Settings → Copy diagnostics to attach the environment block.

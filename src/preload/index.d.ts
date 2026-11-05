@@ -1,10 +1,10 @@
-import type { GitGroveBridge } from '@shared/bridge'
+import type { Commit87Bridge } from '@shared/bridge'
 
-export type { GitGroveBridge }
+export type { Commit87Bridge }
 
 declare global {
   interface Window {
-    gitgrove: GitGroveBridge
+    commit87: Commit87Bridge
   }
 }
 

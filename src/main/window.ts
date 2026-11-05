@@ -11,7 +11,7 @@ export function createMainWindow(): BrowserWindow {
     minHeight: 660,
     show: false,
     backgroundColor: '#0b1015',
-    title: 'GitGrove',
+    title: 'Commit87',
     frame: process.platform === 'darwin',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: process.platform === 'darwin' ? { x: 14, y: 16 } : undefined,
@@ -26,7 +26,7 @@ export function createMainWindow(): BrowserWindow {
       webSecurity: true,
       allowRunningInsecureContent: false,
       spellcheck: true,
-      devTools: !process.env.GITGROVE_DISABLE_DEVTOOLS
+      devTools: !process.env.COMMIT87_DISABLE_DEVTOOLS
     }
   })
 

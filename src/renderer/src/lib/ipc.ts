@@ -4,7 +4,7 @@ export function call<K extends IpcChannel>(
   channel: K,
   payload: IpcMethods[K]['request']
 ): Promise<IpcMethods[K]['response']> {
-  return window.gitgrove.invoke(channel, payload)
+  return window.commit87.invoke(channel, payload)
 }
 
 export function errorMessage(error: unknown): string {

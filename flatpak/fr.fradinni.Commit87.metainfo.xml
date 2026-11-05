@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>dev.gitgrove.GitGrove</id>
-  <name>GitGrove</name>
+  <id>fr.fradinni.Commit87</id>
+  <name>Commit87</name>
   <summary>Focused desktop Git client</summary>
   <metadata_license>MIT</metadata_license>
   <project_license>MIT</project_license>
   <description>
     <p>
-      GitGrove is a fast desktop Git client built on the system Git binary. It manages
+      Commit87 is a fast desktop Git client built on the system Git binary. It manages
       repositories, branches, worktrees, tags, releases and pipelines, and supports
       multiple Git identities for commits and pushes.
     </p>
@@ -19,17 +19,17 @@
       <li>Built-in git console that runs git directly, without a shell</li>
     </ul>
   </description>
-  <launchable type="desktop-id">dev.gitgrove.GitGrove.desktop</launchable>
-  <url type="homepage">https://gitgrove.dev</url>
-  <url type="bugtracker">https://github.com/gitgrove/gitgrove/issues</url>
-  <developer_name>GitGrove Contributors</developer_name>
+  <launchable type="desktop-id">fr.fradinni.Commit87.desktop</launchable>
+  <url type="homepage">https://commit87.fradinni.fr</url>
+  <url type="bugtracker">https://github.com/fradinni/Commit87/issues</url>
+  <developer_name>Commit87 Contributors</developer_name>
   <screenshots>
     <screenshot type="default">
-      <image>https://gitgrove.dev/screenshots/graph.png</image>
+      <image>https://commit87.fradinni.fr/screenshots/graph.png</image>
       <caption>Commit graph with staging and repository details</caption>
     </screenshot>
     <screenshot>
-      <image>https://gitgrove.dev/screenshots/worktrees.png</image>
+      <image>https://commit87.fradinni.fr/screenshots/worktrees.png</image>
       <caption>Side-by-side worktrees</caption>
     </screenshot>
   </screenshots>

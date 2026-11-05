@@ -14,7 +14,7 @@ export async function apiRequest<T>(url: string, options: RequestOptions): Promi
 
   const headers: Record<string, string> = {
     Accept: 'application/json',
-    'User-Agent': 'GitGrove/0.1 (+https://gitgrove.dev)',
+    'User-Agent': 'Commit87/0.1 (+https://commit87.fradinni.fr)',
     ...options.extraHeaders
   }
   applyAuth(headers, options)

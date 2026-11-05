@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds a Flatpak bundle (.flatpak) or installs into the local flatpak repo.
 #
-#   scripts/build-flatpak.sh            -> dist/GitGrove-<version>-x86_64.flatpak
+#   scripts/build-flatpak.sh            -> dist/Commit87-<version>-x86_64.flatpak
 #   scripts/build-flatpak.sh --install  -> install into the current user
 #
 # Requires flatpak-builder and the org.freedesktop.Sdk 24.08 / Electron base app.
@@ -36,15 +36,15 @@ flatpak install --user -y flathub org.freedesktop.Sdk//24.08 org.electronjs.Elec
 mkdir -p dist
 echo "==> flatpak-builder ($FLATPAK_ARCH)"
 flatpak-builder --force-clean --user --repo=dist/flatpak-repo \
-  --arch="$FLATPAK_ARCH" dist/flatpak-build flatpak/dev.gitgrove.GitGrove.yml
+  --arch="$FLATPAK_ARCH" dist/flatpak-build flatpak/fr.fradinni.Commit87.yml
 
 flatpak build-bundle dist/flatpak-repo \
-  "dist/GitGrove-${VERSION}-${FLATPAK_ARCH}.flatpak" \
-  dev.gitgrove.GitGrove stable
+  "dist/Commit87-${VERSION}-${FLATPAK_ARCH}.flatpak" \
+  fr.fradinni.Commit87 stable
 
-echo "built dist/GitGrove-${VERSION}-${FLATPAK_ARCH}.flatpak"
+echo "built dist/Commit87-${VERSION}-${FLATPAK_ARCH}.flatpak"
 
 if [ "${1:-}" = "--install" ]; then
-  flatpak install --user -y "dist/GitGrove-${VERSION}-${FLATPAK_ARCH}.flatpak"
-  echo "installed dev.gitgrove.GitGrove"
+  flatpak install --user -y "dist/Commit87-${VERSION}-${FLATPAK_ARCH}.flatpak"
+  echo "installed fr.fradinni.Commit87"
 fi

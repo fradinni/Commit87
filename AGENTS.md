@@ -1,6 +1,6 @@
 # AGENTS.md
 
-GitGrove is a cross-platform Electron + React desktop Git client that shells out to the
+Commit87 is a cross-platform Electron + React desktop Git client that shells out to the
 system `git` binary. Main process owns Git, files, secrets, and forge APIs; the renderer is
 sandboxed and talks only through one typed IPC channel.
 
@@ -82,7 +82,7 @@ primitive values (repo path, ids) rather than refreshed objects, to avoid reload
   any inspection of them: no reverse-engineering notes, static-analysis write-ups, target
   inventories, extracted strings, screenshots, hashes or provenance tables.
 - The same ban applies to code comments, docs, UI copy, commit messages, branch names,
-  PR titles/descriptions and issue text. Describe GitGrove on its own merits.
+  PR titles/descriptions and issue text. Describe Commit87 on its own merits.
 - Feature comparisons stay generic ("most desktop Git clients…"), never a named product
   or vendor.
 - If such material already exists on a branch, remove it and rewrite the history-sensitive

@@ -71,7 +71,7 @@ export function PullsView() {
         <EmptyState
           icon={<GitPullRequest size={22} />}
           title="Connect a forge to manage pull requests"
-          description="GitGrove matches the repository remote to a GitHub, GitLab, Bitbucket or Gitea account. Add an account and a token in Settings."
+          description="Commit87 matches the repository remote to a GitHub, GitLab, Bitbucket or Gitea account. Add an account and a token in Settings."
           action={<Button variant="primary" size="sm" onClick={() => setView('settings')}>Open integrations</Button>}
         />
       </div>

@@ -21,7 +21,7 @@ import type {
 } from '@shared/types'
 import type { IpcMethods, IpcRequest } from '@shared/ipc'
 import { applyRepoTabPatch, closeTabRecord, cycleTabId, moveTabToIndex, repoPathKey } from './lib/tabs'
-import { gitgroveBridge } from './lib/bridge'
+import { commit87Bridge } from './lib/bridge'
 
 type IpcRequestMap = { [K in keyof IpcMethods]: IpcMethods[K]['request'] }
 type IpcResponseMap = { [K in keyof IpcMethods]: IpcMethods[K]['response'] }
@@ -196,7 +196,7 @@ let consoleSeq = 0
 let openSeq = 0
 
 function call<K extends keyof IpcRequestMap>(channel: K, payload: IpcRequest<K>): Promise<IpcResponseMap[K]> {
-  return gitgroveBridge().invoke(channel, payload) as Promise<IpcResponseMap[K]>
+  return commit87Bridge().invoke(channel, payload) as Promise<IpcResponseMap[K]>
 }
 
 function loadCommits(repoPath: string, limit: number, branch: string, query: string) {
@@ -210,7 +210,7 @@ function loadCommits(repoPath: string, limit: number, branch: string, query: str
 }
 
 function pathKey(repoPath: string): string {
-  return repoPathKey(repoPath, gitgroveBridge().platform)
+  return repoPathKey(repoPath, commit87Bridge().platform)
 }
 
 /** Tabs are identified by the real path Git resolved, so symlinks cannot fork them. */

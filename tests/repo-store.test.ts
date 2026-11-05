@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { AppConfig, RepoInfo, RepoStatus } from '../src/shared/types'
-import type { GitGroveBridge } from '../src/shared/bridge'
+import type { Commit87Bridge } from '../src/shared/bridge'
 
 interface Call {
   channel: string
@@ -70,7 +70,7 @@ const config: AppConfig = {
 
 const handlers: Record<string, (payload: unknown) => unknown> = {
   'app.info': () => ({
-    name: 'GitGrove',
+    name: 'Commit87',
     version: '0.1.0',
     electron: '45',
     chrome: '140',
@@ -117,16 +117,16 @@ const bridge = {
   onTaskEvent: () => () => undefined,
   onWindowState: () => () => undefined,
   onMenu: () => () => undefined
-} as unknown as GitGroveBridge
+} as unknown as Commit87Bridge
 
 // The store resolves the preload bridge from the global scope at call time.
-const globalScope = globalThis as { gitgrove?: GitGroveBridge }
-globalScope.gitgrove = bridge
+const globalScope = globalThis as { commit87?: Commit87Bridge }
+globalScope.commit87 = bridge
 
 const { useStore } = await import('../src/renderer/src/store')
 
-const A = '/tmp/gitgrove-tabs/alpha'
-const B = '/tmp/gitgrove-tabs/beta'
+const A = '/tmp/commit87-tabs/alpha'
+const B = '/tmp/commit87-tabs/beta'
 
 function reset(): void {
   calls.length = 0

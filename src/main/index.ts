@@ -13,17 +13,17 @@ import { createSplashWindow } from './splash'
 import { installMenu } from './menu'
 import { registerAppProtocol, registerAppScheme } from './protocol'
 
-app.setName('GitGrove')
+app.setName('Commit87')
 if (process.platform === 'win32') {
-  app.setAppUserModelId('dev.gitgrove.GitGrove')
+  app.setAppUserModelId('fr.fradinni.Commit87')
 }
 
 const bootStartedAt = Date.now()
-/** Opt-in cold-start diagnostics: GITGROVE_STARTUP_TRACE=1 gitgrove … */
+/** Opt-in cold-start diagnostics: COMMIT87_STARTUP_TRACE=1 commit87 … */
 function traceBoot(label: string): void {
-  if (!process.env.GITGROVE_STARTUP_TRACE) return
+  if (!process.env.COMMIT87_STARTUP_TRACE) return
   const now = Date.now()
-  console.log(`[gitgrove:startup] ${label} ${now} +${now - bootStartedAt}ms`)
+  console.log(`[commit87:startup] ${label} ${now} +${now - bootStartedAt}ms`)
 }
 traceBoot('main process loaded')
 
@@ -43,11 +43,11 @@ const routerReady = new Promise<Router>((resolve) => {
   resolveRouter = resolve
 })
 
-/** Accepts `gitgrove://open?path=…`, `gitgrove:///abs/path` and plain folder argv. */
+/** Accepts `commit87://open?path=…`, `commit87:///abs/path` and plain folder argv. */
 function parseLaunchTarget(argv: string[], cwd: string): string | null {
   for (const raw of argv) {
     if (!raw || raw.startsWith('-')) continue
-    if (raw.startsWith('gitgrove://')) {
+    if (raw.startsWith('commit87://')) {
       try {
         const url = new URL(raw)
         const fromQuery = url.searchParams.get('path') || url.searchParams.get('repo')
@@ -137,7 +137,7 @@ app.whenReady().then(() => {
   } catch (error) {
     dismissSplash()
     const message = error instanceof Error ? error.stack || error.message : String(error)
-    dialog.showErrorBox('GitGrove could not start', message)
+    dialog.showErrorBox('Commit87 could not start', message)
     app.quit()
     return
   }
@@ -160,7 +160,7 @@ app.whenReady().then(() => {
   void initialize().catch((error) => {
     dismissSplash()
     const message = error instanceof Error ? error.stack || error.message : String(error)
-    dialog.showErrorBox('GitGrove could not start', message)
+    dialog.showErrorBox('Commit87 could not start', message)
     app.quit()
   })
 

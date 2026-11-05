@@ -44,14 +44,14 @@ async function write(file: string, content: string): Promise<void> {
 }
 
 beforeAll(async () => {
-  root = await fs.mkdtemp(path.join(os.tmpdir(), 'gitgrove-test-'))
+  root = await fs.mkdtemp(path.join(os.tmpdir(), 'commit87-test-'))
   repoPath = path.join(root, 'repo')
   worktreePath = path.join(root, 'worktrees', 'feature-wt')
   await fs.mkdir(repoPath)
   await runGit(['init', '-b', 'main'], { cwd: repoPath })
   await runGit(['config', 'user.name', identity.name], { cwd: repoPath })
   await runGit(['config', 'user.email', identity.email], { cwd: repoPath })
-  await write('README.md', '# GitGrove\n')
+  await write('README.md', '# Commit87\n')
   await write('src/app.ts', 'export const value = 1\n')
   await runGit(['add', '.'], { cwd: repoPath })
   await commitChanges(
@@ -169,7 +169,7 @@ describe('git repository service', () => {
   })
 
   it('stashes and restores changes', async () => {
-    await write('README.md', '# GitGrove changed\n')
+    await write('README.md', '# Commit87 changed\n')
     await stashPush(repoPath, 'Work in progress', true, { identity })
     const stashes = await getStashes(repoPath)
     expect(stashes).toHaveLength(1)

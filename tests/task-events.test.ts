@@ -24,7 +24,7 @@ function runTask(repoPath: string | undefined): Promise<TaskEvent[]> {
 
 describe('task events carry the repository they belong to', () => {
   it('tags every phase of a task with repoPath', async () => {
-    const repoPath = '/tmp/gitgrove-task-events'
+    const repoPath = '/tmp/commit87-task-events'
     const events = await runTask(repoPath)
     expect(events.length).toBeGreaterThan(1)
     expect(events.every((event) => event.repoPath === repoPath)).toBe(true)

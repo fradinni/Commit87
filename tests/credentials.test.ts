@@ -41,9 +41,9 @@ describe('git identity environment', () => {
     const { args, env } = buildAuthArgs(account, 'super-secret-token')
     expect(args).toContain('credential.helper=')
     expect(args.join(' ')).not.toContain('super-secret-token')
-    expect(env.GITGROVE_TOKEN).toBe('super-secret-token')
-    expect(env.GITGROVE_USERNAME).toBe('ada')
-    expect(args.join(' ')).toContain('GITGROVE_USERNAME')
+    expect(env.COMMIT87_TOKEN).toBe('super-secret-token')
+    expect(env.COMMIT87_USERNAME).toBe('ada')
+    expect(args.join(' ')).toContain('COMMIT87_USERNAME')
   })
 
   it('scopes a credential helper to an exact origin', () => {
@@ -51,7 +51,7 @@ describe('git identity environment', () => {
     expect(args).toContain('credential.helper=')
     expect(args.join(' ')).toContain('credential.https://github.com.helper=')
     expect(args.join(' ')).not.toContain('scoped-token')
-    expect(env.GITGROVE_TOKEN).toBe('scoped-token')
+    expect(env.COMMIT87_TOKEN).toBe('scoped-token')
   })
 
   it('redacts secrets from task output', () => {
