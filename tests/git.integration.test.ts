@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { GitIdentity } from '../src/shared/types'
+import { normalizePath } from '../src/main/git/parsers'
 import { runGit } from '../src/main/git/runner'
 import {
   addWorktree,
@@ -155,8 +156,11 @@ describe('git repository service', () => {
       createBranch: true,
       startPoint: 'main'
     })
+    // Git reports canonical paths: macOS resolves /var to /private/var and
+    // Windows expands 8.3 names and uses backslashes.
+    const realWorktreePath = normalizePath(await fs.realpath(worktreePath))
     const worktrees = await getWorktrees(repoPath)
-    const added = worktrees.find((item) => item.path === worktreePath)
+    const added = worktrees.find((item) => normalizePath(item.path) === realWorktreePath)
     expect(added?.branch).toBe('feature-wt')
     expect(added?.isMain).toBe(false)
     expect(added?.isCurrent).toBe(false)
@@ -165,7 +169,7 @@ describe('git repository service', () => {
     expect(status.branch).toBe('feature-wt')
 
     await removeWorktree(repoPath, worktreePath, false)
-    expect((await getWorktrees(repoPath)).some((item) => item.path === worktreePath)).toBe(false)
+    expect((await getWorktrees(repoPath)).some((item) => normalizePath(item.path) === realWorktreePath)).toBe(false)
   })
 
   it('stashes and restores changes', async () => {

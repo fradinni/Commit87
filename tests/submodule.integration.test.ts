@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { GitIdentity } from '../src/shared/types'
+import { normalizePath } from '../src/main/git/parsers'
 import { runGit } from '../src/main/git/runner'
 import {
   addSubmodule,
@@ -231,7 +232,8 @@ describe('submodule service', () => {
 
     await removeSubmodule(linked, 'lib', true)
 
-    expect((await resolveRepo(superRepo)).path).toBe(superRepo)
+    // Git reports canonical paths with its own separators and casing.
+    expect(normalizePath((await resolveRepo(superRepo)).path)).toBe(normalizePath(await fs.realpath(superRepo)))
     expect((await fs.stat(path.join(superRepo, 'lib'))).isDirectory()).toBe(true)
     expect((await fs.stat(mainModule)).isDirectory()).toBe(true)
     expect((await getSubmodules(superRepo)).map((submodule) => submodule.path)).toEqual(['lib'])
@@ -254,7 +256,7 @@ describe('submodule service', () => {
     })
 
     await expect(getSubmodules(orphan)).resolves.toEqual([])
-    expect((await resolveRepo(orphan)).path).toBe(orphan)
+    expect(normalizePath((await resolveRepo(orphan)).path)).toBe(normalizePath(await fs.realpath(orphan)))
   })
 
   it('refuses removal before deinit when .gitmodules has unstaged changes', async () => {
