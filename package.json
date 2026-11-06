@@ -4,7 +4,7 @@
   "description": "A focused desktop Git client for repos, branches, worktrees, releases and pipelines",
   "main": "./out/main/index.js",
   "author": {
-    "name": "Commit87 Contributors",
+    "name": "Commit87 Team",
     "email": "contact@fradinni.fr"
   },
   "license": "MIT",

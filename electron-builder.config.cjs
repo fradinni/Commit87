@@ -25,7 +25,7 @@ if (!existsSync(mainEntry)) {
 module.exports = {
   appId: 'fr.fradinni.Commit87',
   productName: 'Commit87',
-  copyright: 'Copyright © 2026 Commit87 Contributors',
+  copyright: 'Copyright © 2026 Commit87 Team - Fradinni',
   artifactName: '${productName}-${version}-${os}-${arch}.${ext}',
   directories: {
     buildResources: 'build',
@@ -75,7 +75,7 @@ module.exports = {
     category: 'Development;RevisionControl',
     icon: 'build/icons',
     executableName: 'commit87',
-    maintainer: 'Commit87 Contributors <contact@fradinni.fr>',
+    maintainer: 'Commit87 Team <contact@fradinni.fr>',
     vendor: 'Commit87',
     synopsis: 'A focused desktop Git client',
     description:

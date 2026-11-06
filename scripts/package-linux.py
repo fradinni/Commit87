@@ -32,7 +32,7 @@ PKG_NAME = "commit87"
 DISPLAY_NAME = "Commit87"
 VERSION = os.environ.get("COMMIT87_VERSION") or __import__("json").loads((ROOT / "package.json").read_text())["version"]
 INSTALL_DIR = "/opt/Commit87"
-MAINTAINER = "Commit87 Contributors <contact@fradinni.fr>"
+MAINTAINER = "Commit87 Team <contact@fradinni.fr>"
 HOMEPAGE = "https://commit87.fradinni.fr"
 DESCRIPTION = (
     "Commit87 is a fast desktop Git client built on the system Git binary. It manages "
