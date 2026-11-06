@@ -1419,14 +1419,25 @@ export function RefsPanel() {
                                   <button
                                     ref={active ? activeRowRef : undefined}
                                     className="refs-row-main"
-                                    title={row.title ?? row.label}
+                                    title={`${row.title ?? row.label}\nDouble-click or press Enter to ${
+                                      row.kind === 'branch' || row.kind === 'remote' || row.kind === 'worktree'
+                                        ? 'switch'
+                                        : 'open'
+                                    }`}
                                     aria-current={row.current ? 'true' : undefined}
                                     onMouseMove={() => setActiveIndex(index)}
-                                    onClick={() => {
+                                    onClick={() => setActiveIndex(index)}
+                                    onDoubleClick={() => {
                                       setActiveIndex(index)
                                       primaryAction(row)
                                     }}
                                     onKeyDown={(event) => {
+                                      if (event.key === 'Enter' || event.key === ' ') {
+                                        event.preventDefault()
+                                        setActiveIndex(index)
+                                        primaryAction(row)
+                                        return
+                                      }
                                       if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
                                         event.preventDefault()
                                         const rect = event.currentTarget.getBoundingClientRect()

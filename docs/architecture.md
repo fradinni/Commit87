@@ -299,9 +299,10 @@ then `git switch -c pr-N <ref>` with the integration token used for the fetch.
 - **Refs panel**: the sidebar can switch between `Navigate` and `Refs`. The refs mode is a
   compact, keyboard-first tree of local branches, remote branches, worktrees, stashes and
   tags for the active repository, opened with the sidebar toggle, `Ctrl/Cmd+Shift+B`, the
-  command palette or the View menu. A row's primary action switches to the branch or opens
-  the worktree; a branch checked out in another worktree opens that worktree instead of
-  letting Git refuse the checkout. Right-click or the row menu exposes the existing actions
+  command palette or the View menu. A single click selects a row; double-click (or
+  `Enter`) performs the row's primary action. A row's primary action switches to the branch
+  or opens the worktree; a branch checked out in another worktree opens that worktree
+  instead of letting Git refuse the checkout. Right-click or the row menu exposes the existing actions
   (create worktree, merge, rebase, rename, delete, lock, prune, tag push/delete, stash
   apply/pop/drop) through the same validated IPC calls as the full pages. Worktree rows show
   dirty counts from a batch `git.worktreeStatuses` read. The Branches, Worktrees, Stashes and
