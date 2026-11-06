@@ -96,6 +96,9 @@ implementing it fails compilation.
   repository identity's SSH key.
 - Remote names are restricted to `[A-Za-z0-9._-]+`.
 - Provider base URLs are parsed as URLs before storage.
+- The optional default worktree parent must be an absolute path; worktree creation itself
+  still validates that the target stays outside the repository and that the branch name is a
+  valid ref.
 
 ## Git execution
 
@@ -293,6 +296,19 @@ then `git switch -c pr-N <ref>` with the integration token used for the fetch.
   reloading it; deep links and second instances take the same path. A deliberate tab switch
   cancels a repository that is still loading, so it cannot steal focus when it finishes.
   Closing the last tab returns to the launchpad.
+- **Refs panel**: the sidebar can switch between `Navigate` and `Refs`. The refs mode is a
+  compact, keyboard-first tree of local branches, remote branches, worktrees, stashes and
+  tags for the active repository, opened with the sidebar toggle, `Ctrl/Cmd+Shift+B`, the
+  command palette or the View menu. A row's primary action switches to the branch or opens
+  the worktree; a branch checked out in another worktree opens that worktree instead of
+  letting Git refuse the checkout. Right-click or the row menu exposes the existing actions
+  (create worktree, merge, rebase, rename, delete, lock, prune, tag push/delete, stash
+  apply/pop/drop) through the same validated IPC calls as the full pages. Worktree rows show
+  dirty counts from a batch `git.worktreeStatuses` read. The Branches, Worktrees, Stashes and
+  Tags pages remain the authoritative management surfaces; the panel links to them.
+  New worktrees are created next to the main repository by default, or in the absolute
+  `worktreeParent` preference set in Settings, and every dialog still accepts a one-off
+  folder.
 - **Views**: launchpad, commit graph, files/staging, branches, worktrees, submodules, tags,
   stashes, remotes, pull requests, releases, pipelines, settings.
 - **Interactive rebase**: a modal planner over `onto..HEAD` where commits can be reordered,

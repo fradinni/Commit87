@@ -139,6 +139,11 @@ export class Router {
         if (patch.updateChannel === 'stable' || patch.updateChannel === 'beta') allowed.updateChannel = patch.updateChannel
         if (typeof patch.autoUpdateCheck === 'boolean') allowed.autoUpdateCheck = patch.autoUpdateCheck
         if (patch.defaultProvider && PROVIDERS[patch.defaultProvider]) allowed.defaultProvider = patch.defaultProvider
+        if (typeof patch.worktreeParent === 'string') {
+          const parent = patch.worktreeParent.trim()
+          if (parent && !path.isAbsolute(parent)) throw new Error('Default worktree parent must be an absolute path')
+          allowed.worktreeParent = parent || undefined
+        }
         const updated = await this.store.updateConfig(allowed)
         if (allowed.gitBinary !== undefined) {
           await this.store.setGitBinary(allowed.gitBinary)
@@ -274,6 +279,8 @@ export class Router {
       }
       case 'git.worktrees':
         return repoOps.getWorktrees(requireString(data.path, 'Repository path'))
+      case 'git.worktreeStatuses':
+        return repoOps.getWorktreeStatuses(requireString(data.path, 'Repository path'))
       case 'git.stashes':
         return repoOps.getStashes(requireString(data.path, 'Repository path'))
       case 'git.submodules':

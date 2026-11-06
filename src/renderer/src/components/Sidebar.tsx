@@ -17,6 +17,7 @@ import type { ReactNode } from 'react'
 import { activeIdentity, useStore, type ViewId } from '../store'
 import { initials } from '../lib/format'
 import { Badge } from './ui'
+import { RefsPanel } from './RefsPanel'
 
 interface NavItem {
   id: ViewId
@@ -29,6 +30,8 @@ interface NavItem {
 export function Sidebar() {
   const view = useStore((state) => state.view)
   const setView = useStore((state) => state.setView)
+  const sidebarMode = useStore((state) => state.sidebarMode)
+  const setSidebarMode = useStore((state) => state.setSidebarMode)
   const repo = useStore((state) => state.currentRepo)
   const status = useStore((state) => state.status)
   const branches = useStore((state) => state.branches)
@@ -77,7 +80,7 @@ export function Sidebar() {
   )
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${repo && sidebarMode === 'refs' ? 'is-refs' : ''}`}>
       {repo ? (
         <>
           <div className="sidebar-repo">
@@ -92,35 +95,63 @@ export function Sidebar() {
             </button>
           </div>
 
-          <nav className="nav">
-            <div className="nav-section-label">Workspace</div>
-            {workspace.map(renderItem)}
-            <div className="nav-section-label">Remote</div>
-            {remote.map(renderItem)}
-          </nav>
+          <div className="sidebar-mode" role="tablist" aria-label="Sidebar mode">
+            <button
+              role="tab"
+              aria-selected={sidebarMode === 'navigate'}
+              className={sidebarMode === 'navigate' ? 'is-active' : ''}
+              onClick={() => setSidebarMode('navigate')}
+            >
+              <GitCommitHorizontal size={13} />
+              Navigate
+            </button>
+            <button
+              role="tab"
+              aria-selected={sidebarMode === 'refs'}
+              className={sidebarMode === 'refs' ? 'is-active' : ''}
+              onClick={() => setSidebarMode('refs')}
+            >
+              <GitBranch size={13} />
+              Refs
+            </button>
+          </div>
 
-          <button className={`nav-item ${view === 'settings' ? 'is-active' : ''}`} onClick={() => setView('settings')}>
-            <span className="nav-icon">
-              <Settings size={16} />
-            </span>
-            <span className="nav-label">Settings</span>
-          </button>
+          {sidebarMode === 'refs' ? (
+            <RefsPanel />
+          ) : (
+            <>
+              <nav className="nav" role="tabpanel" aria-label="Repository navigation">
+                <div className="nav-section-label">Workspace</div>
+                {workspace.map(renderItem)}
+                <div className="nav-section-label">Remote</div>
+                {remote.map(renderItem)}
+              </nav>
 
-          <button className="sidebar-identity" onClick={() => setView('settings')} title="Manage Git identities and integrations">
-            <span className="avatar">{initials(identity?.name)}</span>
-            <span className="identity-text">
-              <span className="identity-name">{identity?.name ?? 'No identity configured'}</span>
-              <span className="identity-email">{identity?.email ?? 'Add a Git identity'}</span>
-            </span>
-            <span className="identity-badges">
-              {identity?.isDefault ? <Badge tone="green">default</Badge> : <Badge tone="neutral">identity</Badge>}
-              {integration ? (
-                <Badge tone="blue" title={integration.baseUrl}>
-                  {integration.provider}
-                </Badge>
-              ) : null}
-            </span>
-          </button>
+              <button className={`nav-item ${view === 'settings' ? 'is-active' : ''}`} onClick={() => setView('settings')}>
+                <span className="nav-icon">
+                  <Settings size={16} />
+                </span>
+                <span className="nav-label">Settings</span>
+              </button>
+
+              <button className="sidebar-identity" onClick={() => setView('settings')} title="Manage Git identities and integrations">
+                <span className="avatar">{initials(identity?.name)}</span>
+                <span className="identity-text">
+                  <span className="identity-name">{identity?.name ?? 'No identity configured'}</span>
+                  <span className="identity-email">{identity?.email ?? 'Add a Git identity'}</span>
+                </span>
+                <span className="identity-badges">
+                  {identity?.isDefault ? <Badge tone="green">default</Badge> : <Badge tone="neutral">identity</Badge>}
+                  {integration ? (
+                    <Badge tone="blue" title={integration.baseUrl}>
+                      {integration.provider}
+                    </Badge>
+                  ) : null}
+                </span>
+              </button>
+            </>
+          )}
+
           <div className="sidebar-foot">
             <span>
               <TerminalSquare size={12} /> system git

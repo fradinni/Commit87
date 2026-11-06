@@ -25,6 +25,7 @@ import type {
   TagInfo,
   WorktreeAddInput,
   WorktreeInfo,
+  WorktreeStatus,
   CheckoutInput
 } from '@shared/types'
 import { buildAuthArgs, buildIdentityEnv, runGit, tryRunGit } from './runner'
@@ -243,6 +244,42 @@ export async function getTags(repoPath: string): Promise<TagInfo[]> {
 export async function getWorktrees(repoPath: string): Promise<WorktreeInfo[]> {
   const raw = await runGit(['worktree', 'list', '--porcelain'], { cwd: repoPath })
   return parseWorktrees(raw.stdout, repoPath)
+}
+
+/**
+ * Reads a compact status for every worktree in one round trip. Bare, prunable
+ * and unreadable checkouts are reported as unavailable instead of failing the
+ * whole panel, so one broken worktree cannot hide the rest.
+ */
+export async function getWorktreeStatuses(repoPath: string): Promise<WorktreeStatus[]> {
+  const worktrees = await getWorktrees(repoPath)
+  return Promise.all(
+    worktrees.map(async (worktree): Promise<WorktreeStatus> => {
+      const base = {
+        path: worktree.path,
+        branch: worktree.branch,
+        head: worktree.head
+      }
+      if (worktree.bare || worktree.prunable) {
+        return { ...base, clean: false, fileCount: 0, available: false }
+      }
+      const raw = await tryRunGit(['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=normal'], {
+        cwd: worktree.path
+      })
+      if (!raw || raw.exitCode !== 0) {
+        return { ...base, clean: false, fileCount: 0, available: false }
+      }
+      const status = parseStatus(raw.stdout)
+      return {
+        path: worktree.path,
+        branch: status.branch ?? worktree.branch,
+        head: status.headSha ?? worktree.head,
+        clean: status.clean,
+        fileCount: status.files.length,
+        available: true
+      }
+    })
+  )
 }
 
 export async function getStashes(repoPath: string): Promise<StashInfo[]> {

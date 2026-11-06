@@ -156,6 +156,8 @@ export interface AppConfig {
   updateChannel: UpdateChannel
   autoUpdateCheck: boolean
   defaultProvider?: ProviderId
+  /** Absolute folder used when a new worktree has no explicit target. Empty means next to the repository. */
+  worktreeParent?: string
 }
 
 export interface AppInfo {
@@ -273,6 +275,17 @@ export interface WorktreeInfo {
   prunable: boolean
   isMain: boolean
   isCurrent: boolean
+}
+
+/** A cheap status snapshot for every worktree of a repository. */
+export interface WorktreeStatus {
+  path: string
+  branch: string | null
+  head: string | null
+  clean: boolean
+  fileCount: number
+  /** False for bare, prunable or unreadable worktrees. */
+  available: boolean
 }
 
 export interface StashInfo {

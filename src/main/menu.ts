@@ -54,6 +54,7 @@ export function installMenu(): void {
       label: 'View',
       submenu: [
         { label: 'Command Palette', accelerator: 'CmdOrCtrl+K', click: () => app.emit('commit87:menu', 'command-palette') },
+        { label: 'Refs Panel', accelerator: 'CmdOrCtrl+Shift+B', click: () => app.emit('commit87:menu', 'toggle-refs') },
         { label: 'Git Console', accelerator: 'CmdOrCtrl+J', click: () => app.emit('commit87:menu', 'toggle-console') },
         { type: 'separator' },
         { label: 'Next Repository Tab', click: () => app.emit('commit87:menu', 'next-tab') },

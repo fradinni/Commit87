@@ -98,6 +98,7 @@ function GeneralSettings({
   notify: (message: string, kind?: 'info' | 'success' | 'error') => void
 }) {
   const [gitPath, setGitPath] = useState(config.gitBinary)
+  const [worktreeParent, setWorktreeParent] = useState(config.worktreeParent ?? '')
   const [checking, setChecking] = useState(false)
   const [gitResult, setGitResult] = useState<{ available: boolean; version: string; error?: string } | null>(null)
 
@@ -153,6 +154,56 @@ function GeneralSettings({
           label="Confirm destructive actions"
           hint="Ask before discarding changes, deleting branches, tags and worktrees."
         />
+      </section>
+
+      <section className="settings-card">
+        <h3>Worktrees</h3>
+        <p>Where new worktrees are created by default. Each worktree dialog still lets you pick another folder.</p>
+        <Field
+          label="Default worktree parent"
+          hint="Leave empty to create worktrees next to the repository. Use an absolute path."
+        >
+          <div className="row-gap">
+            <TextInput
+              value={worktreeParent}
+              onChange={(event) => setWorktreeParent(event.target.value)}
+              onBlur={() => void patch({ worktreeParent: worktreeParent.trim() })}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur()
+              }}
+              placeholder="/home/you/worktrees"
+            />
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<FolderOpen size={13} />}
+              onClick={() =>
+                void call('app.pickDirectory', {
+                  title: 'Choose the default worktree folder',
+                  defaultPath: worktreeParent || undefined
+                }).then((chosen) => {
+                  if (!chosen) return
+                  setWorktreeParent(chosen)
+                  void patch({ worktreeParent: chosen })
+                })
+              }
+            >
+              Browse
+            </Button>
+            {worktreeParent ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setWorktreeParent('')
+                  void patch({ worktreeParent: '' })
+                }}
+              >
+                Clear
+              </Button>
+            ) : null}
+          </div>
+        </Field>
       </section>
 
       <section className="settings-card">

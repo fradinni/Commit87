@@ -14,16 +14,17 @@ npm run typecheck        # strict TS across main, preload, renderer
 | `tests/parsers.test.ts` | porcelain v2 status (including renames, unmerged, initial/detached), log, branches, tags, remotes, worktrees, stashes, submodule status/config, numstat, blame, scoped config |
 | `tests/remote.test.ts` | remote URL parsing (scp, `ssh://` with port, nested groups, Bitbucket Server `scm/`), provider detection, account host matching (including strict credential hosts), web/base URL normalisation |
 | `tests/tabs.test.ts` | repository tab close/cycle/reorder semantics, cross-platform path keys, and active-tab patch mirroring |
-| `tests/repo-store.test.ts` | zustand store with a stubbed preload bridge: open/activate/close tabs, per-tab isolation, failed opens, task completion and console routing by repository |
+| `tests/repo-store.test.ts` | zustand store with a stubbed preload bridge: open/activate/close tabs, per-tab isolation, failed opens, task completion and console routing by repository, sidebar navigate/refs mode |
 | `tests/task-events.test.ts` | streaming task events carry the originating `repoPath` for every phase, and omit it for repository-less tasks |
 | `tests/credentials.test.ts` | identity environment, SSH command quoting, credential-helper argv safety, secret redaction |
 | `tests/ui-logic.test.ts` | unified diff parser (adds/deletes/renames/binary), commit graph lane layout, console tokenizer and allow-list |
+| `tests/refs.test.ts` | refs panel helpers: local/remote folder grouping, current-first ordering, worktree lookup, query matching, cross-platform sibling paths and configured worktree parents |
 | `tests/updates.test.ts` | update support per packaging format, progress clamping, channel and auto-check preferences, the check → available → download → ready state machine, error sanitization, concurrent checks, install gating and the automatic check timer |
 | `tests/providers.test.ts` | GitHub, GitLab, Bitbucket and Gitea mapping, auth headers, enterprise base paths, error messages, workflow dispatch payloads |
-| `tests/git.integration.test.ts` | real `git` end-to-end: init, status, staged diff, commit with identity, branch create/checkout/merge, annotated tags, worktree add/remove, stash push/apply |
+| `tests/git.integration.test.ts` | real `git` end-to-end: init, status, staged diff, commit with identity, branch create/checkout/merge, annotated tags, worktree add/remove and worktree status snapshots (including a deleted folder reported as unavailable), stash push/apply |
 | `tests/submodule.integration.test.ts` | real `git` end-to-end: add, status/config join, dirty detection and forced clean reset (including nested submodules), checkout drift and update, deinit/reinit, tracked-branch update, URL sync, remove (working tree, module dir, `.gitmodules`, config section), uncommitted-add removal and dirty refusal, linked-worktree isolation, orphan gitlinks, unstaged `.gitmodules` refusal and path validation |
 
-Total: 196 tests. The integration suites create temporary repositories under
+Total: 222 tests. The integration suites create temporary repositories under
 `os.tmpdir()` and remove them afterwards; they require `git` on `PATH`.
 
 ## What is asserted, not just executed

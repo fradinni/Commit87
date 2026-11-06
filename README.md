@@ -63,13 +63,23 @@ trust.**
 
 ### Branches, worktrees and refs
 
+- **Refs panel**: a compact, keyboard-first switcher in the sidebar (`Navigate` / `Refs`)
+  that lists local branches, remote branches, worktrees, stashes and tags for the active
+  repository, grouped by folder and remote. Open it with the sidebar toggle,
+  `Ctrl/Cmd+Shift+B`, the command palette or the View menu, then type to filter, use the
+  arrow keys and press Enter to switch. A branch that is checked out in another worktree
+  opens that worktree instead of failing the checkout, worktree rows show whether they are
+  open and how many files are modified, and right-click exposes the same actions as the
+  full pages (create worktree, merge, rebase, rename, delete, lock, prune, tag push/delete,
+  stash apply/pop/drop, copy, show in graph).
 - Local and remote branches with upstream and ahead/behind counts
 - Checkout, create, rename, delete (with optional remote delete), set upstream
 - Merge (`--no-ff`, `--ff-only`, squash) and rebase onto any branch
 - Conflict-aware status bar with **Continue**, **Skip** and **Abort** for merge, rebase,
   cherry-pick, revert and `git am`
 - Worktrees: add from a branch or a new branch, open side by side, lock/unlock with a
-  reason, prune, force-remove
+  reason, prune, force-remove; new worktrees are created next to the repository by default
+  or in the default parent set in Settings, and every dialog accepts a one-off folder
 - Submodules: initialize, update to the recorded commit or the tracked branch, sync URLs,
   add with an optional branch, reset local work, remove (with an explicit force option) and
   open the nested repository; local changes and out-of-sync checkouts are flagged
@@ -77,6 +87,7 @@ trust.**
 - Stashes: push (with untracked), apply, pop, drop
 
 ![Worktrees](docs/screenshots/worktrees.png)
+![Refs panel](docs/screenshots/refs-panel.png)
 
 ### Forge integrations
 
