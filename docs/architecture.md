@@ -297,16 +297,19 @@ then `git switch -c pr-N <ref>` with the integration token used for the fetch.
   cancels a repository that is still loading, so it cannot steal focus when it finishes.
   Closing the last tab returns to the launchpad.
 - **Refs panel**: the sidebar can switch between `Navigate` and `Refs`. The refs mode is a
-  compact, keyboard-first tree of local branches, remote branches, worktrees, stashes and
-  tags for the active repository, opened with the sidebar toggle, `Ctrl/Cmd+Shift+B`, the
-  command palette or the View menu. A single click selects a row; double-click (or
-  `Enter`) performs the row's primary action. A row's primary action switches to the branch
-  or opens the worktree; a branch checked out in another worktree opens that worktree
-  instead of letting Git refuse the checkout. Right-click or the row menu exposes the existing actions
-  (create worktree, merge, rebase, rename, delete, lock, prune, tag push/delete, stash
-  apply/pop/drop) through the same validated IPC calls as the full pages. Worktree rows show
-  dirty counts from a batch `git.worktreeStatuses` read. The Branches, Worktrees, Stashes and
-  Tags pages remain the authoritative management surfaces; the panel links to them.
+  compact, keyboard-first tree of local branches, remote branches, linked worktrees,
+  stashes and tags for the active repository, opened with the sidebar toggle,
+  `Ctrl/Cmd+Shift+B`, the command palette or the View menu. The main checkout is represented
+  by its branch in Local; only additional worktree folders are listed under Worktrees. A
+  single click selects a row; double-click (or `Enter`) performs the row's primary action.
+  Selection is the only full-row highlight; the current branch or worktree keeps an accent
+  check/badge. A row's primary action switches to the branch or opens the worktree; a branch
+  checked out in another worktree opens that worktree instead of letting Git refuse the
+  checkout. Right-click or the row menu exposes the existing actions (create worktree,
+  merge, rebase, rename, delete, lock, prune, tag push/delete, stash apply/pop/drop) through
+  the same validated IPC calls as the full pages. Worktree rows show dirty counts from a
+  batch `git.worktreeStatuses` read. The Branches, Worktrees, Stashes and Tags pages remain
+  the authoritative management surfaces; the panel links to them.
   New worktrees are created next to the main repository by default, or in the absolute
   `worktreeParent` preference set in Settings, and every dialog still accepts a one-off
   folder.

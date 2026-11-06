@@ -18,13 +18,13 @@ npm run typecheck        # strict TS across main, preload, renderer
 | `tests/task-events.test.ts` | streaming task events carry the originating `repoPath` for every phase, and omit it for repository-less tasks |
 | `tests/credentials.test.ts` | identity environment, SSH command quoting, credential-helper argv safety, secret redaction |
 | `tests/ui-logic.test.ts` | unified diff parser (adds/deletes/renames/binary), commit graph lane layout, console tokenizer and allow-list |
-| `tests/refs.test.ts` | refs panel helpers: local/remote folder grouping, current-first ordering, worktree lookup, query matching, cross-platform sibling paths and configured worktree parents |
+| `tests/refs.test.ts` | refs panel helpers: local/remote folder grouping, current-first ordering, worktree lookup (main checkout excluded from linked worktrees), query matching, cross-platform sibling paths and configured worktree parents |
 | `tests/updates.test.ts` | update support per packaging format, progress clamping, channel and auto-check preferences, the check → available → download → ready state machine, error sanitization, concurrent checks, install gating and the automatic check timer |
 | `tests/providers.test.ts` | GitHub, GitLab, Bitbucket and Gitea mapping, auth headers, enterprise base paths, error messages, workflow dispatch payloads |
 | `tests/git.integration.test.ts` | real `git` end-to-end: init, status, staged diff, commit with identity, branch create/checkout/merge, annotated tags, worktree add/remove and worktree status snapshots (including a deleted folder reported as unavailable), stash push/apply |
 | `tests/submodule.integration.test.ts` | real `git` end-to-end: add, status/config join, dirty detection and forced clean reset (including nested submodules), checkout drift and update, deinit/reinit, tracked-branch update, URL sync, remove (working tree, module dir, `.gitmodules`, config section), uncommitted-add removal and dirty refusal, linked-worktree isolation, orphan gitlinks, unstaged `.gitmodules` refusal and path validation |
 
-Total: 222 tests. The integration suites create temporary repositories under
+Total: 223 tests. The integration suites create temporary repositories under
 `os.tmpdir()` and remove them afterwards; they require `git` on `PATH`.
 
 ## What is asserted, not just executed

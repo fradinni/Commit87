@@ -7,6 +7,7 @@ import {
   findWorktreeForBranch,
   groupLocalBranches,
   groupRemoteBranches,
+  linkedWorktrees,
   localNameForRemote,
   matchesQuery,
   parentPath,
@@ -95,6 +96,16 @@ describe('worktree helpers', () => {
     expect(findWorktreeForBranch(worktrees, 'feature/a')?.path).toBe('/src/feature')
     expect(findWorktreeForBranch(worktrees, 'missing')).toBeUndefined()
     expect(findWorktreeForBranch(worktrees, null)).toBeUndefined()
+  })
+
+  it('keeps the main checkout out of the linked worktree list', () => {
+    const worktrees = [
+      worktree('/src/app', 'main', true, true),
+      worktree('/src/feature', 'feature/a'),
+      worktree('/src/bug', 'bug/b')
+    ]
+    expect(linkedWorktrees(worktrees).map((item) => item.branch)).toEqual(['feature/a', 'bug/b'])
+    expect(linkedWorktrees([worktree('/src/app', 'main', true, true)])).toEqual([])
   })
 
   it('builds a safe sibling directory name', () => {

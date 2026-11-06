@@ -1254,13 +1254,17 @@ a {
   color: var(--text);
 }
 
+.refs-row.is-current {
+  color: var(--accent);
+}
+
+/* Selection is the only full-row highlight; "current" is a marker, not a second selection. */
 .refs-row.is-active {
   background: var(--bg-active);
   color: var(--text);
 }
 
-.refs-row.is-current {
-  background: var(--accent-soft);
+.refs-row.is-active.is-current {
   color: var(--accent);
 }
 

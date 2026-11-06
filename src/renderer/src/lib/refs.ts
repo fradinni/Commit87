@@ -83,6 +83,15 @@ export function findWorktreeForBranch(worktrees: WorktreeInfo[], branch: string 
   return worktrees.find((worktree) => worktree.branch === branch)
 }
 
+/**
+ * The main checkout is the repository itself, not a folder the user created as
+ * a worktree. Keeping it out of the worktree section avoids showing the current
+ * branch twice; linked worktrees are the rows the panel can switch to.
+ */
+export function linkedWorktrees(worktrees: WorktreeInfo[]): WorktreeInfo[] {
+  return worktrees.filter((worktree) => !worktree.isMain)
+}
+
 export function matchesQuery(query: string, ...values: Array<string | null | undefined>): boolean {
   const term = query.trim().toLowerCase()
   if (!term) return true
