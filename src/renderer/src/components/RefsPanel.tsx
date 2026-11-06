@@ -39,6 +39,7 @@ import {
   findWorktreeForBranch,
   groupLocalBranches,
   groupRemoteBranches,
+  linkedWorktrees,
   localNameForRemote,
   matchesQuery,
   pathBaseName,
@@ -673,7 +674,7 @@ export function RefsPanel() {
       }))
     )
 
-    const worktreeRows: PanelRow[] = filteredWorktrees.map((worktree) => {
+    const worktreeRows: PanelRow[] = linkedWorktrees(filteredWorktrees).map((worktree) => {
       const status = statusByPath.get(worktree.path)
       return {
         key: `worktree:${worktree.path}`,
@@ -848,7 +849,7 @@ export function RefsPanel() {
   const menuEntriesFor = (row: PanelRow): MenuEntry[] => {
     if (row.kind === 'branch' && row.branch) {
       const branch = row.branch
-      const checkout = findWorktreeForBranch(checkoutWorktrees, branch.shortName)
+      const linked = findWorktreeForBranch(linkedWorktrees(checkoutWorktrees), branch.shortName)
       const registered = findWorktreeForBranch(worktrees, branch.shortName)
       return [
         {
@@ -856,10 +857,18 @@ export function RefsPanel() {
           id: 'switch',
           label: branch.isCurrent
             ? 'Already current'
-            : checkout
-              ? `Open worktree ${pathBaseName(checkout.path)}`
-              : `Switch to ${branch.shortName}`,
-          icon: branch.isCurrent ? <Check size={14} /> : checkout ? <Waypoints size={14} /> : <GitBranch size={14} />,
+            : linked
+              ? `Open worktree ${pathBaseName(linked.path)}…`
+              : registered?.isMain && !registered.isCurrent
+                ? 'Open main checkout…'
+                : 'Checkout branch…',
+          icon: branch.isCurrent ? (
+            <Check size={14} />
+          ) : linked || registered?.isMain ? (
+            <Waypoints size={14} />
+          ) : (
+            <GitBranch size={14} />
+          ),
           disabled: branch.isCurrent,
           run: () => switchBranch(branch)
         },
@@ -955,7 +964,7 @@ export function RefsPanel() {
         {
           kind: 'item',
           id: 'checkout',
-          label: `Check out ${localName}`,
+          label: 'Checkout branch…',
           icon: <GitBranch size={14} />,
           run: () => switchRemote(branch)
         },
