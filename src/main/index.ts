@@ -12,8 +12,8 @@ import { createMainWindow } from './window'
 import { createSplashWindow } from './splash'
 import { installMenu } from './menu'
 import { registerAppProtocol, registerAppScheme } from './protocol'
-import { UpdateService } from './updates'
-import { createElectronUpdater } from './update-adapter'
+import { UpdateService, type UpdateAdapter } from './updates'
+import { createElectronUpdater, createInertUpdater } from './update-adapter'
 import { APP_VERSION } from './version'
 
 app.setName('Commit87')
@@ -176,11 +176,21 @@ app.whenReady().then(() => {
       mainWindow?.webContents.send(IPC_TASK_EVENT, { event: taskEvent })
     })
     const providers = new ProviderService(store)
+    // electron-updater throws at construction when the running app version is
+    // not semver, which is the case when the main bundle is launched directly.
+    // Fall back to an inert adapter so the window still opens, and force the
+    // environment to "unpackaged" so the UI reports updates as unavailable.
+    let updaterAdapter: UpdateAdapter | null = null
+    try {
+      updaterAdapter = createElectronUpdater()
+    } catch (error) {
+      console.warn('[commit87:update] disabled:', error instanceof Error ? error.message : String(error))
+    }
     const updates = new UpdateService({
-      adapter: createElectronUpdater(),
+      adapter: updaterAdapter ?? createInertUpdater(),
       environment: {
         platform: process.platform,
-        isPackaged: app.isPackaged,
+        isPackaged: updaterAdapter ? app.isPackaged : false,
         appImage: process.env.APPIMAGE,
         portable: process.env.PORTABLE_EXECUTABLE_FILE,
         snap: process.env.SNAP,
