@@ -22,15 +22,18 @@ jobs:
         include:
           - target: linux
             arch: x64
+            archArgs: --x64
             runner: ubuntu-24.04
           - target: linux
             arch: arm64
+            archArgs: --arm64
             runner: ubuntu-24.04-arm
+          # Both Windows architectures share latest.yml, so build them in one
+          # invocation: separate jobs would overwrite each other's metadata and
+          # leave one architecture pointing at the other installer.
           - target: win
-            arch: x64
-            runner: windows-2022
-          - target: win
-            arch: arm64
+            arch: x64+arm64
+            archArgs: --x64 --arm64
             runner: windows-2022
           # macOS x64 is paused: GitHub-hosted Intel runners (macos-13) queue for a long
           # time. Restore the x64 entry once Intel capacity is available again.
@@ -39,6 +42,7 @@ jobs:
           #   runner: macos-13
           - target: mac
             arch: arm64
+            archArgs: --arm64
             runner: macos-15
     runs-on: ${{ matrix.runner }}
     env:
@@ -94,7 +98,7 @@ jobs:
             export WIN_CSC_LINK="$SIGN_WIN_CERT"
             export WIN_CSC_KEY_PASSWORD="$SIGN_WIN_CERT_PASSWORD"
           fi
-          npx electron-builder --config electron-builder.config.cjs --${{ matrix.target }} --${{ matrix.arch }} --publish always
+          npx electron-builder --config electron-builder.config.cjs --${{ matrix.target }} ${{ matrix.archArgs }} --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SIGN_MAC_CERT: ${{ matrix.target == 'mac' && secrets.MAC_CERT_P12 || '' }}

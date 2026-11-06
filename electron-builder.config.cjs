@@ -123,7 +123,7 @@ module.exports = {
     target: ['nsis', 'portable', 'zip'],
     icon: 'build/icon.ico',
     requestedExecutionLevel: 'asInvoker',
-    artifactName: '${productName}-${version}-${arch}.${ext}'
+    artifactName: '${productName}-${version}-win-${arch}.${ext}'
   },
 
   nsis: {
@@ -137,11 +137,11 @@ module.exports = {
     uninstallDisplayName: 'Commit87',
     deleteAppDataOnUninstall: false,
     include: 'build/installer.nsh',
-    artifactName: '${productName}-${version}-${arch}-setup.${ext}'
+    artifactName: '${productName}-${version}-win-${arch}-setup.${ext}'
   },
 
   portable: {
-    artifactName: '${productName}-${version}-${arch}-portable.${ext}'
+    artifactName: '${productName}-${version}-win-${arch}-portable.${ext}'
   },
 
   mac: {
@@ -158,7 +158,7 @@ module.exports = {
       NSDownloadsFolderUsageDescription: 'Commit87 needs access to repositories you choose to clone.',
       NSDesktopFolderUsageDescription: 'Commit87 needs access to repositories you choose to open.'
     },
-    artifactName: '${productName}-${version}-${arch}.${ext}'
+    artifactName: '${productName}-${version}-mac-${arch}.${ext}'
   },
 
   dmg: {
