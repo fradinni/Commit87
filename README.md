@@ -147,7 +147,7 @@ Prebuilt packages are produced by CI for every target and architecture:
 | --- | --- |
 | Linux | AppImage, `.deb` (Debian/Ubuntu/Mint), `.rpm` (Fedora/RHEL/openSUSE), `pacman` (Arch/Manjaro), `tar.gz` |
 | Windows | NSIS installer, portable `.exe`, `.zip` (x64 and arm64) |
-| macOS | `.dmg` and `.zip` (Apple Silicon arm64; Intel x64 temporarily paused) |
+| macOS | `.dmg` and `.zip` (Apple Silicon arm64 and Intel x64) |
 
 ### Linux
 
@@ -159,7 +159,7 @@ sudo apt install ./Commit87-0.1.0-amd64.deb
 sudo dnf install ./Commit87-0.1.0-x86_64.rpm
 
 # Arch
-sudo pacman -U Commit87-0.1.0-x86_64.pkg.tar.zst
+sudo pacman -U Commit87-0.1.0-linux-x64.pkg.tar.xz
 
 # Any distro, no install
 chmod +x Commit87-0.1.0-linux-x86_64.AppImage
@@ -173,14 +173,14 @@ the host binaries.
 
 ### Windows and macOS
 
-Download the installer (`.exe` for x64/arm64, `.dmg` for Apple Silicon) from the release
+Download the installer (`.exe` for x64/arm64, `.dmg` for Intel or Apple Silicon) from the release
 page. Portable builds need no installation: the Windows portable `.exe` and the macOS
 `.zip` run in place. macOS builds are signed and notarized when the release secrets are
 configured.
 
-> **macOS Intel (x64) is temporarily paused in CI** while GitHub-hosted `macos-13` runners
-> are scarce. Build it locally with `npm run build:mac` (or run the Apple Silicon build
-> under Rosetta) until the x64 entry is restored in `.github/workflows/`.
+> macOS packages are built on `macos-15` (Apple Silicon). Both architectures are
+> produced there: arm64 natively and Intel x64 cross-packaged, so no Intel runner is
+> required.
 
 ## Build from source
 

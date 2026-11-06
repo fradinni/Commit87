@@ -102,7 +102,11 @@ module.exports = {
   },
 
   pacman: {
-    depends: ['git', 'gtk3', 'libnotify', 'nss', 'libxss', 'libxtst', 'xdg-utils', 'at-spi2-core', 'libsecret']
+    depends: ['git', 'gtk3', 'libnotify', 'nss', 'libxss', 'libxtst', 'xdg-utils', 'at-spi2-core', 'libsecret'],
+    // electron-builder derives the extension from the target name, so the default
+    // would be an untyped `.pacman` archive. Name it like a real Arch package; xz
+    // is the compression fpm already uses for this target by default.
+    artifactName: '${productName}-${version}-linux-${arch}.pkg.tar.xz'
   },
 
   appImage: {
@@ -127,6 +131,9 @@ module.exports = {
   },
 
   nsis: {
+    // Build one installer per architecture instead of the default universal
+    // installer, which bundles both payloads under an arch-less name.
+    buildUniversalInstaller: false,
     oneClick: false,
     perMachine: false,
     allowElevation: true,
@@ -141,11 +148,15 @@ module.exports = {
   },
 
   portable: {
+    // Same as nsis: keep the portable exe per architecture only.
+    buildUniversalInstaller: false,
     artifactName: '${productName}-${version}-win-${arch}-portable.${ext}'
   },
 
   mac: {
-    target: ['dmg', 'pkg', 'zip'],
+    // `.zip` stays next to the `.dmg` because electron-updater downloads the zip
+    // to swap the app bundle; no `.pkg` installer is produced.
+    target: ['dmg', 'zip'],
     category: 'public.app-category.developer-tools',
     icon: 'build/icon.icns',
     hardenedRuntime: true,

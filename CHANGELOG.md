@@ -79,6 +79,14 @@ First public release.
   diff (`diff --cc`) for unmerged paths, which the unified-diff view cannot parse
 - Linux packaging: CI installs `libarchive-tools` (bsdtar) before building, so the
   pacman target no longer fails with `fpm` exit code 127 when generating `.MTREE`
+- Linux packaging: the pacman target now writes an xz-compressed
+  `Commit87-<version>-linux-<arch>.pkg.tar.xz` instead of an untyped `.pacman` archive,
+  and CI uploads it under the matching name
+- macOS packaging: build only the `.dmg` installer and the `.zip` the updater consumes;
+  the `.pkg` target is no longer produced
+- Windows packaging: NSIS and portable targets now build one file per architecture
+  (`-win-x64-`/`-win-arm64-`) instead of also emitting an arch-less universal installer
+  and portable exe that bundled both payloads
 
 ### Changed
 
@@ -97,3 +105,5 @@ First public release.
   ASAR excludes bundled production dependencies
 - AppImage uses gzip compression instead of xz for faster reads; opt-in startup tracing is
   available through `COMMIT87_STARTUP_TRACE=1`
+- macOS Intel x64 builds are published again. Both architectures are packaged on
+  `macos-15` (x64 cross-built) because the Intel `macos-13` runner image is retired

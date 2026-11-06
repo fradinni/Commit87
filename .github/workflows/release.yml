@@ -35,14 +35,12 @@ jobs:
             arch: x64+arm64
             archArgs: --x64 --arm64
             runner: windows-2022
-          # macOS x64 is paused: GitHub-hosted Intel runners (macos-13) queue for a long
-          # time. Restore the x64 entry once Intel capacity is available again.
-          # - target: mac
-          #   arch: x64
-          #   runner: macos-13
+          # Both macOS architectures share latest-mac.yml, so build them in one
+          # invocation. macos-13 (the last Intel image) is retiring, so x64 is
+          # cross-packaged on the Apple Silicon runner instead.
           - target: mac
-            arch: arm64
-            archArgs: --arm64
+            arch: x64+arm64
+            archArgs: --x64 --arm64
             runner: macos-15
     runs-on: ${{ matrix.runner }}
     env:

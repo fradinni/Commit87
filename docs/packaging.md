@@ -7,21 +7,26 @@
 | Linux | AppImage | x64, arm64 | `electron-builder` (`linux.target`) |
 | Linux | `.deb` | amd64, arm64 | `electron-builder` or `scripts/package-linux.py` |
 | Linux | `.rpm` | x86_64, aarch64 | `electron-builder` or `scripts/package-linux.py` |
-| Linux | `pacman` `.pkg.tar.zst` | x86_64, aarch64 | `electron-builder` or `scripts/package-linux.py` |
+| Linux | `pacman` `.pkg.tar.xz` (electron-builder) / `.pkg.tar.zst` (script) | x86_64, aarch64 | `electron-builder` or `scripts/package-linux.py` |
 | Linux | `tar.gz` | x64, arm64 | `electron-builder` |
 | Linux | Snap | amd64, arm64 | `scripts/build-snap.sh` (local) |
 | Linux | Flatpak | x86_64, aarch64 | `scripts/build-flatpak.sh` (local) |
 | Windows | NSIS `.exe` | x64, arm64 | `electron-builder` on `windows-2022` |
 | Windows | portable `.exe` | x64, arm64 | `electron-builder` |
 | Windows | `.zip` | x64, arm64 | `electron-builder` |
-| macOS | `.dmg` | x64, arm64 | `electron-builder` on `macos-13` / `macos-15` |
-| macOS | `.pkg` | x64, arm64 | `electron-builder` |
+| macOS | `.dmg` | x64, arm64 | `electron-builder` on `macos-15` (x64 cross-built) |
 | macOS | `.zip` | x64, arm64 | `electron-builder` |
 
 Artifacts land in `dist/`. CI uploads them per runner
 (`.github/workflows/ci.yml`) and publishes drafts on tags
 (`.github/workflows/release.yml`). The release workflow attaches only the
 `electron-builder` targets; Snap and Flatpak are built locally with the scripts above.
+
+Every target produces one artifact per architecture; no platform emits a combined or
+universal build. Artifact names always carry the architecture token (`x64`/`x86_64`/
+`amd64` or `arm64`/`aarch64`), and Windows NSIS/portable use
+`buildUniversalInstaller: false` so the arch-less combined installer and portable exe
+are never produced.
 
 ## Update feeds
 
@@ -62,6 +67,11 @@ sudo pacman -S --needed fakeroot rpm libarchive         # Arch
 The `linux` release matrix and the CI `package-linux` job install these before
 packaging. Alternatively, `scripts/package-linux.py` builds deb, rpm and pacman without
 `fpm` and falls back to GNU `tar` when `bsdtar` is missing.
+
+`electron-builder` derives the pacman artifact extension from the target name, which would
+yield an untyped `.pacman` file. The pacman options override `artifactName` only; the xz
+compression fpm uses by default stays, so CI and releases publish
+`Commit87-<version>-linux-<arch>.pkg.tar.xz`.
 
 All Linux packages install the app to `/opt/Commit87`, add `/usr/bin/commit87`,
 `/usr/share/applications/commit87.desktop`, hicolor icons from 16 to 1024 px, and the
@@ -158,6 +168,8 @@ COMMIT87_STARTUP_TRACE=1 ./dist/Commit87-0.1.0-linux-x86_64.AppImage
   uninstall entry, `asInvoker` execution level.
 - Portable `.exe`: single self-extracting executable.
 - `.zip`: unpacked directory.
+- `buildUniversalInstaller: false` on both NSIS and portable, so each architecture
+  produces its own `-win-x64-`/`-win-arm64-` file and no arch-less combined installer.
 - `build/installer.nsh` only adds notices about the Git for Windows requirement.
 
 Code signing uses `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` in CI; unsigned local builds
@@ -169,8 +181,9 @@ still run but show a SmartScreen warning.
 - `hardenedRuntime: true`, entitlements in `build/entitlements.mac.plist` (JIT,
   unsigned executable memory, network client, user-selected files, Apple events).
 - Notarization uses `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID`.
-- Builds are separate per architecture (`macos-13` x64, `macos-15` arm64) so the arm64
-  package is natively built for Apple Silicon rather than cross-compiled.
+- Both architectures are packaged on `macos-15`: arm64 natively and Intel x64
+  cross-built, because the Intel `macos-13` image is retired. They share
+  `latest-mac.yml`, so the release workflow builds them in one invocation.
 
 ## Icons
 
