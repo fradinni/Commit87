@@ -13,9 +13,50 @@ on:
 permissions:
   contents: write
 
+# Serialize release runs so two builds never upload to the same draft at once.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  prepare:
+    name: Prepare draft release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Clear draft release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # electron-builder replaces assets with delete-then-upload, which races
+        # GitHub's asset index for the tiny latest*.yml files. A tag push always
+        # rebuilds the draft from scratch, so clear it before any job publishes.
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="v$(node -p "require('./package.json').version")"
+          fi
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$tag" --draft --title "Commit87 ${tag#v}" --target "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY"
+            exit 0
+          fi
+          if [[ "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" != "true" ]]; then
+            echo "::error::Release $tag is already published; refusing to replace its assets."
+            exit 1
+          fi
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
+            while IFS= read -r asset; do
+              [[ -z "$asset" ]] && continue
+              gh release delete-asset "$tag" "$asset" --yes --repo "$GITHUB_REPOSITORY"
+            done
+
   release:
     name: Publish ${{ matrix.target }} (${{ matrix.arch }})
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:

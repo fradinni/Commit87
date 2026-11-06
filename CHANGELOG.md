@@ -87,6 +87,9 @@ First public release.
 - Windows packaging: NSIS and portable targets now build one file per architecture
   (`-win-x64-`/`-win-arm64-`) instead of also emitting an arch-less universal installer
   and portable exe that bundled both payloads
+- Release workflow: clears the draft release's assets before a rebuild and serializes
+  release runs, so republishing a tag no longer fails with GitHub `422 already_exists`
+  while replacing `latest*.yml`
 
 ### Changed
 
