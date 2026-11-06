@@ -32,17 +32,12 @@ jobs:
           retention-days: 7
 
   package-linux:
-    name: Linux packages (${{ matrix.arch }})
+    name: Linux packages (x64 + arm64)
     needs: verify
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
+    # Keep packaging on one job so the two architectures do not compete for
+    # separate runners. electron-builder downloads the arm64 Electron runtime
+    # and cross-packages it on the x64 host; there are no native addons here.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -55,13 +50,13 @@ jobs:
         # fpm (bundled by electron-builder) builds deb/rpm/pacman archives and the
         # pacman .MTREE index with bsdtar, which Ubuntu does not include by default.
         run: sudo apt-get update && sudo apt-get install -y fakeroot rpm libarchive-tools
-      - name: Build AppImage, deb, rpm, pacman and tar.gz
-        run: npx electron-builder --config electron-builder.config.cjs --linux --${{ matrix.arch }} --publish never
+      - name: Build AppImage, deb, rpm, pacman and tar.gz for x64 and arm64
+        run: npx electron-builder --config electron-builder.config.cjs --linux --x64 --arm64 --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v7
         with:
-          name: linux-${{ matrix.arch }}
+          name: linux-x64-arm64
           path: |
             dist/*.AppImage
             dist/*.deb
@@ -71,17 +66,10 @@ jobs:
           retention-days: 14
 
   package-windows:
-    name: Windows packages (${{ matrix.arch }})
+    name: Windows packages (x64 + arm64)
     needs: verify
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x64
-            runner: windows-2022
-          - arch: arm64
-            runner: windows-2022
-    runs-on: ${{ matrix.runner }}
+    # Both architectures share latest.yml, so build them in one invocation.
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -90,13 +78,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - name: Build NSIS, portable and zip
-        run: npx electron-builder --config electron-builder.config.cjs --win --${{ matrix.arch }} --publish never
+      - name: Build NSIS, portable and zip for x64 and arm64
+        run: npx electron-builder --config electron-builder.config.cjs --win --x64 --arm64 --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v7
         with:
-          name: windows-${{ matrix.arch }}
+          name: windows-x64-arm64
           path: |
             dist/*.exe
             dist/*.zip
