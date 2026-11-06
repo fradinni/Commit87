@@ -67,7 +67,8 @@ trust.**
   that lists local branches, remote branches, worktrees, stashes and tags for the active
   repository, grouped by folder and remote. Open it with the sidebar toggle,
   `Ctrl/Cmd+Shift+B`, the command palette or the View menu, then type to filter, use the
-  arrow keys and press Enter to switch. A branch that is checked out in another worktree
+  arrow keys, single-click to select and **double-click (or press Enter)** to switch. A
+  branch that is checked out in another worktree
   opens that worktree instead of failing the checkout, worktree rows show whether they are
   open and how many files are modified, and right-click exposes the same actions as the
   full pages (create worktree, merge, rebase, rename, delete, lock, prune, tag push/delete,
