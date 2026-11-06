@@ -504,6 +504,9 @@ a {
   position: fixed;
   inset: 0;
   z-index: 40;
+  /* The catcher lives inside the draggable titlebar; without this Chromium
+   * treats the whole overlay as a drag region and swallows the click. */
+  -webkit-app-region: no-drag;
 }
 
 .dropdown {

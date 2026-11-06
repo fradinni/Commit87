@@ -56,6 +56,15 @@ export function TitleBar({ onPalette, onPush }: { onPalette: () => void; onPush:
     return window.commit87.onWindowState((state) => setMaximized(state.maximized))
   }, [])
 
+  useEffect(() => {
+    if (!menuOpen) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setMenuOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [menuOpen])
+
   const startSync = async (kind: 'fetch' | 'pull'): Promise<void> => {
     if (!repo) return
     const identity = activeIdentity()

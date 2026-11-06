@@ -2333,9 +2333,10 @@
 /* --------------------------------------------------------------- settings */
 
 .settings-view .view-toolbar {
+  padding-top: 0;
   padding-bottom: 0;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: center;
 }
 
 .settings-tabs {
