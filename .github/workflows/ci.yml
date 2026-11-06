@@ -103,19 +103,13 @@ jobs:
           retention-days: 14
 
   package-macos:
-    name: macOS packages (${{ matrix.arch }})
+    name: macOS packages (x64 + arm64)
     needs: verify
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # macos-13 (the last Intel image) is retiring, so both architectures are
-          # packaged on the Apple Silicon runner: arm64 natively, x64 cross-packaged.
-          - arch: x64
-            runner: macos-15
-          - arch: arm64
-            runner: macos-15
-    runs-on: ${{ matrix.runner }}
+    # One job for both architectures: they share latest-mac.yml, and asking for
+    # two separate macOS runners risks the second job starving in the queue.
+    # macos-13 (the last Intel image) is retiring, so both are packaged on the
+    # Apple Silicon runner: arm64 natively, x64 cross-packaged.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -124,14 +118,14 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - name: Build dmg and zip
-        run: npx electron-builder --config electron-builder.config.cjs --mac --${{ matrix.arch }} --publish never
+      - name: Build dmg and zip for x64 and arm64
+        run: npx electron-builder --config electron-builder.config.cjs --mac --x64 --arm64 --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - uses: actions/upload-artifact@v7
         with:
-          name: macos-${{ matrix.arch }}
+          name: macos-x64-arm64
           path: |
             dist/*.dmg
             dist/*.zip
