@@ -38,6 +38,7 @@ const identity: GitIdentity = {
 
 let root = ''
 let repoPath = ''
+let realRepoPath = ''
 let worktreePath = ''
 
 async function write(file: string, content: string): Promise<void> {
@@ -50,6 +51,7 @@ beforeAll(async () => {
   repoPath = path.join(root, 'repo')
   worktreePath = path.join(root, 'worktrees', 'feature-wt')
   await fs.mkdir(repoPath)
+  realRepoPath = normalizePath(await fs.realpath(repoPath))
   await runGit(['init', '-b', 'main'], { cwd: repoPath })
   await runGit(['config', 'user.name', identity.name], { cwd: repoPath })
   await runGit(['config', 'user.email', identity.email], { cwd: repoPath })
@@ -170,7 +172,7 @@ describe('git repository service', () => {
     expect(status.branch).toBe('feature-wt')
 
     const statuses = await getWorktreeStatuses(repoPath)
-    const mainStatus = statuses.find((item) => normalizePath(item.path) === normalizePath(repoPath))
+    const mainStatus = statuses.find((item) => normalizePath(item.path) === realRepoPath)
     const linkedStatus = statuses.find((item) => normalizePath(item.path) === realWorktreePath)
     expect(mainStatus).toMatchObject({ available: true, clean: true, fileCount: 0 })
     expect(linkedStatus).toMatchObject({ available: true, clean: true, branch: 'feature-wt' })
@@ -193,11 +195,12 @@ describe('git repository service', () => {
       createBranch: true,
       startPoint: 'main'
     })
+    const realGonePath = normalizePath(await fs.realpath(gonePath))
     await fs.rm(gonePath, { recursive: true, force: true })
 
     const statuses = await getWorktreeStatuses(repoPath)
-    const gone = statuses.find((item) => normalizePath(item.path) === normalizePath(gonePath))
-    const mainStatus = statuses.find((item) => normalizePath(item.path) === normalizePath(repoPath))
+    const gone = statuses.find((item) => normalizePath(item.path) === realGonePath)
+    const mainStatus = statuses.find((item) => normalizePath(item.path) === realRepoPath)
     expect(gone).toMatchObject({ available: false, fileCount: 0 })
     expect(mainStatus).toMatchObject({ available: true, clean: true })
 
