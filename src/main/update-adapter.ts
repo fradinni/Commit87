@@ -36,6 +36,34 @@ function toProgress(info: ProgressInfo): UpdateProgress {
 }
 
 /**
+ * A do-nothing adapter used when electron-updater cannot be constructed. That
+ * happens when the main bundle is launched directly (for example
+ * `electron out/main/index.js`), where Electron reports a placeholder app
+ * version that is not valid semver. Updates are never offered in that case;
+ * the rest of the app must still start.
+ */
+export function createInertUpdater(): UpdateAdapter {
+  return {
+    setChannel: () => undefined,
+    setAutoDownload: () => undefined,
+    setAutoInstallOnAppQuit: () => undefined,
+    setAllowDowngrade: () => undefined,
+    check: async () => null,
+    download: () => {
+      const error = new Error('Automatic updates are unavailable in this launch mode')
+      return { promise: Promise.reject(error), cancel: () => undefined }
+    },
+    quitAndInstall: () => undefined,
+    onChecking: () => undefined,
+    onAvailable: () => undefined,
+    onNotAvailable: () => undefined,
+    onProgress: () => undefined,
+    onDownloaded: () => undefined,
+    onError: () => undefined
+  }
+}
+
+/**
  * Bind the updater state machine to electron-updater. This module is the only
  * place that touches the library; all policy (channels, phases, gating on the
  * installed format) lives in `updates.ts`.
