@@ -4,6 +4,32 @@ All notable changes to Commit87 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.1] — 2026-11-06
+
+### Added
+
+- Refs panel in the sidebar (`Navigate` / `Refs`): grouped local and remote branches, linked
+  worktrees, stashes and tags with live filtering and keyboard navigation. A single click
+  selects a row; double-click or `Enter` switches. A branch checked out in another worktree
+  opens that worktree instead of letting Git refuse the checkout, and row menus expose the
+  same branch, worktree, tag and stash actions as the full pages. Open it from the sidebar
+  toggle, `Ctrl/Cmd+Shift+B`, the command palette or the View menu.
+- Worktree status in the refs panel: open/current state, dirty file counts and lock/prunable
+  flags, backed by a batch `git.worktreeStatuses` read that reports missing checkouts without
+  failing the whole list.
+- Default worktree parent in Settings. New worktrees still default to a sibling folder, and
+  every worktree dialog accepts a one-off path.
+- Repository tab strip: the launchpad button stays reachable, the new-tab menu lists recent
+  repositories and worktrees, and a repository and its linked worktrees stay together as one
+  drag-and-drop group.
+
+### Fixed
+
+- Launching the production main bundle directly no longer fails at startup when
+  electron-updater reports a non-semver app version; updates report unavailable instead.
+- The commit graph keeps a tag or remote ref selected as its branch filter instead of
+  clearing it on the next refresh.
+
 ## [0.1.0] — 2026-11-06
 
 First public release.

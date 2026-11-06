@@ -34,6 +34,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.2.0-beta.1" date="2026-11-06">
+      <description>
+        <p>See the changelog for details.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-11-06">
       <description>
         <p>First public release: repositories, branches, worktrees, submodules, tags, stashes, releases, pipelines, repository tabs and multi-account identities.</p>
