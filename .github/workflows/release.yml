@@ -84,37 +84,3 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           WIN_CSC_LINK: ${{ matrix.target == 'win' && secrets.WIN_CERT_P12 || '' }}
           WIN_CSC_KEY_PASSWORD: ${{ matrix.target == 'win' && secrets.WIN_CERT_PASSWORD || '' }}
-
-  flatpak:
-    name: Flatpak bundle
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: sudo apt-get update && sudo apt-get install -y flatpak flatpak-builder
-      - run: bash scripts/build-flatpak.sh
-      - uses: actions/upload-artifact@v7
-        with:
-          name: flatpak
-          path: dist/*.flatpak
-
-  snap:
-    name: Snap package
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: sudo snap install snapcraft --classic
-      - run: bash scripts/build-snap.sh
-      - uses: actions/upload-artifact@v7
-        with:
-          name: snap
-          path: '*.snap'

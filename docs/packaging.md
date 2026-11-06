@@ -9,8 +9,8 @@
 | Linux | `.rpm` | x86_64, aarch64 | `electron-builder` or `scripts/package-linux.py` |
 | Linux | `pacman` `.pkg.tar.zst` | x86_64, aarch64 | `electron-builder` or `scripts/package-linux.py` |
 | Linux | `tar.gz` | x64, arm64 | `electron-builder` |
-| Linux | Snap | amd64, arm64 | `scripts/build-snap.sh` (CI `snap` job) |
-| Linux | Flatpak | x86_64, aarch64 | `scripts/build-flatpak.sh` |
+| Linux | Snap | amd64, arm64 | `scripts/build-snap.sh` (local) |
+| Linux | Flatpak | x86_64, aarch64 | `scripts/build-flatpak.sh` (local) |
 | Windows | NSIS `.exe` | x64, arm64 | `electron-builder` on `windows-2022` |
 | Windows | portable `.exe` | x64, arm64 | `electron-builder` |
 | Windows | `.zip` | x64, arm64 | `electron-builder` |
@@ -20,7 +20,8 @@
 
 Artifacts land in `dist/`. CI uploads them per runner
 (`.github/workflows/ci.yml`) and publishes drafts on tags
-(`.github/workflows/release.yml`).
+(`.github/workflows/release.yml`). The release workflow attaches only the
+`electron-builder` targets; Snap and Flatpak are built locally with the scripts above.
 
 ## Update feeds
 

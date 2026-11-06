@@ -145,7 +145,7 @@ Prebuilt packages are produced by CI for every target and architecture:
 
 | Platform | Formats |
 | --- | --- |
-| Linux | AppImage, `.deb` (Debian/Ubuntu/Mint), `.rpm` (Fedora/RHEL/openSUSE), `pacman` (Arch/Manjaro), `tar.gz`, Snap, Flatpak |
+| Linux | AppImage, `.deb` (Debian/Ubuntu/Mint), `.rpm` (Fedora/RHEL/openSUSE), `pacman` (Arch/Manjaro), `tar.gz` |
 | Windows | NSIS installer, portable `.exe`, `.zip` (x64 and arm64) |
 | macOS | `.dmg` and `.zip` (Apple Silicon arm64; Intel x64 temporarily paused) |
 
@@ -164,17 +164,12 @@ sudo pacman -U Commit87-0.1.0-x86_64.pkg.tar.zst
 # Any distro, no install
 chmod +x Commit87-0.1.0-linux-x86_64.AppImage
 ./Commit87-0.1.0-linux-x86_64.AppImage
-
-# Flatpak
-flatpak install --user Commit87-0.1.0-x86_64.flatpak
-flatpak run fr.fradinni.Commit87
-
-# Snap
-sudo snap install --dangerous commit87_0.1.0_amd64.snap
 ```
 
-Every Linux package depends on the system `git`; Flatpak and Snap additionally bundle
-Git, OpenSSH and CA certificates because their sandbox cannot use the host binaries.
+Every Linux package depends on the system `git`. Snap and Flatpak bundles are built from
+source (`npm run dist:snap`, `npm run dist:flatpak`) rather than attached to GitHub
+releases; they include Git, OpenSSH and CA certificates because their sandbox cannot use
+the host binaries.
 
 ### Windows and macOS
 
