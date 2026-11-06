@@ -139,7 +139,7 @@ function reset(): void {
   delay = null
   for (const key of Object.keys(commonDirs)) delete commonDirs[key]
   useStore.getState().closeAllTabs()
-  useStore.setState({ config, toasts: [], task: null, tasks: {}, consoleOpen: false })
+  useStore.setState({ config, toasts: [], task: null, tasks: {}, consoleOpen: false, sidebarMode: 'navigate', sidebarOpen: true })
 }
 
 beforeEach(reset)
@@ -433,5 +433,39 @@ describe('tab-aware task events', () => {
     })
     const line = useStore.getState().tabs[0].consoleLines.at(-1)
     expect(line?.stream).toBe('stderr')
+  })
+})
+
+describe('sidebar refs mode', () => {
+  it('opens the refs mode and keeps the sidebar visible', async () => {
+    await useStore.getState().openRepo(A)
+    useStore.setState({ sidebarOpen: false })
+    useStore.getState().setSidebarMode('refs')
+    expect(useStore.getState().sidebarMode).toBe('refs')
+    expect(useStore.getState().sidebarOpen).toBe(true)
+  })
+
+  it('toggles between navigate and refs', async () => {
+    await useStore.getState().openRepo(A)
+    expect(useStore.getState().sidebarMode).toBe('navigate')
+    useStore.getState().toggleRefsPanel()
+    expect(useStore.getState().sidebarMode).toBe('refs')
+    useStore.getState().toggleRefsPanel()
+    expect(useStore.getState().sidebarMode).toBe('navigate')
+  })
+
+  it('falls back to navigate when no repository is open', () => {
+    useStore.getState().toggleRefsPanel()
+    expect(useStore.getState().sidebarMode).toBe('navigate')
+    expect(useStore.getState().sidebarOpen).toBe(true)
+    expect(useStore.getState().toasts.at(-1)?.message).toContain('Open a repository')
+  })
+
+  it('keeps the refs mode across tab switches', async () => {
+    await useStore.getState().openRepo(A)
+    useStore.getState().setSidebarMode('refs')
+    await useStore.getState().openRepo(B)
+    expect(useStore.getState().activeTabId).toBe(B)
+    expect(useStore.getState().sidebarMode).toBe('refs')
   })
 })

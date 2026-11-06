@@ -271,6 +271,9 @@ export function GraphView() {
           </form>
           <Select value={branch} onChange={(event) => setBranch(event.target.value)} title="Filter by branch">
             <option value="">All branches</option>
+            {branch && !localBranches.some((item) => item.name === branch) ? (
+              <option value={branch}>{branch.replace(/^refs\/(heads|remotes|tags)\//, '')}</option>
+            ) : null}
             {localBranches.map((item) => (
               <option key={item.name} value={item.name}>
                 {item.shortName}

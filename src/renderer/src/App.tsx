@@ -103,6 +103,9 @@ export function App() {
         case 'toggle-console':
           useStore.getState().toggleConsole()
           break
+        case 'toggle-refs':
+          useStore.getState().toggleRefsPanel()
+          break
         case 'open-repo':
           void pickAndOpen()
           break
@@ -176,6 +179,9 @@ export function App() {
       if (key === 'k') {
         event.preventDefault()
         useStore.getState().setPaletteOpen(!useStore.getState().paletteOpen)
+      } else if (key === 'b' && event.shiftKey) {
+        event.preventDefault()
+        useStore.getState().toggleRefsPanel()
       } else if (key === 'j') {
         event.preventDefault()
         useStore.getState().toggleConsole()

@@ -1048,6 +1048,400 @@ a {
   font-size: 11px;
 }
 
+/* ---------------------------------------------------------------- sidebar refs */
+
+.sidebar.is-refs {
+  width: 292px;
+}
+
+.sidebar-mode {
+  display: flex;
+  gap: 2px;
+  margin: 8px 8px 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+}
+
+.sidebar-mode button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 25px;
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.sidebar-mode button:hover {
+  color: var(--text);
+}
+
+.sidebar-mode button.is-active {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.refs-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.refs-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 8px 4px;
+  flex: none;
+}
+
+.refs-search {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--muted);
+}
+
+.refs-search:focus-within {
+  border-color: var(--accent);
+}
+
+.refs-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 11.5px;
+}
+
+.refs-search input::placeholder {
+  color: var(--muted);
+}
+
+.refs-clear {
+  display: flex;
+  padding: 1px;
+  color: var(--muted);
+}
+
+.refs-clear:hover {
+  color: var(--text);
+}
+
+.refs-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 6px;
+}
+
+.refs-section {
+  border-top: 1px solid var(--border);
+}
+
+.refs-section-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 5px 3px 3px;
+}
+
+.refs-section-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 5px;
+  border-radius: 5px;
+  color: var(--text-dim);
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  text-align: left;
+}
+
+.refs-section-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.refs-section-toggle > span:first-of-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.refs-count {
+  margin-left: auto;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--bg-elev);
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.refs-section-actions {
+  display: flex;
+  gap: 1px;
+  flex: none;
+  opacity: 0.55;
+}
+
+.refs-section:hover .refs-section-actions,
+.refs-section:focus-within .refs-section-actions {
+  opacity: 1;
+}
+
+.refs-section-actions .icon-btn {
+  width: 22px;
+  height: 22px;
+}
+
+.refs-group-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  height: 24px;
+  padding: 0 6px 0 18px;
+  color: var(--muted);
+  font-size: 10.5px;
+  text-align: left;
+}
+
+.refs-group-head:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.refs-group-head > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.refs-row {
+  display: flex;
+  align-items: center;
+  min-height: 27px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.refs-row:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.refs-row.is-active {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+.refs-row.is-current {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.refs-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 27px;
+  padding: 0 2px 0 22px;
+  color: inherit;
+  text-align: left;
+}
+
+.refs-row-icon {
+  display: flex;
+  flex: none;
+  color: var(--muted);
+}
+
+.refs-row.is-current .refs-row-icon {
+  color: var(--accent);
+}
+
+.refs-icon-remote {
+  color: var(--blue);
+}
+
+.refs-row-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.refs-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.refs-row-meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.refs-ahead {
+  color: var(--accent);
+}
+
+.refs-behind {
+  color: var(--amber);
+}
+
+.refs-open {
+  padding: 0 4px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 8.5px;
+  font-weight: 650;
+  line-height: 14px;
+  text-transform: uppercase;
+}
+
+.refs-main {
+  color: var(--muted);
+  font-size: 8.5px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.refs-unavailable {
+  color: var(--red);
+  font-size: 8.5px;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+
+.refs-sha {
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.refs-dirty {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--amber);
+}
+
+.refs-row-more {
+  width: 20px;
+  height: 20px;
+  margin-right: 3px;
+  flex: none;
+  opacity: 0;
+}
+
+.refs-row:hover .refs-row-more,
+.refs-row.is-active .refs-row-more,
+.refs-row:focus-within .refs-row-more {
+  opacity: 1;
+}
+
+.refs-empty {
+  padding: 18px 12px;
+  color: var(--muted);
+  font-size: 10.5px;
+  text-align: center;
+}
+
+.refs-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  flex: none;
+}
+
+.refs-footer button {
+  padding: 2px 4px;
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.refs-footer button:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.refs-menu {
+  position: fixed;
+  width: 240px;
+  min-width: 240px;
+  max-width: 240px;
+  overflow-y: auto;
+}
+
+.refs-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+}
+
+.refs-menu button > svg {
+  flex: none;
+  color: var(--muted);
+}
+
+.refs-menu button > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.refs-menu button.is-danger {
+  color: var(--red);
+}
+
+.refs-menu button.is-danger > svg {
+  color: var(--red);
+}
+
+.refs-menu-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
+
 /* ------------------------------------------------------------------- ui */
 
 .btn {

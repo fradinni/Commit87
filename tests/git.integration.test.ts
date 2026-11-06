@@ -19,6 +19,7 @@ import {
   getStatus,
   getTags,
   getWorktrees,
+  getWorktreeStatuses,
   mergeBranch,
   removeWorktree,
   resolveRepo,
@@ -168,6 +169,12 @@ describe('git repository service', () => {
     const status = await getStatus(worktreePath)
     expect(status.branch).toBe('feature-wt')
 
+    const statuses = await getWorktreeStatuses(repoPath)
+    const mainStatus = statuses.find((item) => normalizePath(item.path) === normalizePath(repoPath))
+    const linkedStatus = statuses.find((item) => normalizePath(item.path) === realWorktreePath)
+    expect(mainStatus).toMatchObject({ available: true, clean: true, fileCount: 0 })
+    expect(linkedStatus).toMatchObject({ available: true, clean: true, branch: 'feature-wt' })
+
     const main = await resolveRepo(repoPath)
     const linked = await resolveRepo(worktreePath)
     expect(linked.worktree).toBe(true)
@@ -175,6 +182,26 @@ describe('git repository service', () => {
 
     await removeWorktree(repoPath, worktreePath, false)
     expect((await getWorktrees(repoPath)).some((item) => normalizePath(item.path) === realWorktreePath)).toBe(false)
+  })
+
+  it('reports a deleted worktree folder as unavailable instead of failing', async () => {
+    const gonePath = path.join(root, 'worktrees', 'gone-wt')
+    await addWorktree({
+      repoPath,
+      path: gonePath,
+      branch: 'gone-wt',
+      createBranch: true,
+      startPoint: 'main'
+    })
+    await fs.rm(gonePath, { recursive: true, force: true })
+
+    const statuses = await getWorktreeStatuses(repoPath)
+    const gone = statuses.find((item) => normalizePath(item.path) === normalizePath(gonePath))
+    const mainStatus = statuses.find((item) => normalizePath(item.path) === normalizePath(repoPath))
+    expect(gone).toMatchObject({ available: false, fileCount: 0 })
+    expect(mainStatus).toMatchObject({ available: true, clean: true })
+
+    await runGit(['worktree', 'prune'], { cwd: repoPath })
   })
 
   it('stashes and restores changes', async () => {

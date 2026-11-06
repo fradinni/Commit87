@@ -54,6 +54,7 @@ import type {
   UpdateStatus,
   WorktreeAddInput,
   WorktreeInfo,
+  WorktreeStatus,
   IdentityInput,
   GitIdentity
 } from './types'
@@ -99,6 +100,7 @@ export interface IpcMethods {
   'git.tags': { request: { path: string }; response: TagInfo[] }
   'git.remotes': { request: { path: string }; response: RepoInfo['remotes'] }
   'git.worktrees': { request: { path: string }; response: WorktreeInfo[] }
+  'git.worktreeStatuses': { request: { path: string }; response: WorktreeStatus[] }
   'git.stashes': { request: { path: string }; response: StashInfo[] }
   'git.submodules': { request: { path: string }; response: SubmoduleInfo[] }
   'git.diff': { request: DiffInput; response: DiffResult }

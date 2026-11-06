@@ -95,6 +95,14 @@ export function CommandPalette({ action }: { action: (action: PaletteAction) => 
           ]
         : []),
       view('graph', 'Commit graph', <GitCommitHorizontal size={15} />),
+      {
+        id: 'refs-panel',
+        label: 'Switch branch or worktree…',
+        hint: 'Refs panel · Ctrl/Cmd+Shift+B',
+        group: 'Go to',
+        icon: <GitBranch size={15} />,
+        run: () => useStore.getState().toggleRefsPanel()
+      },
       view('files', 'Files & staging', <Layers size={15} />),
       view('branches', 'Branches', <GitBranch size={15} />),
       view('worktrees', 'Worktrees', <Waypoints size={15} />),

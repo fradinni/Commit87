@@ -43,6 +43,8 @@ export type ViewId =
 
 export type SettingsTab = 'general' | 'identities' | 'integrations' | 'repository' | 'updates' | 'about'
 
+export type SidebarMode = 'navigate' | 'refs'
+
 export interface Toast {
   id: string
   kind: 'info' | 'success' | 'error'
@@ -122,6 +124,7 @@ interface StoreState {
   consoleOpen: boolean
   consoleLines: ConsoleLine[]
   sidebarOpen: boolean
+  sidebarMode: SidebarMode
   paletteOpen: boolean
   rebaseOpen: boolean
   rebaseOnto: string | null
@@ -170,6 +173,8 @@ interface StoreState {
   clearConsole: () => void
   pushConsoleLine: (text: string, stream?: 'stdout' | 'stderr') => void
   setSidebarOpen: (open: boolean) => void
+  setSidebarMode: (mode: SidebarMode) => void
+  toggleRefsPanel: () => void
   setPaletteOpen: (open: boolean) => void
   openRebase: (onto?: string) => void
   closeRebase: () => void
@@ -304,6 +309,7 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
   tasks: {},
   consoleOpen: false,
   sidebarOpen: true,
+  sidebarMode: 'navigate',
   paletteOpen: false,
   rebaseOpen: false,
   rebaseOnto: null,
@@ -551,7 +557,10 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
         call('git.submodules', { path: repoPath })
       ])
       // A deleted or renamed branch must not block the rest of the refresh.
-      const branchExists = branches.some((item) => item.name === tab.graphBranch || item.shortName === tab.graphBranch)
+      // Tags and remote refs are valid graph filters too.
+      const branchExists =
+        branches.some((item) => item.name === tab.graphBranch || item.shortName === tab.graphBranch) ||
+        tags.some((tag) => tag.name === tab.graphBranch)
       const branchFilter = branchExists ? tab.graphBranch : ''
       const query = tab.graphQuery.trim()
       get().updateTab(repoPath, {
@@ -781,6 +790,22 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
   },
   setSidebarOpen(open) {
     set({ sidebarOpen: open })
+  },
+  setSidebarMode(mode) {
+    if (mode === 'refs' && !get().currentRepo) {
+      set({ sidebarOpen: true })
+      return
+    }
+    set({ sidebarMode: mode, ...(mode === 'refs' ? { sidebarOpen: true } : {}) })
+  },
+  toggleRefsPanel() {
+    if (!get().currentRepo) {
+      set({ sidebarOpen: true })
+      get().notify('Open a repository to use the refs panel', 'info')
+      return
+    }
+    const next: SidebarMode = get().sidebarMode === 'refs' ? 'navigate' : 'refs'
+    set({ sidebarMode: next, sidebarOpen: true })
   },
   setPaletteOpen(open) {
     set({ paletteOpen: open })
