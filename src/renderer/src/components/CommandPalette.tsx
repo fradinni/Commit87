@@ -11,6 +11,7 @@ import {
   GitBranch,
   GitCommitHorizontal,
   GitPullRequest,
+  Home,
   Layers,
   ListTree,
   RefreshCw,
@@ -49,6 +50,7 @@ export function CommandPalette({ action }: { action: (action: PaletteAction) => 
   const activateTab = useStore((state) => state.activateTab)
   const cycleTab = useStore((state) => state.cycleTab)
   const closeTab = useStore((state) => state.closeTab)
+  const showLaunchpad = useStore((state) => state.showLaunchpad)
   const toggleConsole = useStore((state) => state.toggleConsole)
   const openRepo = useStore((state) => state.openRepo)
   const openRebase = useStore((state) => state.openRebase)
@@ -80,6 +82,18 @@ export function CommandPalette({ action }: { action: (action: PaletteAction) => 
       { id: 'open', label: 'Open repository…', hint: 'opens a tab', group: 'Repository', icon: <FolderOpen size={15} />, run: () => action('open') },
       { id: 'clone', label: 'Clone repository…', hint: 'https or SSH URL', group: 'Repository', icon: <FolderGit2 size={15} />, run: () => action('clone') },
       { id: 'init', label: 'Create repository…', hint: 'git init', group: 'Repository', icon: <FilePlus2 size={15} />, run: () => action('init') },
+      ...(tabs.length
+        ? [
+            {
+              id: 'launchpad',
+              label: 'Show launchpad',
+              hint: 'keeps tabs open',
+              group: 'Repository',
+              icon: <Home size={15} />,
+              run: () => showLaunchpad()
+            } satisfies PaletteCommand
+          ]
+        : []),
       view('graph', 'Commit graph', <GitCommitHorizontal size={15} />),
       view('files', 'Files & staging', <Layers size={15} />),
       view('branches', 'Branches', <GitBranch size={15} />),
@@ -207,6 +221,7 @@ export function CommandPalette({ action }: { action: (action: PaletteAction) => 
     repo?.path,
     repo?.upstream,
     setView,
+    showLaunchpad,
     tabs,
     toggleConsole
   ])

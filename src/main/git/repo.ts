@@ -84,8 +84,11 @@ export async function resolveRepo(inputPath: string): Promise<RepoInfo> {
   }
   const canonicalRoot = await fs.realpath(root).catch(() => path.resolve(root))
   const commonRaw = await tryRunGit(['rev-parse', '--git-common-dir'], { cwd })
-  const commonDir = commonRaw?.stdout.trim() ? path.resolve(root, commonRaw.stdout.trim()) : gitDir
-  const linkedWorktree = path.resolve(commonDir) !== path.resolve(gitDir)
+  const commonDirRaw = commonRaw?.stdout.trim() ? path.resolve(root, commonRaw.stdout.trim()) : gitDir
+  // Symlinked checkouts can reach the same shared Git directory through
+  // different paths; resolve it once so linked worktrees group consistently.
+  const commonDir = await fs.realpath(commonDirRaw).catch(() => commonDirRaw)
+  const linkedWorktree = path.resolve(commonDirRaw) !== path.resolve(gitDir)
 
   const branchRaw = await tryRunGit(['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: root })
   const rawBranch = branchRaw?.stdout.trim() ?? 'HEAD'
@@ -118,6 +121,7 @@ export async function resolveRepo(inputPath: string): Promise<RepoInfo> {
     canonicalPath: canonicalRoot,
     root,
     gitDir,
+    commonDir,
     name: path.basename(root) || path.basename(candidate),
     isBare: bare,
     currentBranch,

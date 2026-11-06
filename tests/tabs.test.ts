@@ -4,8 +4,13 @@ import {
   closeTabRecord,
   cycleTabId,
   findTabIndex,
+  groupTabs,
+  insertTabInGroup,
+  moveTabInGroups,
   moveTabToIndex,
   pickRepoTabPatch,
+  repoGroupKey,
+  repoGroupLabel,
   repoPathKey
 } from '../src/renderer/src/lib/tabs'
 
@@ -83,6 +88,82 @@ describe('repository tab helpers', () => {
     expect(moveTabToIndex(tabs, 'a', 99).map((item) => item.id)).toEqual(['b', 'c', 'a'])
     expect(moveTabToIndex(tabs, 'a', 0)).toBe(tabs)
     expect(moveTabToIndex(tabs, 'missing', 1)).toBe(tabs)
+  })
+})
+
+describe('repository tab grouping', () => {
+  const main = {
+    path: '/src/app',
+    gitDir: '/src/app/.git',
+    commonDir: '/src/app/.git',
+    name: 'app'
+  }
+  const worktree = {
+    path: '/src/worktrees/feature',
+    gitDir: '/src/app/.git/worktrees/feature',
+    commonDir: '/src/app/.git',
+    name: 'feature'
+  }
+
+  it('keys a repository and its linked worktrees together', () => {
+    expect(repoGroupKey(main, 'linux')).toBe(repoGroupKey(worktree, 'linux'))
+    expect(repoGroupKey(main, 'win32')).toBe(repoGroupKey(worktree, 'win32'))
+    expect(repoGroupKey(main, 'linux')).not.toBe(repoGroupKey({ ...worktree, commonDir: '/other/.git' }, 'linux'))
+  })
+
+  it('labels a group from the shared git directory', () => {
+    expect(repoGroupLabel(main)).toBe('app')
+    expect(repoGroupLabel(worktree)).toBe('app')
+    expect(repoGroupLabel({ path: '/srv/repo.git', gitDir: '/srv/repo.git', commonDir: '/srv/repo.git', name: 'repo' })).toBe('repo')
+  })
+
+  it('groups non-adjacent tabs in first-appearance order', () => {
+    const tabs = [
+      { id: 'a1', group: 'a' },
+      { id: 'b1', group: 'b' },
+      { id: 'a2', group: 'a' }
+    ]
+    const groups = groupTabs(tabs, (item) => item.group)
+    expect(groups.map((group) => group.key)).toEqual(['a', 'b'])
+    expect(groups[0].tabs.map((item) => item.id)).toEqual(['a1', 'a2'])
+    expect(groups[0].start).toBe(0)
+    expect(groups[1].start).toBe(2)
+  })
+
+  it('inserts a new tab next to its existing group', () => {
+    const tabs = [
+      { id: 'a1', group: 'a' },
+      { id: 'b1', group: 'b' }
+    ]
+    expect(insertTabInGroup(tabs, { id: 'a2', group: 'a' }, (item) => item.group).map((item) => item.id)).toEqual([
+      'a1',
+      'a2',
+      'b1'
+    ])
+    expect(insertTabInGroup(tabs, { id: 'c1', group: 'c' }, (item) => item.group).map((item) => item.id)).toEqual([
+      'a1',
+      'b1',
+      'c1'
+    ])
+  })
+
+  it('reorders inside a group without splitting it', () => {
+    const tabs = [
+      { id: 'a1', group: 'a' },
+      { id: 'a2', group: 'a' },
+      { id: 'b1', group: 'b' }
+    ]
+    expect(moveTabInGroups(tabs, 'a2', 0, (item) => item.group).map((item) => item.id)).toEqual(['a2', 'a1', 'b1'])
+  })
+
+  it('moves a whole group past another group', () => {
+    const tabs = [
+      { id: 'a1', group: 'a' },
+      { id: 'a2', group: 'a' },
+      { id: 'b1', group: 'b' }
+    ]
+    expect(moveTabInGroups(tabs, 'a1', 2, (item) => item.group).map((item) => item.id)).toEqual(['b1', 'a1', 'a2'])
+    expect(moveTabInGroups(tabs, 'b1', 0, (item) => item.group).map((item) => item.id)).toEqual(['b1', 'a1', 'a2'])
   })
 })
 

@@ -21,7 +21,7 @@ import type {
   WorktreeInfo
 } from '@shared/types'
 import type { IpcMethods, IpcRequest } from '@shared/ipc'
-import { applyRepoTabPatch, closeTabRecord, cycleTabId, moveTabToIndex, repoPathKey } from './lib/tabs'
+import { applyRepoTabPatch, closeTabRecord, cycleTabId, insertTabInGroup, moveTabInGroups, repoGroupKey, repoPathKey } from './lib/tabs'
 import { commit87Bridge } from './lib/bridge'
 
 type IpcRequestMap = { [K in keyof IpcMethods]: IpcMethods[K]['request'] }
@@ -138,6 +138,7 @@ interface StoreState {
   pinRecent: (path: string, pinned: boolean) => Promise<void>
   openRepo: (path: string) => Promise<void>
   closeRepo: () => Promise<void>
+  showLaunchpad: () => void
   activateTab: (id: string, cancelPending?: boolean) => void
   closeTab: (id?: string) => void
   closeOtherTabs: (id?: string) => void
@@ -234,6 +235,11 @@ function tabForPath(tabs: RepoTab[], repoPath: string): RepoTab | undefined {
     const canonical = tab.currentRepo.canonicalPath || tab.currentRepo.path
     return pathKey(canonical) === key || pathKey(tab.currentRepo.path) === key
   })
+}
+
+/** A repository and its linked worktrees share one group key. */
+function groupKeyOf(tab: RepoTab): string {
+  return repoGroupKey(tab.currentRepo, commit87Bridge().platform)
 }
 
 function tabToStore(tab: RepoTab): Partial<StoreState> {
@@ -432,24 +438,31 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
         return
       }
       if (request === openSeq) {
-        set({ tabs: [...get().tabs, tab], activeTabId: tab.id, ...tabToStore(tab), repoLoading: false })
+        set({ tabs: insertTabInGroup(get().tabs, tab, groupKeyOf), activeTabId: tab.id, ...tabToStore(tab), repoLoading: false })
       } else {
-        const needsActive = get().activeTabId === null
-        set({ tabs: [...get().tabs, tab], repoLoading: false })
+        // The launchpad is a deliberate choice too: only the very first tab
+        // takes focus when an unsolicited open finishes in the background.
+        const needsActive = get().activeTabId === null && get().tabs.length === 0
+        set({ tabs: insertTabInGroup(get().tabs, tab, groupKeyOf), repoLoading: false })
         if (needsActive) get().activateTab(tab.id, false)
       }
       await get().loadRecent()
     } catch (error) {
       set({ repoLoading: false })
-      if (!get().activeTabId && get().tabs.length) {
-        get().activateTab(get().tabs[get().tabs.length - 1].id, false)
-      }
       throw error
     }
   },
 
   async closeRepo() {
     get().closeTab()
+  },
+
+  showLaunchpad() {
+    // Keep every tab open; only the active repository mirror is cleared, so the
+    // launchpad becomes a home screen instead of an unreachable first run.
+    if (!get().tabs.length) return
+    openSeq += 1
+    set({ activeTabId: null, ...emptyRepoSlice, rebaseOpen: false, rebaseOnto: null })
   },
 
   activateTab(id, cancelPending = true) {
@@ -471,7 +484,10 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
     const result = closeTabRecord(state.tabs, state.activeTabId, targetId)
     if (result.tabs === state.tabs) return
     if (!result.activeId) {
-      set({ tabs: [], activeTabId: null, ...emptyRepoSlice })
+      // Closing an inactive tab while the launchpad is showing must not discard
+      // the remaining tabs.
+      if (result.tabs.length === 0) set({ tabs: [], activeTabId: null, ...emptyRepoSlice })
+      else set({ tabs: result.tabs })
       return
     }
     const active = result.tabs.find((tab) => tab.id === result.activeId)
@@ -497,7 +513,7 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
   },
 
   moveTab(id, index) {
-    const tabs = moveTabToIndex(get().tabs, id, index)
+    const tabs = moveTabInGroups(get().tabs, id, index, groupKeyOf)
     if (tabs !== get().tabs) set({ tabs })
   },
 

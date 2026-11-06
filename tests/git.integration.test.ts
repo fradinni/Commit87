@@ -168,6 +168,11 @@ describe('git repository service', () => {
     const status = await getStatus(worktreePath)
     expect(status.branch).toBe('feature-wt')
 
+    const main = await resolveRepo(repoPath)
+    const linked = await resolveRepo(worktreePath)
+    expect(linked.worktree).toBe(true)
+    expect(linked.commonDir).toBe(main.commonDir)
+
     await removeWorktree(repoPath, worktreePath, false)
     expect((await getWorktrees(repoPath)).some((item) => normalizePath(item.path) === realWorktreePath)).toBe(false)
   })

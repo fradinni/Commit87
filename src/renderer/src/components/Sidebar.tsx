@@ -39,6 +39,7 @@ export function Sidebar() {
   const pulls = useStore((state) => state.pulls)
   const detection = useStore((state) => state.detection)
   const appInfo = useStore((state) => state.appInfo)
+  const tabs = useStore((state) => state.tabs)
   const integrations = useStore((state) => state.config?.integrations) ?? []
   const closeRepo = useStore((state) => state.closeRepo)
   const identity = activeIdentity()
@@ -131,8 +132,12 @@ export function Sidebar() {
         <>
           <div className="sidebar-empty">
             <Boxes size={22} />
-            <p>No repository open</p>
-            <span>Open, clone or create a repository to get started.</span>
+            <p>{tabs.length ? 'Launchpad' : 'No repository open'}</p>
+            <span>
+              {tabs.length
+                ? `${tabs.length} tab${tabs.length === 1 ? '' : 's'} still open. Pick one from the tab strip or open another repository.`
+                : 'Open, clone or create a repository to get started.'}
+            </span>
           </div>
           <nav className="nav">
             <button className="nav-item" onClick={() => setView('graph')}>

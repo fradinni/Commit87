@@ -51,6 +51,106 @@ export function moveTabToIndex<T extends TabLike>(tabs: T[], id: string, index: 
   return next
 }
 
+/** The parts of a repository needed to recognise its worktrees as one family. */
+export interface RepoGroupInfo {
+  path: string
+  gitDir: string
+  commonDir?: string
+  name: string
+}
+
+/**
+ * A repository and every linked worktree share one Git common directory. Tabs
+ * are grouped by this key so worktrees never drift away from their repository.
+ */
+export function repoGroupKey(repo: RepoGroupInfo, platform: string): string {
+  return repoPathKey(repo.commonDir || repo.gitDir, platform)
+}
+
+export function repoGroupLabel(repo: RepoGroupInfo): string {
+  const common = (repo.commonDir || repo.gitDir).replace(/[\\/]+$/, '')
+  const base = common.split(/[\\/]/).pop() ?? ''
+  const parent = base.toLowerCase() === '.git' ? common.slice(0, -4).replace(/[\\/]+$/, '') : common
+  const label = parent.split(/[\\/]/).pop() ?? ''
+  return label.replace(/\.git$/i, '') || repo.name
+}
+
+export interface TabGroup<T extends TabLike> {
+  key: string
+  tabs: T[]
+  /** Flat index of the group's first tab. */
+  start: number
+}
+
+/**
+ * Groups tabs by repository while keeping groups in order of first appearance
+ * and members in their existing order. Non-adjacent members are pulled together.
+ */
+export function groupTabs<T extends TabLike>(tabs: T[], groupOf: (tab: T) => string): TabGroup<T>[] {
+  const order: string[] = []
+  const members = new Map<string, T[]>()
+  for (const tab of tabs) {
+    const key = groupOf(tab)
+    let list = members.get(key)
+    if (!list) {
+      list = []
+      members.set(key, list)
+      order.push(key)
+    }
+    list.push(tab)
+  }
+  let start = 0
+  return order.map((key) => {
+    const group = { key, tabs: members.get(key) ?? [], start }
+    start += group.tabs.length
+    return group
+  })
+}
+
+/** Opens a tab next to the existing tabs of the same repository family. */
+export function insertTabInGroup<T extends TabLike>(tabs: T[], tab: T, groupOf: (item: T) => string): T[] {
+  const key = groupOf(tab)
+  const next = [...tabs]
+  let last = -1
+  next.forEach((item, index) => {
+    if (groupOf(item) === key) last = index
+  })
+  if (last < 0) next.push(tab)
+  else next.splice(last + 1, 0, tab)
+  return next
+}
+
+/**
+ * Reorders a tab without ever splitting it from its repository group: a drag
+ * inside the group moves the tab, a drag past another group moves the whole
+ * family. Groups therefore stay contiguous in the tab strip.
+ */
+export function moveTabInGroups<T extends TabLike>(
+  tabs: T[],
+  id: string,
+  index: number,
+  groupOf: (tab: T) => string
+): T[] {
+  const from = findTabIndex(tabs, id)
+  if (from < 0) return tabs
+  const groups = groupTabs(tabs, groupOf)
+  const groupIndex = groups.findIndex((group) => group.tabs.some((tab) => tab.id === id))
+  if (groupIndex < 0) return tabs
+  const group = groups[groupIndex]
+  const to = Math.max(0, Math.min(index, tabs.length - 1))
+  if (to >= group.start && to < group.start + group.tabs.length) {
+    return moveTabToIndex(tabs, id, to)
+  }
+
+  const rest = groups.filter((_, position) => position !== groupIndex)
+  const target = tabs[to]
+  const targetIndex = target
+    ? rest.findIndex((item) => item.tabs.some((tab) => tab.id === target.id))
+    : -1
+  const insertAt = targetIndex < 0 ? rest.length : from < to ? targetIndex + 1 : targetIndex
+  return [...rest.slice(0, insertAt), group, ...rest.slice(insertAt)].flatMap((item) => item.tabs)
+}
+
 /**
  * Fields a repository tab owns. The store keeps a flat mirror of these for the
  * active tab so views can keep their plain selectors; writes are copied back

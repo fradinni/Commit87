@@ -10,6 +10,7 @@ interface Call {
 const calls: Call[] = []
 let failOn: { channel: string; path?: string } | null = null
 let delay: { channel: string; path: string; ms: number } | null = null
+const commonDirs: Record<string, string> = {}
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 function payloadPath(payload: unknown): string | undefined {
@@ -24,6 +25,7 @@ function repoInfo(repoPath: string): RepoInfo {
     canonicalPath: repoPath,
     root: repoPath,
     gitDir: `${repoPath}/.git`,
+    commonDir: commonDirs[repoPath] ?? `${repoPath}/.git`,
     name: repoPath.split('/').pop() ?? repoPath,
     isBare: false,
     currentBranch: 'main',
@@ -129,11 +131,13 @@ const { useStore } = await import('../src/renderer/src/store')
 
 const A = '/tmp/commit87-tabs/alpha'
 const B = '/tmp/commit87-tabs/beta'
+const WT = '/tmp/commit87-tabs/alpha-feature'
 
 function reset(): void {
   calls.length = 0
   failOn = null
   delay = null
+  for (const key of Object.keys(commonDirs)) delete commonDirs[key]
   useStore.getState().closeAllTabs()
   useStore.setState({ config, toasts: [], task: null, tasks: {}, consoleOpen: false })
 }
@@ -220,6 +224,63 @@ describe('repository tabs', () => {
     expect(useStore.getState().activeTabId).toBe(A)
     useStore.getState().moveTab(A, 1)
     expect(useStore.getState().tabs.map((tab) => tab.id)).toEqual([B, A])
+  })
+
+  it('keeps a repository and its worktrees adjacent in the tab strip', async () => {
+    commonDirs[WT] = `${A}/.git`
+    await useStore.getState().openRepo(A)
+    await useStore.getState().openRepo(B)
+    await useStore.getState().openRepo(WT)
+    expect(useStore.getState().tabs.map((tab) => tab.id)).toEqual([A, WT, B])
+  })
+
+  it('reorders whole repository groups together', async () => {
+    commonDirs[WT] = `${A}/.git`
+    await useStore.getState().openRepo(A)
+    await useStore.getState().openRepo(WT)
+    await useStore.getState().openRepo(B)
+    useStore.getState().moveTab(B, 0)
+    expect(useStore.getState().tabs.map((tab) => tab.id)).toEqual([B, A, WT])
+  })
+
+  it('shows the launchpad without closing open tabs', async () => {
+    await useStore.getState().openRepo(A)
+    await useStore.getState().openRepo(B)
+    useStore.getState().showLaunchpad()
+    let state = useStore.getState()
+    expect(state.tabs.map((tab) => tab.id)).toEqual([A, B])
+    expect(state.activeTabId).toBeNull()
+    expect(state.currentRepo).toBeNull()
+    expect(state.status).toBeNull()
+
+    useStore.getState().activateTab(B)
+    state = useStore.getState()
+    expect(state.currentRepo?.path).toBe(B)
+    expect(state.status?.branch).toBe('main-beta')
+  })
+
+  it('closes an inactive tab from the launchpad without discarding the rest', async () => {
+    await useStore.getState().openRepo(A)
+    await useStore.getState().openRepo(B)
+    useStore.getState().showLaunchpad()
+    useStore.getState().closeTab(A)
+    const state = useStore.getState()
+    expect(state.tabs.map((tab) => tab.id)).toEqual([B])
+    expect(state.activeTabId).toBeNull()
+    expect(state.currentRepo).toBeNull()
+  })
+
+  it('does not let a slow open override the launchpad', async () => {
+    await useStore.getState().openRepo(A)
+    delay = { channel: 'git.log', path: B, ms: 40 }
+    const opening = useStore.getState().openRepo(B)
+    await sleep(5)
+    useStore.getState().showLaunchpad()
+    await opening
+    const state = useStore.getState()
+    expect(state.tabs.map((tab) => tab.id)).toEqual([A, B])
+    expect(state.activeTabId).toBeNull()
+    expect(state.currentRepo).toBeNull()
   })
 
   it('surfaces a failed open without leaving a tab behind', async () => {

@@ -195,6 +195,8 @@ export interface RepoInfo {
   canonicalPath: string
   root: string
   gitDir: string
+  /** Shared Git directory; identical for a repository and all its linked worktrees. */
+  commonDir: string
   name: string
   isBare: boolean
   currentBranch: string | null
