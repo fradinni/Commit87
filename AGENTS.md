@@ -26,6 +26,37 @@ Packaging: `npm run icons`, `npm run pack:dir`, `npm run build:linux|win|mac`,
 matching hosts or CI (`.github/workflows/`). `npm run version:sync [x.y.z]` updates all
 version files from `package.json`.
 
+## Working in parallel
+
+- Before starting a feature or code change, look for slices that can be done at the same
+  time (main/git, IPC and shared types, renderer views, tests, docs) and hand each one to
+  its own agent when that saves real time. Pin down the shared contract first, then let
+  the agents build against it so their work meets in the middle.
+- For analysis, split by question rather than sending one broad sweep: one focused agent
+  per subsystem, file cluster, or behaviour, each asked for a specific answer, and you
+  reconcile the findings and check them before acting.
+- Do not fan out when it costs more than it saves: sequential steps, a file several agents
+  would edit at once, or unclear requirements are yours to do in order. Treat anything an
+  agent reports the same way you would treat your own draft — verify it.
+
+## Changing code
+
+- Never consider a change finished on your own say-so. Have it reviewed independently
+  (a fresh pass with no memory of your reasoning: a second agent, a reviewer, or a
+  deliberate adversarial read), then fix every real issue it finds before moving on.
+- Run the gates after the fixes: `npm run typecheck`, the focused test file(s) for what
+  you touched, then `npm test`. Green typecheck and tests are the minimum bar, not proof
+  that the behaviour is right.
+- If the change touches or could affect the UI (components, views, store, styles, IPC the
+  renderer renders, menu, window chrome), validate it in the real app: `npm run dev`,
+  drive the window, exercise the changed flow plus its empty and error states, and look at
+  the result. A passing test or a compiled bundle is not a UI test.
+- Keep `README.md` and `docs/` in step with the code in the same change: commands, IPC
+  methods, settings, user-facing behaviour, packaging steps, screenshots. If a change
+  makes a documented statement wrong, correct it now rather than leaving a follow-up.
+- Say what was reviewed, what was found and fixed, and what you actually exercised in the
+  UI. If a check could not be run, name it and the reason instead of implying it passed.
+
 ## Style
 
 - TypeScript only, `strict` with `noUnusedLocals`/`noUnusedParameters`; never introduce
