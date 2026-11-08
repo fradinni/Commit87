@@ -145,3 +145,109 @@ export function defaultWorktreePath(
   const name = worktreeDirectoryName(pathBaseName(mainWorktreePath), branch)
   return joinPath(parent, name, platform)
 }
+
+export type RefSectionId = 'local' | 'remote' | 'worktrees' | 'stashes' | 'tags'
+
+/** Bottom stack order, top to bottom. Keep in step with the section order in RefsPanel. */
+export const BOTTOM_REF_SECTIONS: RefSectionId[] = ['remote', 'worktrees', 'stashes', 'tags']
+
+/** Mirrored by `.refs-section` in app.css. */
+export const REF_SECTION_HEADER_HEIGHT = 33
+/** Mirrored by `.refs-section.is-bottom.is-expanded` in app.css. */
+export const REF_SECTION_MIN_HEIGHT = 76
+/** Mirrored by `.refs-section.is-top.is-expanded` in app.css. */
+export const REF_LOCAL_MIN_HEIGHT = 96
+
+/**
+ * Vertical space the expanded bottom panes may use: the panel body minus Local
+ * (a minimum when it has rows and is expanded, its header otherwise) and the
+ * header of every bottom section that is not an expanded pane.
+ */
+export function refSectionBudget(
+  bodyHeight: number,
+  localExpanded: boolean,
+  headerOnlyBottom: number
+): number {
+  const local = localExpanded ? REF_LOCAL_MIN_HEIGHT : REF_SECTION_HEADER_HEIGHT
+  const available = bodyHeight - local - headerOnlyBottom * REF_SECTION_HEADER_HEIGHT
+  return Math.max(REF_SECTION_MIN_HEIGHT, available)
+}
+
+export interface RefSectionSizing {
+  /** Stored heights; absent entries fall back to `fallback`. */
+  heights: Partial<Record<RefSectionId, number>>
+  /** Expanded bottom sections, in display order. */
+  open: RefSectionId[]
+  /** Section whose splitter is being dragged. */
+  resized: RefSectionId
+  requested: number
+  /** Pixels shared by the bottom sections. */
+  budget: number
+  minimum: number
+  fallback: number
+}
+
+/**
+ * Fits stored heights into the budget after the panel or the open set changes:
+ * open panes without a height start at `fallback`, and overflow is shaved
+ * proportionally from everyone's spare room without going below `minimum`.
+ */
+export function fitRefSections(
+  heights: Partial<Record<RefSectionId, number>>,
+  open: RefSectionId[],
+  budget: number,
+  minimum: number,
+  fallback: number
+): Partial<Record<RefSectionId, number>> {
+  const next: Partial<Record<RefSectionId, number>> = { ...heights }
+  for (const id of open) next[id] = heights[id] ?? fallback
+  const total = open.reduce((sum, id) => sum + (next[id] ?? 0), 0)
+  const overflow = total - budget
+  if (overflow <= 0 || open.length === 0) return next
+
+  const spare = open.reduce((sum, id) => sum + Math.max(0, (next[id] ?? 0) - minimum), 0)
+  if (spare <= 0) return next
+  const take = Math.min(overflow, spare)
+  for (const id of open) {
+    const room = Math.max(0, (next[id] ?? 0) - minimum)
+    next[id] = (next[id] ?? 0) - Math.min(room, Math.round((room / spare) * take))
+  }
+  const left = open.reduce((sum, id) => sum + (next[id] ?? 0), 0) - budget
+  if (left > 0) {
+    const largest = open.reduce((best, id) => ((next[id] ?? 0) > (next[best] ?? 0) ? id : best), open[0])
+    next[largest] = Math.max(minimum, (next[largest] ?? 0) - left)
+  }
+  return next
+}
+
+/**
+ * Height of every bottom section after moving one splitter. The resized section
+ * is clamped so the others can stay at their minimum, then any overflow left by
+ * their stored heights is taken from them in proportion to their spare room.
+ * That keeps a drag one pixel per pixel instead of fighting flex-shrink.
+ */
+export function sizeRefSections(input: RefSectionSizing): Partial<Record<RefSectionId, number>> {
+  const { heights, open, resized, requested, budget, minimum, fallback } = input
+  const next: Partial<Record<RefSectionId, number>> = { ...heights }
+  for (const id of open) next[id] = heights[id] ?? fallback
+  const others = open.filter((id) => id !== resized)
+  const maximum = Math.max(minimum, budget - others.length * minimum)
+  next[resized] = Math.min(Math.max(minimum, Math.round(requested)), maximum)
+
+  const total = open.reduce((sum, id) => sum + (next[id] ?? 0), 0)
+  const overflow = total - budget
+  if (overflow > 0 && others.length > 0) {
+    const spare = others.reduce((sum, id) => sum + Math.max(0, (next[id] ?? 0) - minimum), 0)
+    if (spare > 0) {
+      const take = Math.min(overflow, spare)
+      for (const id of others) {
+        const room = Math.max(0, (next[id] ?? 0) - minimum)
+        const share = Math.min(room, Math.round((room / spare) * take))
+        next[id] = (next[id] ?? 0) - share
+      }
+      const left = open.reduce((sum, id) => sum + (next[id] ?? 0), 0) - budget
+      if (left > 0) next[resized] = Math.max(minimum, (next[resized] ?? 0) - left)
+    }
+  }
+  return next
+}

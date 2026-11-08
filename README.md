@@ -73,7 +73,11 @@ trust.**
   opens that worktree instead of failing the checkout, worktree rows show whether they are
   open and how many files are modified, and right-click exposes the same actions as the
   full pages (create worktree, merge, rebase, rename, delete, lock, prune, tag push/delete,
-  stash apply/pop/drop, copy, show in graph).
+  stash apply/pop/drop, copy, show in graph). Sections are resizable panes: Local grows
+  from the top and takes whatever height is left, the rest sit at the bottom, and each
+  expanded bottom section with rows can be resized by dragging the splitter above its
+  header. Collapsing Local hands its height to the first expanded section below, so the
+  stack closes up instead of leaving a gap when one is open.
 - Local and remote branches with upstream and ahead/behind counts
 - Checkout, create, rename, delete (with optional remote delete), set upstream
 - Merge (`--no-ff`, `--ff-only`, squash) and rebase onto any branch

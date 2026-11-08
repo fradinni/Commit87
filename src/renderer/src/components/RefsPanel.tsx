@@ -1,5 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+  ReactNode
+} from 'react'
 import {
   ArrowDown,
   ArrowUp,
@@ -35,19 +40,24 @@ import { activeIdentity, useStore } from '../store'
 import { call } from '../lib/ipc'
 import { repoPathKey } from '../lib/tabs'
 import {
+  REF_SECTION_MIN_HEIGHT,
   defaultWorktreePath,
   findWorktreeForBranch,
+  fitRefSections,
   groupLocalBranches,
   groupRemoteBranches,
   linkedWorktrees,
   localNameForRemote,
   matchesQuery,
   pathBaseName,
-  remoteNameOf
+  refSectionBudget,
+  remoteNameOf,
+  sizeRefSections
 } from '../lib/refs'
+import type { RefSectionId } from '../lib/refs'
 import { IconButton, Modal, Select, TextInput, Button, ConfirmDialog, Field } from './ui'
 
-type SectionId = 'local' | 'remote' | 'worktrees' | 'stashes' | 'tags'
+type SectionId = RefSectionId
 type RowKind = 'branch' | 'remote' | 'worktree' | 'stash' | 'tag' | 'detached'
 
 interface PanelRow {
@@ -116,6 +126,15 @@ interface BranchDraft {
 }
 
 /**
+ * The refs body is a stack of panes: Local grows from the top, the remaining
+ * sections keep a stored height and sit against the bottom edge. Every expanded
+ * bottom pane can be resized by dragging the splitter above its header.
+ */
+const DEFAULT_SECTION_HEIGHT = 168
+const MIN_SECTION_HEIGHT = REF_SECTION_MIN_HEIGHT
+const SECTION_RESIZE_STEP = 24
+
+/**
  * A compact, keyboard-first ref browser that lives inside the sidebar. It is a
  * switching surface, not a replacement for the Branches and Worktrees pages:
  * the same validated IPC calls are used and the full pages remain the place for
@@ -161,6 +180,9 @@ export function RefsPanel() {
   const [worktreeStatuses, setWorktreeStatuses] = useState<WorktreeStatus[]>([])
   const [statusNonce, setStatusNonce] = useState(0)
   const [menu, setMenu] = useState<MenuState | null>(null)
+  const [sectionHeights, setSectionHeights] = useState<Partial<Record<SectionId, number>>>({})
+  const [bodyHeight, setBodyHeight] = useState(0)
+  const [resizingSection, setResizingSection] = useState<SectionId | null>(null)
 
   const [worktreeDraft, setWorktreeDraft] = useState<WorktreeDraft | null>(null)
   const [branchDraft, setBranchDraft] = useState<BranchDraft | null>(null)
@@ -184,6 +206,13 @@ export function RefsPanel() {
 
   const filterRef = useRef<HTMLInputElement>(null)
   const activeRowRef = useRef<HTMLButtonElement>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const resizeRef = useRef<{
+    id: SectionId
+    startY: number
+    startHeight: number
+    heights: Partial<Record<SectionId, number>>
+  } | null>(null)
   const worktreeSignature = worktrees.map((worktree) => `${worktree.path}:${worktree.head ?? ''}`).join('|')
 
   useEffect(() => {
@@ -223,6 +252,27 @@ export function RefsPanel() {
       cancelled = true
     }
   }, [repoPath, worktreeSignature, statusNonce])
+
+  // The pane budget depends on the panel height; measure before paint so the
+  // first frame does not fit every pane to the minimum.
+  useLayoutEffect(() => {
+    const body = bodyRef.current
+    if (!body) return undefined
+    const measure = (): void => setBodyHeight(body.clientHeight)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(body)
+    return () => observer.disconnect()
+  }, [repoPath])
+
+  // A resize cannot survive the splitters unmounting, otherwise a later hover
+  // over a remounted splitter would keep resizing without a pressed button.
+  useEffect(
+    () => () => {
+      resizeRef.current = null
+    },
+    []
+  )
 
   const run = useCallback(
     async (task: () => Promise<void>, success?: string): Promise<void> => {
@@ -738,6 +788,13 @@ export function RefsPanel() {
   ])
 
   const filtering = Boolean(query.trim())
+
+  useEffect(() => {
+    if (!filtering) return
+    resizeRef.current = null
+    setResizingSection(null)
+  }, [filtering])
+
   const visibleRows = useMemo(() => {
     const rows: PanelRow[] = []
     for (const section of sections) {
@@ -791,6 +848,121 @@ export function RefsPanel() {
       else next.add(key)
       return next
     })
+  }
+
+  const bottomSections = sections.slice(1)
+  const openBottomSections = (): SectionId[] =>
+    bottomSections
+      .filter((section) => section.count > 0 && !collapsedSections.has(section.id))
+      .map((section) => section.id)
+  const headerOnlyBottom = (): number =>
+    bottomSections.filter((section) => section.count === 0 || collapsedSections.has(section.id)).length
+  const localIsPane = (): boolean =>
+    !collapsedSections.has('local') && (sections[0]?.count ?? 0) > 0
+  const sectionBudget = (): number => {
+    const height = bodyHeight || bodyRef.current?.clientHeight || 0
+    return refSectionBudget(height, localIsPane(), headerOnlyBottom())
+  }
+
+  /**
+   * Preferred sizes fitted into the current budget. `sectionHeights` keeps the
+   * user's choice, so growing the panel or closing a pane restores it instead of
+   * leaving everything at the last compressed size.
+   */
+  const fittedHeights = (): Partial<Record<SectionId, number>> => {
+    const height = bodyHeight || bodyRef.current?.clientHeight || 0
+    // Before the panel has been measured, keep the preferred sizes rather than
+    // fitting everything to the budget floor.
+    if (!height) return { ...sectionHeights }
+    return fitRefSections(
+      sectionHeights,
+      openBottomSections(),
+      sectionBudget(),
+      MIN_SECTION_HEIGHT,
+      DEFAULT_SECTION_HEIGHT
+    )
+  }
+
+  /**
+   * Heights the panes render at. A collapsed Local cannot grow into the height
+   * it frees, so the first expanded section below takes that space and expands
+   * upward; this is display-only and never becomes a preferred size.
+   */
+  const displayedHeights = (): Partial<Record<SectionId, number>> => {
+    const displayed = fittedHeights()
+    const open = openBottomSections()
+    if (!localIsPane() && open.length > 0) {
+      const used = open.reduce((sum, id) => sum + (displayed[id] ?? 0), 0)
+      const leftover = Math.max(0, sectionBudget() - used)
+      displayed[open[0]] = (displayed[open[0]] ?? 0) + leftover
+    }
+    return displayed
+  }
+
+  /** How far a pane can grow before the local section and every other pane hit their minimum. */
+  const maxSectionHeight = (id: SectionId): number => {
+    const others = openBottomSections().filter((sectionId) => sectionId !== id).length
+    const maximum = sectionBudget() - others * MIN_SECTION_HEIGHT
+    return Math.max(MIN_SECTION_HEIGHT, Math.round(maximum))
+  }
+
+  const applySectionHeight = (
+    id: SectionId,
+    height: number,
+    base: Partial<Record<SectionId, number>> = fittedHeights()
+  ): void => {
+    setSectionHeights(
+      sizeRefSections({
+        heights: base,
+        open: openBottomSections(),
+        resized: id,
+        requested: height,
+        budget: sectionBudget(),
+        minimum: MIN_SECTION_HEIGHT,
+        fallback: DEFAULT_SECTION_HEIGHT
+      })
+    )
+  }
+
+  const startResize = (event: ReactPointerEvent<HTMLDivElement>, id: SectionId): void => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    // preventDefault suppresses the focus a tabIndex element would get, but the
+    // arrow keys should keep working after a click on the handle.
+    event.currentTarget.focus({ preventScroll: true })
+    event.currentTarget.setPointerCapture(event.pointerId)
+    const base = fittedHeights()
+    resizeRef.current = {
+      id,
+      startY: event.clientY,
+      startHeight: displayedHeights()[id] ?? DEFAULT_SECTION_HEIGHT,
+      heights: base
+    }
+    setResizingSection(id)
+  }
+
+  const moveResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    const active = resizeRef.current
+    if (!active || event.buttons === 0) return
+    // Dragging the divider upward grows the pane below it; every move is measured
+    // from the drag start so returning the pointer restores the layout.
+    applySectionHeight(active.id, active.startHeight + (active.startY - event.clientY), active.heights)
+  }
+
+  const finishResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (!resizeRef.current) return
+    resizeRef.current = null
+    setResizingSection(null)
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
+  const nudgeSectionHeight = (event: ReactKeyboardEvent<HTMLDivElement>, id: SectionId): void => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+    event.preventDefault()
+    const delta = event.key === 'ArrowUp' ? SECTION_RESIZE_STEP : -SECTION_RESIZE_STEP
+    applySectionHeight(id, (displayedHeights()[id] ?? DEFAULT_SECTION_HEIGHT) + delta)
   }
 
   const primaryAction = useCallback(
@@ -1345,7 +1517,149 @@ export function RefsPanel() {
   if (!repo) return null
 
   const allSectionsEmpty = sections.every((section) => section.count === 0)
+  const displayed = displayedHeights()
+  // While Local is collapsed, its freed space is given to this pane, so its own
+  // splitter would have nothing left to move.
+  const filler = localIsPane() ? undefined : openBottomSections()[0]
   let rowIndex = 0
+
+  const renderSection = (section: PanelSection, index: number): ReactNode => {
+    if (filtering && section.count === 0) return null
+    const sectionCollapsed = !filtering && collapsedSections.has(section.id)
+    const isTop = index === 0
+    const empty = section.count === 0
+    const isPane = !filtering && !isTop && !sectionCollapsed && !empty
+    const resizable = isPane && section.id !== filler
+    const className = [
+      'refs-section',
+      isTop ? 'is-top' : 'is-bottom',
+      sectionCollapsed ? 'is-collapsed' : 'is-expanded',
+      resizable ? 'is-resizable' : '',
+      empty ? 'is-empty' : ''
+    ]
+      .filter(Boolean)
+      .join(' ')
+    return (
+      <section
+        className={className}
+        key={section.id}
+        data-section={section.id}
+        style={isPane ? { flexBasis: `${displayed[section.id] ?? DEFAULT_SECTION_HEIGHT}px` } : undefined}
+      >
+        {resizable ? (
+          <div
+            className={`refs-splitter ${resizingSection === section.id ? 'is-resizing' : ''}`}
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label={`Resize ${section.label} section`}
+            aria-valuenow={Math.round(displayed[section.id] ?? DEFAULT_SECTION_HEIGHT)}
+            aria-valuemin={MIN_SECTION_HEIGHT}
+            aria-valuemax={Math.round(maxSectionHeight(section.id))}
+            tabIndex={0}
+            onPointerDown={(event) => startResize(event, section.id)}
+            onPointerMove={moveResize}
+            onPointerUp={finishResize}
+            onPointerCancel={finishResize}
+            onLostPointerCapture={finishResize}
+            onKeyDown={(event) => nudgeSectionHeight(event, section.id)}
+            onDoubleClick={() => applySectionHeight(section.id, DEFAULT_SECTION_HEIGHT)}
+          >
+            <span className="refs-splitter-grip" />
+          </div>
+        ) : null}
+        <div className="refs-section-head">
+          <button
+            className="refs-section-toggle"
+            aria-expanded={!sectionCollapsed}
+            onClick={() => toggleSection(section.id)}
+          >
+            {sectionCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+            <span>{section.label}</span>
+            <span className="refs-count">{section.count}</span>
+          </button>
+          <div className="refs-section-actions">{sectionAction(section)}</div>
+        </div>
+
+        {!sectionCollapsed && !empty ? (
+          <div className="refs-section-body">
+            {section.groups.map((group) => {
+              const groupCollapsed = !filtering && collapsedGroups.has(group.key)
+              return (
+                <div className="refs-group" key={group.key}>
+                  {group.label ? (
+                    <button
+                      className="refs-group-head"
+                      aria-expanded={!groupCollapsed}
+                      onClick={() => toggleGroup(group.key)}
+                    >
+                      {groupCollapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
+                      <span>{group.label}</span>
+                    </button>
+                  ) : null}
+                  {!groupCollapsed
+                    ? group.rows.map((row) => {
+                        const rowNumber = rowIndex
+                        rowIndex += 1
+                        const active = rowNumber === activeIndex
+                        return (
+                          <div
+                            className={`refs-row ${row.current ? 'is-current' : ''} ${active ? 'is-active' : ''}`}
+                            key={row.key}
+                            onContextMenu={(event) => openMenuAtEvent(event, row)}
+                          >
+                            <button
+                              ref={active ? activeRowRef : undefined}
+                              className="refs-row-main"
+                              title={`${row.title ?? row.label}\nDouble-click or press Enter to ${
+                                row.kind === 'branch' || row.kind === 'remote' || row.kind === 'worktree'
+                                  ? 'switch'
+                                  : 'open'
+                              }`}
+                              aria-current={row.current ? 'true' : undefined}
+                              onMouseMove={() => setActiveIndex(rowNumber)}
+                              onClick={() => setActiveIndex(rowNumber)}
+                              onDoubleClick={() => {
+                                setActiveIndex(rowNumber)
+                                primaryAction(row)
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault()
+                                  setActiveIndex(rowNumber)
+                                  primaryAction(row)
+                                  return
+                                }
+                                if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+                                  event.preventDefault()
+                                  const rect = event.currentTarget.getBoundingClientRect()
+                                  openMenu(row, rect.left + 12, rect.bottom + 2)
+                                }
+                              }}
+                            >
+                              <span className="refs-row-icon">{rowIcon(row)}</span>
+                              <span className="refs-row-label">{row.label}</span>
+                              {rowMeta(row)}
+                            </button>
+                            <IconButton
+                              label="Ref actions"
+                              className="refs-row-more"
+                              aria-haspopup="menu"
+                              onClick={(event) => openMenuFromButton(event, row)}
+                            >
+                              <MoreHorizontal size={14} />
+                            </IconButton>
+                          </div>
+                        )
+                      })
+                    : null}
+                </div>
+              )
+            })}
+          </div>
+        ) : null}
+      </section>
+    )
+  }
 
   return (
     <div className="refs-panel" role="tabpanel" aria-label="Repository refs">
@@ -1379,104 +1693,18 @@ export function RefsPanel() {
         </IconButton>
       </div>
 
-      <div className="refs-scroll">
+      <div className={`refs-body ${filtering ? 'is-filtering' : ''}`} ref={bodyRef}>
         {filtering && allSectionsEmpty ? <div className="refs-empty">No refs match “{query.trim()}”.</div> : null}
-        {sections.map((section) => {
-          if (filtering && section.count === 0) return null
-          const sectionCollapsed = !filtering && collapsedSections.has(section.id)
-          return (
-            <section className="refs-section" key={section.id}>
-              <div className="refs-section-head">
-                <button
-                  className="refs-section-toggle"
-                  aria-expanded={!sectionCollapsed}
-                  onClick={() => toggleSection(section.id)}
-                >
-                  {sectionCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-                  <span>{section.label}</span>
-                  <span className="refs-count">{section.count}</span>
-                </button>
-                <div className="refs-section-actions">{sectionAction(section)}</div>
-              </div>
-
-              {!sectionCollapsed
-                ? section.groups.map((group) => {
-                    const groupCollapsed = !filtering && collapsedGroups.has(group.key)
-                    return (
-                      <div className="refs-group" key={group.key}>
-                        {group.label ? (
-                          <button
-                            className="refs-group-head"
-                            aria-expanded={!groupCollapsed}
-                            onClick={() => toggleGroup(group.key)}
-                          >
-                            {groupCollapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
-                            <span>{group.label}</span>
-                          </button>
-                        ) : null}
-                        {!groupCollapsed
-                          ? group.rows.map((row) => {
-                              const index = rowIndex
-                              rowIndex += 1
-                              const active = index === activeIndex
-                              return (
-                                <div
-                                  className={`refs-row ${row.current ? 'is-current' : ''} ${active ? 'is-active' : ''}`}
-                                  key={row.key}
-                                  onContextMenu={(event) => openMenuAtEvent(event, row)}
-                                >
-                                  <button
-                                    ref={active ? activeRowRef : undefined}
-                                    className="refs-row-main"
-                                    title={`${row.title ?? row.label}\nDouble-click or press Enter to ${
-                                      row.kind === 'branch' || row.kind === 'remote' || row.kind === 'worktree'
-                                        ? 'switch'
-                                        : 'open'
-                                    }`}
-                                    aria-current={row.current ? 'true' : undefined}
-                                    onMouseMove={() => setActiveIndex(index)}
-                                    onClick={() => setActiveIndex(index)}
-                                    onDoubleClick={() => {
-                                      setActiveIndex(index)
-                                      primaryAction(row)
-                                    }}
-                                    onKeyDown={(event) => {
-                                      if (event.key === 'Enter' || event.key === ' ') {
-                                        event.preventDefault()
-                                        setActiveIndex(index)
-                                        primaryAction(row)
-                                        return
-                                      }
-                                      if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
-                                        event.preventDefault()
-                                        const rect = event.currentTarget.getBoundingClientRect()
-                                        openMenu(row, rect.left + 12, rect.bottom + 2)
-                                      }
-                                    }}
-                                  >
-                                    <span className="refs-row-icon">{rowIcon(row)}</span>
-                                    <span className="refs-row-label">{row.label}</span>
-                                    {rowMeta(row)}
-                                  </button>
-                                  <IconButton
-                                    label="Ref actions"
-                                    className="refs-row-more"
-                                    aria-haspopup="menu"
-                                    onClick={(event) => openMenuFromButton(event, row)}
-                                  >
-                                    <MoreHorizontal size={14} />
-                                  </IconButton>
-                                </div>
-                              )
-                            })
-                          : null}
-                      </div>
-                    )
-                  })
-                : null}
-            </section>
-          )
-        })}
+        {filtering ? (
+          sections.map(renderSection)
+        ) : (
+          <>
+            {sections[0] ? renderSection(sections[0], 0) : null}
+            <div className="refs-bottom">
+              {sections.slice(1).map((section, index) => renderSection(section, index + 1))}
+            </div>
+          </>
+        )}
       </div>
 
       <div className="refs-footer">

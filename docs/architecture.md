@@ -309,7 +309,14 @@ then `git switch -c pr-N <ref>` with the integration token used for the fetch.
   merge, rebase, rename, delete, lock, prune, tag push/delete, stash apply/pop/drop) through
   the same validated IPC calls as the full pages. Worktree rows show dirty counts from a
   batch `git.worktreeStatuses` read. The Branches, Worktrees, Stashes and Tags pages remain
-  the authoritative management surfaces; the panel links to them.
+  the authoritative management surfaces; the panel links to them. Expanded sections are
+  panes rather than one scrolling list: Local grows from the top, the other sections keep a
+  stored height against the bottom edge, and each bottom pane is resized by dragging (or
+  focusing and using the arrow keys on) the splitter above its header; Local takes the
+  remaining height. A section can be collapsed to its header, and a section with no rows
+  stays a header even when expanded. When a section below is expanded, collapsing Local
+  gives it that height so the panes close up instead of leaving a gap. While filtering,
+  the results share a single scroll area.
   New worktrees are created next to the main repository by default, or in the absolute
   `worktreeParent` preference set in Settings, and every dialog still accepts a one-off
   folder.

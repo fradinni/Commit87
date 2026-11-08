@@ -1144,15 +1144,105 @@ a {
   color: var(--text);
 }
 
-.refs-scroll {
+.refs-body {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Local grows from the top; the remaining panes are anchored to the bottom edge. */
+.refs-bottom {
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-top: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.refs-body.is-filtering {
+  display: block;
   overflow-y: auto;
   padding-bottom: 6px;
 }
 
 .refs-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 33px;
   border-top: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.refs-section.is-top {
+  flex: none;
+}
+
+.refs-section.is-top.is-expanded {
+  flex: 1 1 0;
+  /* Keep a couple of Local rows visible when the bottom panes need the room.
+     Mirrors REF_LOCAL_MIN_HEIGHT in lib/refs.ts. */
+  min-height: 96px;
+}
+
+.refs-section.is-bottom.is-expanded {
+  /* flex-basis is the stored, draggable height.
+     Mirrors REF_SECTION_MIN_HEIGHT in lib/refs.ts. */
+  flex: 0 1 auto;
+  min-height: 76px;
+}
+
+/* An empty section has no rows to show, so it stays a header even when expanded. */
+.refs-section.is-empty.is-expanded {
+  flex: none;
+  min-height: 33px;
+}
+
+.refs-section-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 6px;
+}
+
+.refs-body.is-filtering .refs-section {
+  min-height: 0;
+  overflow: visible;
+}
+
+.refs-body.is-filtering .refs-section-body {
+  overflow: visible;
+  padding-bottom: 0;
+}
+
+.refs-splitter {
+  position: relative;
+  flex: none;
+  height: 6px;
+  cursor: row-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.refs-splitter-grip {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 50%;
+  height: 2px;
+  margin-top: -1px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.refs-splitter:hover .refs-splitter-grip,
+.refs-splitter:focus-visible .refs-splitter-grip,
+.refs-splitter.is-resizing .refs-splitter-grip {
+  background: var(--accent);
 }
 
 .refs-section-head {

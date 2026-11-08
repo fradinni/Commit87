@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { RefInfo, WorktreeInfo } from '../src/shared/types'
 import {
+  BOTTOM_REF_SECTIONS,
   branchFolder,
   branchLeaf,
   defaultWorktreePath,
   findWorktreeForBranch,
+  fitRefSections,
   groupLocalBranches,
   groupRemoteBranches,
   linkedWorktrees,
@@ -12,7 +14,9 @@ import {
   matchesQuery,
   parentPath,
   pathBaseName,
+  refSectionBudget,
   remoteNameOf,
+  sizeRefSections,
   worktreeDirectoryName
 } from '../src/renderer/src/lib/refs'
 
@@ -137,5 +141,75 @@ describe('worktree helpers', () => {
       '/tmp/worktrees/app-bug-fix'
     )
     expect(defaultWorktreePath('/home/me/app', 'bug/fix', '', 'linux')).toBe('/home/me/app-bug-fix')
+  })
+})
+
+describe('refs panel sizing', () => {
+  const sizing = {
+    heights: {},
+    open: BOTTOM_REF_SECTIONS,
+    resized: 'remote' as const,
+    budget: 518,
+    minimum: 76,
+    fallback: 168
+  }
+  const total = (heights: Partial<Record<string, number>>): number =>
+    BOTTOM_REF_SECTIONS.reduce((sum, id) => sum + (heights[id] ?? 0), 0)
+
+  it('clamps a pane to the minimum and to the room the other panes leave', () => {
+    expect(sizeRefSections({ ...sizing, requested: 10 }).remote).toBe(76)
+    // Four open panes at 76px leave 518 - 3 * 76 for the dragged one.
+    expect(sizeRefSections({ ...sizing, requested: 1000 }).remote).toBe(290)
+  })
+
+  it('starts missing panes at the fallback and takes overflow from the others', () => {
+    const next = sizeRefSections({ ...sizing, requested: 196 })
+    expect(next.remote).toBe(196)
+    expect(next.worktrees).toBe(107)
+    expect(total(next)).toBeLessThanOrEqual(sizing.budget)
+  })
+
+  it('leaves the other panes alone when the dragged pane shrinks', () => {
+    const heights = { remote: 175, worktrees: 114, stashes: 114, tags: 114 }
+    const next = sizeRefSections({ ...sizing, heights, requested: 125 })
+    expect(next.remote).toBe(125)
+    expect(next.worktrees).toBe(114)
+    expect(next.stashes).toBe(114)
+    expect(next.tags).toBe(114)
+  })
+
+  it('never pushes another pane below its minimum while making room', () => {
+    const heights = { remote: 125, worktrees: 125, stashes: 125, tags: 125 }
+    const next = sizeRefSections({ ...sizing, heights, requested: 290 })
+    expect(next.remote).toBe(290)
+    for (const id of BOTTOM_REF_SECTIONS) expect(next[id] ?? 0).toBeGreaterThanOrEqual(sizing.minimum)
+    expect(total(next)).toBeLessThanOrEqual(sizing.budget)
+  })
+
+  it('restores the starting layout when a drag returns to where it began', () => {
+    const heights = { remote: 125, worktrees: 125, stashes: 125, tags: 125 }
+    const grown = sizeRefSections({ ...sizing, heights, requested: 176 })
+    expect(grown.worktrees).toBeLessThan(125)
+    const back = sizeRefSections({ ...sizing, heights, requested: 125 })
+    expect(back).toEqual(heights)
+  })
+
+  it('reserves collapsed headers and the local section in the budget', () => {
+    expect(refSectionBudget(500, true, 1)).toBe(500 - 96 - 33)
+    expect(refSectionBudget(500, false, 2)).toBe(500 - 33 - 66)
+    expect(refSectionBudget(100, true, 4)).toBe(76)
+  })
+
+  it('fits stored heights into a smaller budget and fills missing ones', () => {
+    const next = fitRefSections(
+      { remote: 168 },
+      BOTTOM_REF_SECTIONS,
+      400,
+      76,
+      168
+    )
+    expect(next.remote).toBeLessThanOrEqual(168)
+    for (const id of BOTTOM_REF_SECTIONS) expect(next[id] ?? 0).toBeGreaterThanOrEqual(76)
+    expect(total(next)).toBeLessThanOrEqual(400)
   })
 })
