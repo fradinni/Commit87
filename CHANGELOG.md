@@ -4,6 +4,28 @@ All notable changes to Commit87 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.3] — 2026-11-08
+
+### Fixed
+
+- Recent repositories now survive restarts. Opening a repository writes the profile
+  immediately, concurrent profile writes are serialised, a failed write is reported without
+  blocking the open, and an unreadable or corrupt `config.json` is kept aside instead of
+  being overwritten with defaults.
+- Linked worktrees are only added to the recent repositories when the OS opens them as a
+  standalone repository (file browser, deep link or second instance). Opening one from its
+  parent's worktree list, its tab strip or the command palette no longer adds it or reorders
+  the list.
+- Task completion is announced after its exit bookkeeping lands, so a freshly cloned
+  repository appears in the launchpad without another refresh.
+
+### Added
+
+- Folder launches: `file://` URLs from Linux file managers and macOS `open-file` events
+  resolve to the repository. Linux packages advertise `inode/directory` and refresh the
+  desktop database on install and removal, and rpm pre-release versions are packaged with
+  the prerelease part in `Release`.
+
 ## [0.2.0-beta.2] — 2026-11-08
 
 ### Added
