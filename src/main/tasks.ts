@@ -87,19 +87,29 @@ export class TaskManager {
         fullOutput += `${buffer}\n`
         send({ taskId, kind: spec.kind, phase: 'output', text: buffer, stream: 'stdout' })
       }
-      if (code !== 0) {
-        send({
-          taskId,
-          kind: spec.kind,
-          phase: 'error',
-          exitCode: code ?? undefined,
-          error: spec.kind === 'console' ? 'Command failed' : `${spec.title} failed (exit code ${code ?? 'unknown'})`,
-          text: fullOutput.slice(-4000)
-        })
-      } else {
-        send({ taskId, kind: spec.kind, phase: 'end', exitCode: 0, text: fullOutput.slice(-4000) })
-      }
-      void spec.onExit?.(code, fullOutput)
+      void (async () => {
+        // Post-run bookkeeping (such as recording a clone in the recent list)
+        // must land before the completion event, so the renderer does not
+        // refresh lists that are not written yet.
+        try {
+          await spec.onExit?.(code, fullOutput)
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error)
+          console.warn(`[commit87] task bookkeeping failed after "${spec.title}": ${detail}`)
+        }
+        if (code !== 0) {
+          send({
+            taskId,
+            kind: spec.kind,
+            phase: 'error',
+            exitCode: code ?? undefined,
+            error: spec.kind === 'console' ? 'Command failed' : `${spec.title} failed (exit code ${code ?? 'unknown'})`,
+            text: fullOutput.slice(-4000)
+          })
+        } else {
+          send({ taskId, kind: spec.kind, phase: 'end', exitCode: 0, text: fullOutput.slice(-4000) })
+        }
+      })()
     })
 
     if (spec.input !== undefined) child.stdin?.end(spec.input)

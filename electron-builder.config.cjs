@@ -87,10 +87,10 @@ module.exports = {
         Comment: 'Manage repositories, branches, worktrees, releases and pipelines',
         Keywords: 'git;scm;version control;repository;branch;worktree;',
         Categories: 'Development;RevisionControl;',
-        StartupWMClass: 'Commit87',
-        MimeType: 'x-scheme-handler/commit87;'
+        StartupWMClass: 'Commit87'
       }
-    }
+    },
+    mimeTypes: ['inode/directory']
   },
 
   deb: {

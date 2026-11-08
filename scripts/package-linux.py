@@ -64,7 +64,7 @@ Categories=Development;RevisionControl;
 Keywords=git;scm;version control;repository;branch;worktree;
 StartupWMClass=Commit87
 StartupNotify=true
-MimeType=x-scheme-handler/commit87;
+MimeType=x-scheme-handler/commit87;inode/directory;
 """
 
 WRAPPER = """#!/bin/sh
@@ -202,6 +202,11 @@ def build_deb(arch: str) -> pathlib.Path:
         "update-desktop-database -q /usr/share/applications || true\nexit 0\n"
     )
     (control / "DEBIAN" / "postinst").chmod(0o755)
+    (control / "DEBIAN" / "postrm").write_text(
+        "#!/bin/sh\nset -e\ncommand -v update-desktop-database >/dev/null 2>&1 && "
+        "update-desktop-database -q /usr/share/applications || true\nexit 0\n"
+    )
+    (control / "DEBIAN" / "postrm").chmod(0o755)
 
     data_tar = control / "data.tar.xz"
     with tarfile.open(data_tar, "w:xz", preset=6) as archive:
@@ -237,6 +242,10 @@ def build_deb(arch: str) -> pathlib.Path:
 
 
 def build_rpm(arch: str) -> pathlib.Path:
+    # RPM forbids '-' in Version, so a pre-release moves to Release.
+    rpm_core, _, rpm_pre = VERSION.partition("-")
+    rpm_release = "1" if not rpm_pre else "0.1." + rpm_pre.replace("-", ".")
+
     top = DIST / "rpmbuild"
     for sub in ("BUILD", "RPMS", "SOURCES", "SPECS", "SRPMS"):
         (top / sub).mkdir(parents=True, exist_ok=True)
@@ -274,8 +283,8 @@ def build_rpm(arch: str) -> pathlib.Path:
             parent = os.path.dirname(parent)
 
     spec = f"""Name:           {PKG_NAME}
-Version:        {VERSION}
-Release:        1%{{?dist}}
+Version:        {rpm_core}
+Release:        {rpm_release}%{{?dist}}
 Summary:        {SUMMARY}
 License:        {LICENSE}
 URL:            {HOMEPAGE}
@@ -298,8 +307,14 @@ cp -a {payload}/. %{{buildroot}}/
 {chr(10).join("%dir " + directory for directory in sorted(dirs))}
 {chr(10).join(files)}
 
+%post
+command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q /usr/share/applications || true
+
+%postun
+command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q /usr/share/applications || true
+
 %changelog
-* Wed Nov 04 2026 {MAINTAINER} - {VERSION}-1
+* Wed Nov 04 2026 {MAINTAINER} - {rpm_core}-{rpm_release}
 - Initial release
 """
     spec_path = top / "SPECS" / f"{PKG_NAME}.spec"

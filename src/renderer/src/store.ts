@@ -139,7 +139,7 @@ interface StoreState {
   loadRecent: () => Promise<void>
   removeRecent: (path: string) => Promise<void>
   pinRecent: (path: string, pinned: boolean) => Promise<void>
-  openRepo: (path: string) => Promise<void>
+  openRepo: (path: string, standalone?: boolean) => Promise<void>
   closeRepo: () => Promise<void>
   showLaunchpad: () => void
   activateTab: (id: string, cancelPending?: boolean) => void
@@ -387,16 +387,22 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
     set({ recent: await call('repo.pinRecent', { path, pinned }) })
   },
 
-  async openRepo(path) {
+  async openRepo(path, standalone = false) {
     const existing = tabForPath(get().tabs, path)
     if (existing) {
       get().activateTab(existing.id)
+      if (standalone) {
+        // The OS opened a repository that is already a tab: still let the main
+        // process record it (a linked worktree belongs in the recents here).
+        await call('repo.open', { path, standalone })
+        await get().loadRecent()
+      }
       return
     }
     const request = ++openSeq
     set({ repoLoading: true })
     try {
-      const repo = await call('repo.open', { path })
+      const repo = await call('repo.open', { path, standalone })
       const id = repoKey(repo)
       const opened = get().tabs.find((tab) => tab.id === id)
       if (opened) {

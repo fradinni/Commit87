@@ -242,6 +242,11 @@ explicit warning. Config lives in `app.getPath('userData')`:
 - macOS: `~/Library/Application Support/Commit87/…`
 - Windows: `%APPDATA%\Commit87\…`
 
+`recentRepos` in `config.json` follows the repository the user opened. A linked worktree
+is only added when the OS launched Commit87 with that folder (file browser, deep link or
+second instance); opening one from its parent's worktree list, its tab strip or the
+command palette does not add it.
+
 ## Providers
 
 Each provider implements `ProviderClient`:

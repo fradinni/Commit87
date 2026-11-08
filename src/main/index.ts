@@ -1,10 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { EventEmitter } from 'node:events'
-import { existsSync, statSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { IPC_INVOKE, IPC_MENU, IPC_TASK_EVENT, IPC_UPDATE_STATUS } from '@shared/ipc'
 import type { IpcChannel, IpcEnvelope } from '@shared/ipc'
 import { AppStore } from './store'
+import { parseLaunchTarget } from './launch'
 import { TaskManager } from './tasks'
 import { ProviderService } from './providers/service'
 import { Router } from './ipc/router'
@@ -38,68 +39,57 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 let mainWindow: BrowserWindow | null = null
-let pendingDeepLink: string | null = null
 let launchTarget: string | null = null
+/** True once the renderer has asked for its launch target and listens for open-path events. */
+let rendererBooted = false
+/** Recreates the window after macOS closed it; set when the app is ready. */
+let ensureMainWindow: (() => void) | null = null
 let resolveRouter!: (router: Router) => void
 /** Resolves as soon as config/tasks/providers are ready; IPC awaits it. */
 const routerReady = new Promise<Router>((resolve) => {
   resolveRouter = resolve
 })
 
-/** Accepts `commit87://open?path=…`, `commit87:///abs/path` and plain folder argv. */
-function parseLaunchTarget(argv: string[], cwd: string): string | null {
-  for (const raw of argv) {
-    if (!raw || raw.startsWith('-')) continue
-    if (raw.startsWith('commit87://')) {
-      try {
-        const url = new URL(raw)
-        const fromQuery = url.searchParams.get('path') || url.searchParams.get('repo')
-        if (fromQuery) return decodeURIComponent(fromQuery)
-        let pathname = decodeURIComponent(url.pathname)
-        if (pathname && pathname !== '/') {
-          if (/^\/[A-Za-z]:/.test(pathname)) pathname = pathname.slice(1)
-          return pathname
-        }
-      } catch {
-        // ignore malformed deep links
-      }
-      continue
-    }
-    if (!path.isAbsolute(raw)) continue
-    if (raw === app.getAppPath() || raw.endsWith('/out/main/index.js')) continue
-    try {
-      if (statSync(raw).isDirectory()) return raw
-    } catch {
-      // not an existing directory; ignore
-    }
-    void cwd
-  }
-  return null
+function deliverLaunch(raw: string): void {
+  const target = parseLaunchTarget([raw], app.getAppPath())
+  if (target) queueOrDeliver(target)
 }
 
-app.on('second-instance', (_event, argv, workingDirectory) => {
-  const target = parseLaunchTarget(argv, workingDirectory)
+/**
+ * A loaded window takes the path straight away. During boot or a reload the
+ * renderer has no listener yet, so it reads the queued target from
+ * `app.launchTarget` instead, and the window is reopened if it was closed.
+ * The queue holds one target: several folders opened before boot keep the last.
+ */
+function queueOrDeliver(target: string): void {
+  if (mainWindow && rendererBooted) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+    mainWindow.webContents.send(IPC_MENU, `open-path:${target}`)
+    return
+  }
+  launchTarget = target
+  if (!mainWindow) ensureMainWindow?.()
+}
+
+app.on('second-instance', (_event, argv, _workingDirectory) => {
+  const target = parseLaunchTarget(argv, app.getAppPath())
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.focus()
-    if (target) mainWindow.webContents.send(IPC_MENU, `open-path:${target}`)
-  } else if (target) {
-    pendingDeepLink = target
-    launchTarget = target
   }
+  if (target) queueOrDeliver(target)
 })
 
 app.on('open-url', (event, url) => {
   event.preventDefault()
-  const target = parseLaunchTarget([url], process.cwd())
-  if (!target) return
-  if (mainWindow) {
-    mainWindow.focus()
-    mainWindow.webContents.send(IPC_MENU, `open-path:${target}`)
-  } else {
-    pendingDeepLink = target
-    launchTarget = target
-  }
+  deliverLaunch(url)
+})
+
+// macOS delivers Finder "Open With", drag-onto-dock and `open -a` folders here.
+app.on('open-file', (event, filePath) => {
+  event.preventDefault()
+  deliverLaunch(filePath)
 })
 
 function registerIpc(): void {
@@ -145,20 +135,36 @@ app.whenReady().then(() => {
     return
   }
 
-  launchTarget = pendingDeepLink ?? parseLaunchTarget(process.argv.slice(1), process.cwd())
-  pendingDeepLink = null
+  launchTarget = launchTarget ?? parseLaunchTarget(process.argv.slice(1), app.getAppPath())
 
-  mainWindow = createMainWindow()
-  mainWindow.once('ready-to-show', () => {
-    traceBoot('main window ready')
-    dismissSplash()
-  })
-  mainWindow.webContents.on('did-fail-load', (_event, _code, _description, _url, isMainFrame) => {
-    if (isMainFrame) dismissSplash()
-  })
-  mainWindow.on('closed', () => {
-    mainWindow = null
-  })
+  const openMainWindow = (): void => {
+    if (mainWindow) return
+    const window = createMainWindow()
+    mainWindow = window
+    window.once('ready-to-show', () => {
+      traceBoot('main window ready')
+      dismissSplash()
+    })
+    window.webContents.on('did-start-loading', () => {
+      rendererBooted = false
+    })
+    window.webContents.on('render-process-gone', () => {
+      rendererBooted = false
+    })
+    window.webContents.on('did-fail-load', (_event, _code, _description, _url, isMainFrame) => {
+      if (!isMainFrame) return
+      rendererBooted = false
+      dismissSplash()
+    })
+    window.on('closed', () => {
+      if (mainWindow === window) mainWindow = null
+      rendererBooted = false
+      // A target queued for a window that is gone must not reopen minutes later.
+      launchTarget = null
+    })
+  }
+  ensureMainWindow = openMainWindow
+  openMainWindow()
 
   void initialize().catch((error) => {
     dismissSplash()
@@ -212,6 +218,7 @@ app.whenReady().then(() => {
     const router = new Router(store, tasks, providers, updates, () => mainWindow, () => {
       const target = launchTarget
       launchTarget = null
+      rendererBooted = true
       return target
     })
 
@@ -229,11 +236,5 @@ app.on('window-all-closed', () => {
 })
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    if (pendingDeepLink && !launchTarget) {
-      launchTarget = pendingDeepLink
-      pendingDeepLink = null
-    }
-    mainWindow = createMainWindow()
-  }
+  ensureMainWindow?.()
 })

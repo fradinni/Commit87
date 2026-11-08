@@ -38,6 +38,17 @@ const DEFAULT_CONFIG: AppConfig = {
   autoUpdateCheck: true
 }
 
+/** A copy safe to mutate: the default arrays and objects must never be shared. */
+function createDefaultConfig(): AppConfig {
+  return {
+    ...DEFAULT_CONFIG,
+    identities: [],
+    integrations: [],
+    repoDefaults: {},
+    recentRepos: []
+  }
+}
+
 /** App name used before the Commit87 rename; profiles were stored under it. */
 const LEGACY_APP_NAME = 'GitGrove'
 const PROFILE_FILES = ['config.json', 'secrets.json'] as const
@@ -78,11 +89,12 @@ async function migrateLegacyProfile(dir: string): Promise<void> {
 }
 
 export class AppStore {
-  private config: AppConfig = { ...DEFAULT_CONFIG }
+  private config: AppConfig = createDefaultConfig()
   private secrets: SecretsFile = { version: 1, encrypted: false, tokens: {} }
   private loaded = false
   private configPath = ''
   private secretsPath = ''
+  private writeQueues = new Map<string, Promise<void>>()
 
   async init(): Promise<void> {
     const dir = app.getPath('userData')
@@ -340,7 +352,7 @@ export class AppStore {
   // -------------------------------------------------------------------------
   // Repositories
 
-  addRecentRepo(repoPath: string, name: string): RecentRepo[] {
+  async addRecentRepo(repoPath: string, name: string): Promise<RecentRepo[]> {
     const now = Date.now()
     const existing = this.config.recentRepos.find((repo) => repoKey(repo.path) === repoKey(repoPath))
     if (existing) {
@@ -352,6 +364,7 @@ export class AppStore {
     this.config.recentRepos = this.config.recentRepos
       .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.lastOpenedAt - a.lastOpenedAt)
       .slice(0, 40)
+    await this.saveConfig()
     return this.getConfig().recentRepos
   }
 
@@ -464,7 +477,7 @@ export class AppStore {
       const raw = await fs.readFile(this.configPath, 'utf8')
       const parsed = JSON.parse(raw) as Partial<AppConfig>
       this.config = {
-        ...DEFAULT_CONFIG,
+        ...createDefaultConfig(),
         ...parsed,
         schemaVersion: 1,
         identities: Array.isArray(parsed.identities) ? parsed.identities : [],
@@ -472,9 +485,26 @@ export class AppStore {
         repoDefaults: parsed.repoDefaults && typeof parsed.repoDefaults === 'object' ? parsed.repoDefaults : {},
         recentRepos: Array.isArray(parsed.recentRepos) ? parsed.recentRepos : []
       }
-    } catch {
-      this.config = { ...DEFAULT_CONFIG }
-      await this.saveConfig()
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        this.config = createDefaultConfig()
+        await this.saveConfig()
+        return
+      }
+      // Keep a profile we could not read or parse for recovery instead of
+      // silently overwriting it. Rename rather than copy: it needs no read
+      // permission on the file itself, so even an unreadable profile is kept.
+      const backup = `${this.configPath}.corrupt-${Date.now()}`
+      const kept = await fs.rename(this.configPath, backup).then(
+        () => true,
+        () => false
+      )
+      const note = kept ? ` (copy kept at ${backup})` : ' (left in place)'
+      console.warn(`[commit87] could not read ${this.configPath}: ${detail}${note}`)
+      this.config = createDefaultConfig()
+      // Never replace a profile that could not be set aside.
+      if (kept) await this.saveConfig()
     }
   }
 
@@ -490,14 +520,28 @@ export class AppStore {
     }
   }
 
-  private async saveConfig(): Promise<void> {
+  private saveConfig(): Promise<void> {
     const data = JSON.stringify(this.config, null, 2)
-    await atomicWrite(this.configPath, data, 0o600)
+    return this.enqueueWrite(this.configPath, data, 0o600)
   }
 
-  private async saveSecrets(): Promise<void> {
+  private saveSecrets(): Promise<void> {
     const data = JSON.stringify(this.secrets, null, 2)
-    await atomicWrite(this.secretsPath, data, 0o600)
+    return this.enqueueWrite(this.secretsPath, data, 0o600)
+  }
+
+  /**
+   * Serialise writes per file. Several callers can persist the same file at
+   * once (opening tabs, task completion, integrations) and the atomic writer
+   * reuses one temporary file per target, so overlapping writes would rename
+   * each other's file away. A failed write still rejects for its caller
+   * without blocking the next one.
+   */
+  private enqueueWrite(target: string, data: string, mode: number): Promise<void> {
+    const previous = this.writeQueues.get(target) ?? Promise.resolve()
+    const write = previous.then(() => atomicWrite(target, data, mode))
+    this.writeQueues.set(target, write.catch(() => undefined))
+    return write
   }
 }
 

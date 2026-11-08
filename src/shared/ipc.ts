@@ -84,7 +84,7 @@ export interface IpcMethods {
   'integration.test': { request: { id: string }; response: IntegrationTestResult }
 
   'repo.recent': { request: void; response: RecentRepo[] }
-  'repo.open': { request: { path: string }; response: RepoInfo }
+  'repo.open': { request: { path: string; standalone?: boolean }; response: RepoInfo }
   'repo.info': { request: { path: string }; response: RepoInfo }
   'repo.removeRecent': { request: { path: string }; response: RecentRepo[] }
   'repo.pinRecent': { request: { path: string; pinned: boolean }; response: RecentRepo[] }

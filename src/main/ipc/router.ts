@@ -7,6 +7,7 @@ import type { AppConfig, CloneInput, GitIdentity, IntegrationAccount, ProviderId
 import { PROVIDERS } from '@shared/types'
 import type { IpcChannel } from '@shared/ipc'
 import { AppStore } from '../store'
+import { rememberRecentRepo } from '../recent'
 import { TaskManager, validateConsoleCommand } from '../tasks'
 import { buildAuthArgs, buildIdentityEnv, detectGit, runGit } from '../git/runner'
 import * as repoOps from '../git/repo'
@@ -208,7 +209,8 @@ export class Router {
         return this.store.getConfig().recentRepos
       case 'repo.open': {
         const info = await repoOps.resolveRepo(requireString(data.path, 'Repository path'))
-        this.store.addRecentRepo(info.path, info.name)
+        const standalone = typeof data.standalone === 'boolean' ? data.standalone : false
+        await rememberRecentRepo(this.store, info, { standalone })
         return info
       }
       case 'repo.info':
@@ -250,7 +252,7 @@ export class Router {
           await runGit(['config', '--local', 'user.email', identity.email], { cwd: target })
         }
         const info = await repoOps.resolveRepo(target)
-        this.store.addRecentRepo(info.path, info.name)
+        await rememberRecentRepo(this.store, info)
         return info
       }
 
@@ -851,7 +853,7 @@ export class Router {
         if (code !== 0) return
         try {
           const info = await repoOps.resolveRepo(target)
-          this.store.addRecentRepo(info.path, info.name)
+          await rememberRecentRepo(this.store, info)
           if (input.identityId) {
             await this.store.setRepoDefaults(info.path, {
               identityId: input.identityId,

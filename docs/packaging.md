@@ -77,7 +77,9 @@ All Linux packages install the app to `/opt/Commit87`, add `/usr/bin/commit87`,
 `/usr/share/applications/commit87.desktop`, hicolor icons from 16 to 1024 px, and the
 license. The wrapper is a one-line `exec /opt/Commit87/commit87 "$@"`, which keeps
 `argv[0]` and working-directory behaviour predictable for deep links and file-manager
-integration.
+integration. The desktop entry registers `x-scheme-handler/commit87` and
+`inode/directory`, so "Open With Commit87" is offered for folders; the file manager passes
+a `file://` URL, which the launcher accepts alongside plain folder arguments.
 
 Dependencies:
 
@@ -93,9 +95,10 @@ Dependencies:
 cannot start, so this script builds the three container formats directly:
 
 - **deb**: `ar` archive with `debian-binary`, `control.tar.xz` (control, md5sums,
-  postinst) and `data.tar.xz`
-- **rpm**: a generated spec (`AutoReqProv: no`, explicit `Requires:`) built with
-  `rpmbuild -bb` and `w9.xzdio` compression
+  postinst/postrm refreshing the desktop database) and `data.tar.xz`
+- **rpm**: a generated spec (`AutoReqProv: no`, explicit `Requires:`, pre-release versions
+  moved from `Version` to `Release`, post-install/removal desktop database refresh) built
+  with `rpmbuild -bb` and `w9.xzdio` compression
 - **pacman**: `.PKGINFO` + `.INSTALL` + a `zstd`-compressed tar
 
 Deterministic timestamps come from `SOURCE_DATE_EPOCH` (default `1762300000`) so repeated

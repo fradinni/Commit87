@@ -69,7 +69,9 @@ export function App() {
       .then(async () => {
         const target = await call('app.launchTarget', undefined).catch(() => null)
         if (target) {
-          await useStore.getState().openRepo(target).catch((error) => useStore.getState().notifyError(errorMessage(error)))
+          // Launched by the OS (file browser, deep link): a linked worktree is
+          // a standalone repository here and belongs in the recents.
+          await useStore.getState().openRepo(target, true).catch((error) => useStore.getState().notifyError(errorMessage(error)))
         }
       })
       .finally(() => setBootComplete(true))
@@ -89,7 +91,8 @@ export function App() {
     })
     const unsubscribeMenu = window.commit87.onMenu((action) => {
       if (action.startsWith('open-path:')) {
-        void useStore.getState().openRepo(action.slice('open-path:'.length)).catch((error) => useStore.getState().notifyError(error))
+        // Second instance or an open-url: the OS opened this path directly.
+        void useStore.getState().openRepo(action.slice('open-path:'.length), true).catch((error) => useStore.getState().notifyError(error))
         return
       }
       switch (action) {

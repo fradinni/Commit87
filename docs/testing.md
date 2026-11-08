@@ -14,8 +14,11 @@ npm run typecheck        # strict TS across main, preload, renderer
 | `tests/parsers.test.ts` | porcelain v2 status (including renames, unmerged, initial/detached), log, branches, tags, remotes, worktrees, stashes, submodule status/config, numstat, blame, scoped config |
 | `tests/remote.test.ts` | remote URL parsing (scp, `ssh://` with port, nested groups, Bitbucket Server `scm/`), provider detection, account host matching (including strict credential hosts), web/base URL normalisation |
 | `tests/tabs.test.ts` | repository tab close/cycle/reorder semantics, cross-platform path keys, and active-tab patch mirroring |
-| `tests/repo-store.test.ts` | zustand store with a stubbed preload bridge: open/activate/close tabs, per-tab isolation, failed opens, task completion and console routing by repository, sidebar navigate/refs mode |
-| `tests/task-events.test.ts` | streaming task events carry the originating `repoPath` for every phase, and omit it for repository-less tasks |
+| `tests/repo-store.test.ts` | zustand store with a stubbed preload bridge: open/activate/close tabs, per-tab isolation, failed opens, task completion and console routing by repository, OS/standalone open forwarding, sidebar navigate/refs mode |
+| `tests/task-events.test.ts` | streaming task events carry the originating `repoPath` for every phase, omit it for repository-less tasks, and wait for exit bookkeeping before announcing completion |
+| `tests/app-store.test.ts` | profile store persistence and recovery: recent repositories survive a restart, writes are serialised, a failed write recovers, default config is not shared between instances, and an unreadable/corrupt profile is kept aside |
+| `tests/recent.test.ts` | recents policy: regular checkouts are recorded, linked worktrees only when the OS opened them standalone, and a failed write is logged instead of failing the open |
+| `tests/launch.test.ts` | OS launch parsing: plain folder argv, `file://` URLs from the Linux file manager, `commit87://` deep links, and rejection of files, flags, relative paths and the app itself |
 | `tests/credentials.test.ts` | identity environment, SSH command quoting, credential-helper argv safety, secret redaction |
 | `tests/ui-logic.test.ts` | unified diff parser (adds/deletes/renames/binary), commit graph lane layout, console tokenizer and allow-list |
 | `tests/refs.test.ts` | refs panel helpers: local/remote folder grouping, current-first ordering, worktree lookup (main checkout excluded from linked worktrees), query matching, cross-platform sibling paths and configured worktree parents |
@@ -24,7 +27,7 @@ npm run typecheck        # strict TS across main, preload, renderer
 | `tests/git.integration.test.ts` | real `git` end-to-end: init, status, staged diff, commit with identity, branch create/checkout/merge, annotated tags, worktree add/remove and worktree status snapshots (including a deleted folder reported as unavailable), stash push/apply |
 | `tests/submodule.integration.test.ts` | real `git` end-to-end: add, status/config join, dirty detection and forced clean reset (including nested submodules), checkout drift and update, deinit/reinit, tracked-branch update, URL sync, remove (working tree, module dir, `.gitmodules`, config section), uncommitted-add removal and dirty refusal, linked-worktree isolation, orphan gitlinks, unstaged `.gitmodules` refusal and path validation |
 
-Total: 223 tests. The integration suites create temporary repositories under
+Total: 255 tests. The integration suites create temporary repositories under
 `os.tmpdir()` and remove them afterwards; they require `git` on `PATH`.
 
 ## What is asserted, not just executed

@@ -10,4 +10,4 @@ Categories=Development;RevisionControl;
 Keywords=git;scm;version control;repository;branch;worktree;
 StartupWMClass=Commit87
 StartupNotify=true
-MimeType=x-scheme-handler/commit87;
+MimeType=x-scheme-handler/commit87;inode/directory;

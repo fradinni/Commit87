@@ -162,6 +162,32 @@ describe('repository tabs', () => {
     expect(calls.map((entry) => entry.channel)).not.toContain('git.log')
   })
 
+  it('tells the main process when the OS opened the repository directly', async () => {
+    await useStore.getState().openRepo(A, true)
+
+    const opened = calls.find((entry) => entry.channel === 'repo.open')
+    expect(opened?.payload).toEqual({ path: A, standalone: true })
+  })
+
+  it('opens repositories from inside the app without the standalone flag', async () => {
+    await useStore.getState().openRepo(A)
+
+    const opened = calls.find((entry) => entry.channel === 'repo.open')
+    expect(opened?.payload).toEqual({ path: A, standalone: false })
+  })
+
+  it('still records an OS open when the repository already has a tab', async () => {
+    await useStore.getState().openRepo(A)
+    calls.length = 0
+
+    await useStore.getState().openRepo(A, true)
+
+    const opened = calls.find((entry) => entry.channel === 'repo.open')
+    expect(opened?.payload).toEqual({ path: A, standalone: true })
+    expect(calls.map((entry) => entry.channel)).toContain('repo.recent')
+    expect(useStore.getState().tabs).toHaveLength(1)
+  })
+
   it('keeps independent state per tab and restores it on switch', async () => {
     await useStore.getState().openRepo(A)
     useStore.getState().setView('files')
