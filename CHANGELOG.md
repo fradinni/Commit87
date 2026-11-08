@@ -4,6 +4,17 @@ All notable changes to Commit87 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.2] — 2026-11-08
+
+### Added
+
+- Resizable sections in the refs panel: Local grows from the top and the other sections keep
+  a stored height against the bottom edge. Drag the splitter above an expanded section (or
+  focus it and use the arrow keys; double-click resets) and the size survives collapsing,
+  resizing the panel and reopening it. Collapsing Local hands its height to the first
+  expanded section below so the stack closes up, sections without rows stay header-only,
+  and filtering keeps a single scroll area.
+
 ## [0.2.0-beta.1] — 2026-11-06
 
 ### Added
