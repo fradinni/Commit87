@@ -18,7 +18,7 @@ function isLaunchFolder(target: string): boolean {
 function urlPath(value: string): string | null {
   try {
     const decoded = decodeURIComponent(value)
-    return /^\/[A-Za-z]:/.test(decoded) ? decoded.slice(1) : decoded
+    return path.normalize(/^\/[A-Za-z]:/.test(decoded) ? decoded.slice(1) : decoded)
   } catch {
     return null
   }
@@ -46,7 +46,7 @@ export function parseLaunchTarget(argv: string[], appPath: string): string | nul
         if (fromQuery) {
           // Already decoded by searchParams. Let repo.open report a missing
           // folder instead of ignoring a shared link without a word.
-          if (path.isAbsolute(fromQuery) && fromQuery !== '/') return fromQuery
+          if (path.isAbsolute(fromQuery) && fromQuery !== '/') return path.normalize(fromQuery)
           continue
         }
         const target = urlPath(url.pathname)

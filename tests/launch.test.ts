@@ -44,7 +44,8 @@ describe('parseLaunchTarget', () => {
 
   it('accepts deep links with a query and with a bare path', () => {
     expect(parseLaunchTarget([`commit87://open?path=${encodeURIComponent(folder)}`], appDir)).toBe(folder)
-    expect(parseLaunchTarget([`commit87://${folder}`], appDir)).toBe(folder)
+    const bare = process.platform === 'win32' ? `commit87:///${folder.replace(/\\/g, '/')}` : `commit87://${folder}`
+    expect(parseLaunchTarget([bare], appDir)).toBe(folder)
     expect(parseLaunchTarget([`Commit87://open?path=${encodeURIComponent(folder)}`], appDir)).toBe(folder)
   })
 
