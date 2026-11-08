@@ -58,8 +58,11 @@ describe('parseLaunchTarget', () => {
   })
 
   it('ignores files, missing folders, the app and the filesystem root', () => {
-    expect(parseLaunchTarget([file, missing, appDir, `${appDir}/`, '/'], appDir)).toBeNull()
-    expect(parseLaunchTarget(['commit87://open?path=%2F', 'commit87://', 'file:', 'file:///'], appDir)).toBeNull()
+    const roots = process.platform === 'win32' ? ['/', 'C:\\'] : ['/']
+    expect(parseLaunchTarget([file, missing, appDir, `${appDir}/`, ...roots], appDir)).toBeNull()
+    const deepLinks = ['commit87://open?path=%2F', 'commit87://', 'file:', 'file:///']
+    if (process.platform === 'win32') deepLinks.push('file:///C:/', 'commit87://open?path=C%3A%5C')
+    expect(parseLaunchTarget(deepLinks, appDir)).toBeNull()
   })
 
   it('ignores relative paths and malformed URLs', () => {

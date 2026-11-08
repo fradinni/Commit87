@@ -9,9 +9,14 @@ function isDirectory(target: string): boolean {
   }
 }
 
-/** An absolute, existing folder that is not the filesystem root. */
+/** An absolute path that is not a filesystem root (`/`, `C:\`, a UNC share). */
+function isLaunchPath(target: string): boolean {
+  return path.isAbsolute(target) && path.parse(target).root !== target
+}
+
+/** A launchable folder: an absolute, existing, non-root directory. */
 function isLaunchFolder(target: string): boolean {
-  return path.isAbsolute(target) && target !== '/' && isDirectory(target)
+  return isLaunchPath(target) && isDirectory(target)
 }
 
 /** URL paths are percent-encoded and may carry a leading slash before a drive letter. */
@@ -46,7 +51,7 @@ export function parseLaunchTarget(argv: string[], appPath: string): string | nul
         if (fromQuery) {
           // Already decoded by searchParams. Let repo.open report a missing
           // folder instead of ignoring a shared link without a word.
-          if (path.isAbsolute(fromQuery) && fromQuery !== '/') return path.normalize(fromQuery)
+          if (isLaunchPath(fromQuery)) return path.normalize(fromQuery)
           continue
         }
         const target = urlPath(url.pathname)
@@ -58,7 +63,7 @@ export function parseLaunchTarget(argv: string[], appPath: string): string | nul
     }
     if (!path.isAbsolute(raw)) continue
     if (path.resolve(raw) === path.resolve(appPath)) continue
-    if (isLaunchFolder(raw)) return raw
+    if (isLaunchFolder(raw)) return path.normalize(raw)
   }
   return null
 }
