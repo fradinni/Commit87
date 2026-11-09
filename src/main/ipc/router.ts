@@ -457,7 +457,7 @@ export class Router {
         const ctx = await this.repoAuth(requireString(data.path, 'Repository path'), asOptionalString(data.identityId, 'Identity id'))
         return repoOps.cherryPick(
           requireString(data.path, 'Repository path'),
-          requireString(data.sha, 'Commit'),
+          repoOps.validateCommitShas(data.shas),
           { identity: ctx.identity }
         )
       }
@@ -465,7 +465,7 @@ export class Router {
         const ctx = await this.repoAuth(requireString(data.path, 'Repository path'), asOptionalString(data.identityId, 'Identity id'))
         return repoOps.revertCommit(
           requireString(data.path, 'Repository path'),
-          requireString(data.sha, 'Commit'),
+          repoOps.validateCommitShas(data.shas),
           { identity: ctx.identity }
         )
       }

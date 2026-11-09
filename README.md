@@ -50,8 +50,8 @@ trust.**
 | --- | --- |
 | Repositories | Open, clone (HTTPS/SSH, shallow, bare), init, recent list with pinning |
 | Repository tabs | Keep several repositories open at once, each with its own view, selection, status and console; drag to reorder, middle-click to close |
-| Commit graph | Lane layout, refs and tags, search, branch filter, load more, commit details |
-| History actions | Branch here, tag here, cherry-pick, revert, reset (soft/mixed/hard), detached checkout |
+| Commit graph | Lane layout, refs and tags, search, branch filter, load more, commit details, Ctrl/Cmd and Shift multi-select, right-click actions |
+| History actions | Branch here, tag here, detached checkout and reset for one commit; cherry-pick and revert for one commit or a selection |
 | Staging | Staged / modified / untracked / conflicted groups, per-file stage, discard with undo |
 | Commits | Amend, sign-off, `--allow-empty`, identity override per commit, Ctrl/Cmd+Enter |
 | Code browsing | Worktree and `HEAD` file tree, syntax highlighting, blame, open in OS editor |
@@ -60,6 +60,15 @@ trust.**
 ![Commit graph](docs/screenshots/commit-graph.png)
 ![Repository tabs](docs/screenshots/repository-tabs.png)
 ![Staging](docs/screenshots/staging.png)
+
+In the commit graph, click a commit to select it, `Ctrl/Cmd`-click to toggle individual
+commits, and `Shift`-click (or `Shift`+`↑`/`↓`) to select a range from the last anchor.
+Right-click the selection for its actions: for one commit, copy the SHA or subject, open it
+on the forge, check it out detached, create a branch or tag here, cherry-pick or revert
+it, or reset the current branch; for any selection, copy all SHAs, cherry-pick or revert
+the selected commits, select all loaded commits, or clear the selection. Bulk cherry-pick
+replays oldest first; bulk revert rewrites newest first. Merge commits are excluded from
+cherry-pick and revert because Git needs an explicit parent.
 
 ### Branches, worktrees and refs
 

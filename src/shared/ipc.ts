@@ -124,8 +124,8 @@ export interface IpcMethods {
   'git.rebase': { request: { path: string; onto: string; identityId?: string }; response: { output: string } }
   'git.rebasePlan': { request: { repoPath: string; onto: string }; response: RebasePlan }
   'git.rebaseInteractive': { request: RebasePlanInput; response: RebaseResult }
-  'git.cherryPick': { request: { path: string; sha: string; identityId?: string }; response: { output: string } }
-  'git.revert': { request: { path: string; sha: string; identityId?: string }; response: { output: string } }
+  'git.cherryPick': { request: { path: string; shas: string[]; identityId?: string }; response: { output: string; exitCode: number } }
+  'git.revert': { request: { path: string; shas: string[]; identityId?: string }; response: { output: string; exitCode: number } }
   'git.reset': { request: ResetInput; response: void }
   'git.abortOperation': { request: { path: string }; response: void }
   'git.continueOperation': { request: { path: string; identityId?: string }; response: { output: string } }

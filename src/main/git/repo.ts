@@ -820,16 +820,35 @@ export async function rebaseBranch(repoPath: string, onto: string, ctx: GitAuthC
   return { output: result.stdout + result.stderr }
 }
 
-export async function cherryPick(repoPath: string, sha: string, ctx: GitAuthContext): Promise<{ output: string }> {
-  const { args, env } = contextArgs(ctx)
-  const result = await runGit([...args, 'cherry-pick', sha], { cwd: repoPath, env, allowFailure: true })
-  return { output: result.stdout + result.stderr }
+/**
+ * Validate the commit list crossing the IPC boundary. Only abbreviated or full
+ * hexadecimal object names are accepted, so a value can never be read as a git
+ * option, and duplicates are collapsed before the sequencer runs.
+ */
+export function validateCommitShas(value: unknown): string[] {
+  if (!Array.isArray(value) || !value.length) throw new Error('Select at least one commit')
+  if (value.length > 5000) throw new Error('Too many commits selected')
+  const shas = value.map((item) => {
+    if (typeof item !== 'string' || !/^[0-9a-f]{4,64}$/i.test(item)) {
+      throw new Error(`Invalid commit: ${typeof item === 'string' ? item : 'value'}`)
+    }
+    return item
+  })
+  return [...new Set(shas)]
 }
 
-export async function revertCommit(repoPath: string, sha: string, ctx: GitAuthContext): Promise<{ output: string }> {
+export async function cherryPick(repoPath: string, shas: string[], ctx: GitAuthContext): Promise<{ output: string; exitCode: number }> {
   const { args, env } = contextArgs(ctx)
-  const result = await runGit([...args, 'revert', '--no-edit', sha], { cwd: repoPath, env, allowFailure: true })
-  return { output: result.stdout + result.stderr }
+  const commits = validateCommitShas(shas)
+  const result = await runGit([...args, 'cherry-pick', ...commits], { cwd: repoPath, env, allowFailure: true })
+  return { output: result.stdout + result.stderr, exitCode: result.exitCode }
+}
+
+export async function revertCommit(repoPath: string, shas: string[], ctx: GitAuthContext): Promise<{ output: string; exitCode: number }> {
+  const { args, env } = contextArgs(ctx)
+  const commits = validateCommitShas(shas)
+  const result = await runGit([...args, 'revert', '--no-edit', ...commits], { cwd: repoPath, env, allowFailure: true })
+  return { output: result.stdout + result.stderr, exitCode: result.exitCode }
 }
 
 export async function resetTo(repoPath: string, commit: string, mode: ResetInput['mode']): Promise<void> {

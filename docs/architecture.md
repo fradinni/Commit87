@@ -288,9 +288,10 @@ then `git switch -c pr-N <ref>` with the integration token used for the fetch.
 
 - **State**: a single zustand store holding `tabs: RepoTab[]` plus `activeTabId`. Each tab
   owns the repository info, identity/forge defaults, status, collections (commits,
-  branches, tags, worktrees, stashes, submodules, pulls), commit selection, commit-graph
-  search/branch filters and git console output. The store mirrors the active tab's fields
-  at the top level so views keep plain selectors; every write to a mirrored field is copied
+  branches, tags, worktrees, stashes, submodules, pulls), the active commit and the selected
+  commit set, commit-graph search/branch filters and git console output. The store mirrors
+  the active tab's fields at the top level so views keep plain selectors; every write to a
+  mirrored field is copied
   back into the owning tab record first, and switching tabs hydrates the mirror from the
   target record. Global state (config, toasts, sidebar/palette/dialogs) stays outside the
   tab record. Views remount on a tab switch, so component-local dialog state cannot leak
@@ -345,7 +346,16 @@ then `git switch -c pr-N <ref>` with the integration token used for the fetch.
 - **Diff renderer**: parses unified diffs into files/hunks/lines with old/new line numbers,
   caps rendering at 6 000 lines, and renders untracked files as highlighted code.
 - **Graph renderer**: lane assignment with merge/fork edges as SVG cubic curves, one color
-  per lane, 36 px rows, virtualizable if history grows.
+  per lane, 32 px rows, virtualizable if history grows. Click replaces the selection,
+  Ctrl/Cmd-click toggles one commit, Shift-click selects an inclusive range from the anchor,
+  and the arrow keys move or extend the selection. A right-click on any row selects it when
+  it was outside the current selection, then opens the actions for the selection: for one
+  commit, copy SHA/subject, open on forge, detached checkout, branch/tag here and reset;
+  for any selection, copy all SHAs, cherry-pick, revert, select-all and clear. Cherry-pick
+  replays selected commits oldest first and revert newest first; merge commits are disabled
+  for both because Git requires a mainline parent. `git.cherryPick` and `git.revert` take a
+  validated list of SHAs and return the exit code so a conflict is reported as an error and
+  the status bar offers Continue/Skip/Abort.
 - **Theme**: dark and light palettes driven by CSS variables; `system` follows
   `prefers-color-scheme`.
 - **Accessibility**: native buttons, `aria-label` on icon buttons, focus-visible outlines,
