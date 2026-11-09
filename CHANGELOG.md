@@ -4,6 +4,17 @@ All notable changes to Commit87 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.4] — 2026-11-09
+
+### Fixed
+
+- macOS builds no longer report "the application is damaged" on Apple Silicon. Patching
+  Electron's fuses invalidated the ad-hoc signature on the patched binaries, and without a
+  Developer ID certificate electron-builder skipped re-signing, so macOS killed the app at
+  launch with `SIGKILL (Code Signature Invalid)`. The bundle is now re-signed ad-hoc right
+  after the fuse patch (and Developer ID signed when a certificate is configured), and CI
+  verifies the signature of every produced macOS bundle.
+
 ## [0.2.0-beta.3] — 2026-11-08
 
 ### Fixed
