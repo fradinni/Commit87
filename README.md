@@ -193,7 +193,8 @@ the host binaries.
 Download the installer (`.exe` for x64/arm64, `.dmg` for Intel or Apple Silicon) from the release
 page. Portable builds need no installation: the Windows portable `.exe` and the macOS
 `.zip` run in place. macOS builds are signed and notarized when the release secrets are
-configured.
+configured; otherwise they are ad-hoc signed, which macOS accepts but Gatekeeper blocks with
+a prompt (System Settings > Privacy & Security > Open Anyway to launch).
 
 > macOS packages are built on `macos-15` (Apple Silicon). Both architectures are
 > produced there: arm64 natively and Intel x64 cross-packaged, so no Intel runner is

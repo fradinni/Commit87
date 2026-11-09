@@ -183,10 +183,40 @@ still run but show a SmartScreen warning.
 - `.dmg` with a `/Applications` symlink and a `.zip` for tooling.
 - `hardenedRuntime: true`, entitlements in `build/entitlements.mac.plist` (JIT,
   unsigned executable memory, network client, user-selected files, Apple events).
+  These take effect when electron-builder signs with a Developer ID; ad-hoc fallback
+  builds are intentionally plain ad-hoc.
 - Notarization uses `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID`.
 - Both architectures are packaged on `macos-15`: arm64 natively and Intel x64
   cross-built, because the Intel `macos-13` image is retired. They share
   `latest-mac.yml`, so the release workflow builds them in one invocation.
+
+### Code signing and why unsigned builds must still be signed
+
+Flipping the `electronFuses` options patches Electron's binaries, which invalidates the
+ad-hoc signature the linker stamped on them at build time. When no Apple Developer ID
+certificate is available (`MAC_CERT_P12` / `MAC_CERT_PASSWORD` unset), electron-builder
+skips signing entirely and would leave the app with a broken signature. On Apple Silicon
+macOS the kernel enforces signature validity and kills such an app at launch with
+`SIGKILL (Code Signature Invalid)`, surfaced to the user as "the application is damaged".
+
+Two safeguards prevent that state from ever shipping:
+
+- `electronFuses.resetAdHocDarwinSignature: true` makes `@electron/fuses` re-sign the app
+  bundle ad-hoc right after the fuse patch, so the binaries always carry a valid
+  signature. When a Developer ID certificate IS configured, electron-builder's own
+  signing runs afterwards and replaces the ad-hoc signature, so the hardened, notarized
+  path is unchanged.
+- The CI `package-macos` job and the release workflow verify every produced `.app` with
+  `codesign --verify --deep --strict` and fail the job when the signature is invalid.
+
+Consequences for users:
+
+- With signing secrets configured: a signed, notarized `.dmg`/`.zip` that Gatekeeper
+  accepts directly.
+- Without them: an ad-hoc signed build that runs (it no longer reports "damaged") but is
+  blocked by Gatekeeper on first launch. On macOS 15+ the bypass is System Settings >
+  Privacy & Security > Open Anyway (Apple removed the Control-click > Open shortcut); a
+  fully clean experience requires configuring the secrets above and re-running the release.
 
 ## Icons
 

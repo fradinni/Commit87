@@ -111,6 +111,26 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      # Unsigned macOS builds are only usable if the fuse-patched binaries were
+      # re-signed (electronFuses.resetAdHocDarwinSignature). Fail here instead of
+      # shipping artifacts that macOS rejects as damaged.
+      - name: Verify macOS code signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apps=(dist/mac*/Commit87.app)
+          if ((${#apps[@]} == 0)); then
+            echo "::error::No macOS app bundle found under dist/mac*"
+            exit 1
+          fi
+          for app in "${apps[@]}"; do
+            echo "Verifying $app..."
+            codesign --verify --deep --strict --verbose=1 "$app" || {
+              echo "::error::$app has an invalid code signature; macOS would report the app as damaged."
+              exit 1
+            }
+          done
       - uses: actions/upload-artifact@v7
         with:
           name: macos-x64-arm64
