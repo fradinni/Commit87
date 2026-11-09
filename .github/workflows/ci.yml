@@ -44,6 +44,18 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Cache Electron and packaging toolsets
+        # electron-builder downloads the Electron runtime and its toolsets from
+        # GitHub releases on every cold run. Keeping the cache makes repeat builds
+        # independent of that network path; the lockfile hash refreshes the cache
+        # for a dependency change while restore-keys keeps the previous entries.
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/electron-builder
+          key: ${{ runner.os }}-electron-builder-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-builder-
       - run: npm ci
       - run: npm run build
       - name: Install Linux packaging tools
@@ -51,7 +63,8 @@ jobs:
         # pacman .MTREE index with bsdtar, which Ubuntu does not include by default.
         run: sudo apt-get update && sudo apt-get install -y fakeroot rpm libarchive-tools
       - name: Build AppImage, deb, rpm, pacman and tar.gz for x64 and arm64
-        run: npx electron-builder --config electron-builder.config.cjs --linux --x64 --arm64 --publish never
+        # The wrapper retries transient download failures (5xx, resets) with backoff.
+        run: node scripts/build-packages.mts --config electron-builder.config.cjs --linux --x64 --arm64 --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v7
@@ -76,10 +89,18 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Cache Electron and packaging toolsets
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/AppData/Local/electron-builder/Cache
+          key: ${{ runner.os }}-electron-builder-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-builder-
       - run: npm ci
       - run: npm run build
       - name: Build NSIS, portable and zip for x64 and arm64
-        run: npx electron-builder --config electron-builder.config.cjs --win --x64 --arm64 --publish never
+        run: node scripts/build-packages.mts --config electron-builder.config.cjs --win --x64 --arm64 --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v7
@@ -104,10 +125,18 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Cache Electron and packaging toolsets
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/Library/Caches/electron-builder
+          key: ${{ runner.os }}-electron-builder-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-builder-
       - run: npm ci
       - run: npm run build
       - name: Build dmg and zip for x64 and arm64
-        run: npx electron-builder --config electron-builder.config.cjs --mac --x64 --arm64 --publish never
+        run: node scripts/build-packages.mts --config electron-builder.config.cjs --mac --x64 --arm64 --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'

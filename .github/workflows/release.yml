@@ -65,10 +65,14 @@ jobs:
             arch: x64
             archArgs: --x64
             runner: ubuntu-24.04
+            electronCache: |
+              ~/.cache/electron-builder
           - target: linux
             arch: arm64
             archArgs: --arm64
             runner: ubuntu-24.04-arm
+            electronCache: |
+              ~/.cache/electron-builder
           # Both Windows architectures share latest.yml, so build them in one
           # invocation: separate jobs would overwrite each other's metadata and
           # leave one architecture pointing at the other installer.
@@ -76,6 +80,8 @@ jobs:
             arch: x64+arm64
             archArgs: --x64 --arm64
             runner: windows-2022
+            electronCache: |
+              ~/AppData/Local/electron-builder/Cache
           # Both macOS architectures share latest-mac.yml, so build them in one
           # invocation. macos-13 (the last Intel image) is retiring, so x64 is
           # cross-packaged on the Apple Silicon runner instead.
@@ -83,6 +89,8 @@ jobs:
             arch: x64+arm64
             archArgs: --x64 --arm64
             runner: macos-15
+            electronCache: |
+              ~/Library/Caches/electron-builder
     runs-on: ${{ matrix.runner }}
     env:
       # Only -beta.N tags use the beta feed. Any other prerelease identifier
@@ -95,6 +103,14 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Cache Electron and packaging toolsets
+        uses: actions/cache@v6
+        with:
+          path: ${{ matrix.electronCache }}
+          key: ${{ runner.os }}-electron-builder-${{ matrix.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-builder-${{ matrix.arch }}-
+            ${{ runner.os }}-electron-builder-
       - name: Validate release channel
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
@@ -137,7 +153,10 @@ jobs:
             export WIN_CSC_LINK="$SIGN_WIN_CERT"
             export WIN_CSC_KEY_PASSWORD="$SIGN_WIN_CERT_PASSWORD"
           fi
-          npx electron-builder --config electron-builder.config.cjs --${{ matrix.target }} ${{ matrix.archArgs }} --publish always
+          # scripts/build-packages.mts runs electron-builder and retries transient
+          # download failures (5xx, resets) with backoff, so a short GitHub
+          # incident does not fail a release whose code is already verified.
+          node scripts/build-packages.mts --config electron-builder.config.cjs --${{ matrix.target }} ${{ matrix.archArgs }} --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SIGN_MAC_CERT: ${{ matrix.target == 'mac' && secrets.MAC_CERT_P12 || '' }}

@@ -48,6 +48,28 @@ points at the GitHub repository. The app's updater reads that file from the pack
 `electron-updater` is bundled into `out/main` by `electron-vite`, so the ASAR still ships
 without `node_modules`.
 
+## Build reliability
+
+Packaging downloads the Electron runtime and electron-builder's toolsets from GitHub
+releases. Those requests occasionally answer 5xx or drop the connection, which fails an
+otherwise healthy build. CI handles that in two ways:
+
+- The `package-*` jobs in `.github/workflows/ci.yml` and every job in the release matrix
+  restore an `actions/cache` entry for electron-builder's download cache
+  (`~/.cache/electron-builder` on Linux, `~/Library/Caches/electron-builder` on macOS,
+  `~/AppData/Local/electron-builder/Cache` on Windows), keyed by the lockfile hash. It
+  holds the Electron runtime zips and the toolsets (7zip, fpm, AppImage, NSIS), so a
+  repeat build of the same dependency set needs no download at all.
+- `scripts/build-packages.mts` wraps `electron-builder` and reruns the packaging step when
+  it fails on a transport error (`Response code 5xx`, `ECONNRESET`, `ETIMEDOUT`,
+  `ENOTFOUND`, `socket hang up`, a checksum mismatch, …), with exponential backoff.
+  Configuration and build errors are not retried; they fail on the first attempt.
+  `npm run build:linux`, `build:win`, `build:mac`, `build:all` and `pack:dir` use it too.
+
+The defaults are four attempts waiting 20 s, 40 s and 80 s between them. Override them
+with `BUILD_PACKAGES_ATTEMPTS`, `BUILD_PACKAGES_RETRY_DELAY_MS` (first delay in ms) and
+`BUILD_PACKAGES_RETRY_MAX_DELAY_MS` (cap, default 120000).
+
 ## Linux packaging details
 
 Building the container formats with `electron-builder` needs host tools that are not
