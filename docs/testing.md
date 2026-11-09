@@ -26,6 +26,7 @@ npm run typecheck        # strict TS across main, preload, renderer
 | `tests/refs.test.ts` | refs panel helpers: local/remote folder grouping, current-first ordering, worktree lookup (main checkout excluded from linked worktrees), query matching, cross-platform sibling paths and configured worktree parents |
 | `tests/updates.test.ts` | update support per packaging format, progress clamping, channel and auto-check preferences, the check → available → download → ready state machine, error sanitization, concurrent checks, install gating and the automatic check timer |
 | `tests/providers.test.ts` | GitHub, GitLab, Bitbucket and Gitea mapping, auth headers, enterprise base paths, error messages, workflow dispatch payloads |
+| `tests/build-packages.test.ts` | packaging wrapper: transient network failures retried with backoff, fatal errors and child exit codes passed through, argument forwarding, attempt and delay configuration |
 | `tests/git.integration.test.ts` | real `git` end-to-end: init, status, staged diff, commit with identity, branch create/checkout/merge, annotated tags, worktree add/remove and worktree status snapshots (including a deleted folder reported as unavailable), stash push/apply |
 | `tests/history.integration.test.ts` | real `git` multi-commit history actions: cherry-pick replays several commits in order and reverting them newest first restores the tree |
 | `tests/submodule.integration.test.ts` | real `git` end-to-end: add, status/config join, dirty detection and forced clean reset (including nested submodules), checkout drift and update, deinit/reinit, tracked-branch update, URL sync, remove (working tree, module dir, `.gitmodules`, config section), uncommitted-add removal and dirty refusal, linked-worktree isolation, orphan gitlinks, unstaged `.gitmodules` refusal and path validation |
@@ -83,9 +84,9 @@ AppImage by extracting it and rewriting only its generated `app-update.yml`:
 
 ```bash
 npm run build
-npx electron-builder --config electron-builder.config.cjs --linux --x64 --dir
+node scripts/build-packages.mts --config electron-builder.config.cjs --linux --x64 --dir
 # or build a real AppImage:
-npx electron-builder --config electron-builder.config.cjs --linux --x64
+node scripts/build-packages.mts --config electron-builder.config.cjs --linux --x64
 
 node scripts/demo-updates.mjs prepare dist/Commit87-0.1.0-linux-x86_64.AppImage
 node scripts/demo-updates.mjs serve          # terminal 2
