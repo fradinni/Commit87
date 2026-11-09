@@ -170,6 +170,8 @@ export const REPO_TAB_KEYS = [
   'pulls',
   'view',
   'selectedCommit',
+  'selectedCommits',
+  'selectionAnchor',
   'graphQuery',
   'graphBranch',
   'consoleLines'

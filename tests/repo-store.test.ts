@@ -208,6 +208,26 @@ describe('repository tabs', () => {
     expect(useStore.getState().currentRepo?.path).toBe(A)
   })
 
+  it('keeps the commit selection per tab and restores it on switch', async () => {
+    await useStore.getState().openRepo(A)
+    useStore.getState().selectCommits(['aaa', 'bbb'], 'bbb', 'aaa')
+    expect(useStore.getState().selectedCommits).toEqual(['aaa', 'bbb'])
+    expect(useStore.getState().selectedCommit).toBe('bbb')
+    expect(useStore.getState().selectionAnchor).toBe('aaa')
+
+    await useStore.getState().openRepo(B)
+    expect(useStore.getState().selectedCommits).toEqual([])
+    expect(useStore.getState().selectedCommit).toBeNull()
+    expect(useStore.getState().selectionAnchor).toBeNull()
+
+    useStore.getState().activateTab(A)
+    expect(useStore.getState().selectedCommits).toEqual(['aaa', 'bbb'])
+    expect(useStore.getState().selectedCommit).toBe('bbb')
+    expect(useStore.getState().selectionAnchor).toBe('aaa')
+    expect(useStore.getState().tabs.find((tab) => tab.id === A)?.selectedCommits).toEqual(['aaa', 'bbb'])
+    expect(useStore.getState().tabs.find((tab) => tab.id === A)?.selectionAnchor).toBe('aaa')
+  })
+
   it('writes repository updates into the addressed tab only', async () => {
     await useStore.getState().openRepo(A)
     await useStore.getState().openRepo(B)

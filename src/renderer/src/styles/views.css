@@ -445,6 +445,7 @@
 
 .commit-rows {
   position: relative;
+  user-select: none;
 }
 
 .graph-svg {
@@ -467,6 +468,8 @@
   color: var(--text-dim);
   position: relative;
   z-index: 1;
+  /* Keep keyboard-driven scrolling clear of the sticky commit header. */
+  scroll-margin-top: 30px;
 }
 
 .commit-row:hover {
@@ -477,7 +480,7 @@
   background: var(--bg-active);
 }
 
-.commit-row.is-selected::before {
+.commit-row.is-active::before {
   content: '';
   position: absolute;
   left: 0;
@@ -635,6 +638,89 @@
   background: var(--bg-panel);
   min-height: 0;
   overflow: hidden;
+}
+
+.details-selection {
+  flex: none;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.details-selection-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.details-selection-head strong {
+  color: var(--text);
+  font-size: 11.5px;
+}
+
+.details-selection-head small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.details-selection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.commit-menu {
+  position: fixed;
+  width: 260px;
+  min-width: 260px;
+  max-width: 260px;
+  overflow-y: auto;
+}
+
+.commit-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+}
+
+.commit-menu button > svg {
+  flex: none;
+  color: var(--muted);
+}
+
+.commit-menu button > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commit-menu button.is-danger {
+  color: var(--red);
+}
+
+.commit-menu button.is-danger > svg {
+  color: var(--red);
+}
+
+.commit-menu-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
+
+.commit-menu-note {
+  margin: 4px 2px 2px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
 }
 
 .details-empty {

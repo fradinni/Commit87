@@ -21,14 +21,17 @@ npm run typecheck        # strict TS across main, preload, renderer
 | `tests/launch.test.ts` | OS launch parsing: plain folder argv, `file://` URLs from the Linux file manager, `commit87://` deep links, and rejection of files, flags, relative paths and the app itself |
 | `tests/credentials.test.ts` | identity environment, SSH command quoting, credential-helper argv safety, secret redaction |
 | `tests/ui-logic.test.ts` | unified diff parser (adds/deletes/renames/binary), commit graph lane layout, console tokenizer and allow-list |
+| `tests/commit-selection.test.ts` | graph selection model: replace/toggle/range, anchor fallback when a commit disappears, loaded-order normalization, and cherry-pick (oldest first) versus revert (newest first) ordering |
+| `tests/commit-shas.test.ts` | IPC commit-list validation for cherry-pick/revert: hex-only object names, duplicate collapsing, empty/oversized lists and option-like values |
 | `tests/refs.test.ts` | refs panel helpers: local/remote folder grouping, current-first ordering, worktree lookup (main checkout excluded from linked worktrees), query matching, cross-platform sibling paths and configured worktree parents |
 | `tests/updates.test.ts` | update support per packaging format, progress clamping, channel and auto-check preferences, the check → available → download → ready state machine, error sanitization, concurrent checks, install gating and the automatic check timer |
 | `tests/providers.test.ts` | GitHub, GitLab, Bitbucket and Gitea mapping, auth headers, enterprise base paths, error messages, workflow dispatch payloads |
 | `tests/build-packages.test.ts` | packaging wrapper: transient network failures retried with backoff, fatal errors and child exit codes passed through, argument forwarding, attempt and delay configuration |
 | `tests/git.integration.test.ts` | real `git` end-to-end: init, status, staged diff, commit with identity, branch create/checkout/merge, annotated tags, worktree add/remove and worktree status snapshots (including a deleted folder reported as unavailable), stash push/apply |
+| `tests/history.integration.test.ts` | real `git` multi-commit history actions: cherry-pick replays several commits in order and reverting them newest first restores the tree |
 | `tests/submodule.integration.test.ts` | real `git` end-to-end: add, status/config join, dirty detection and forced clean reset (including nested submodules), checkout drift and update, deinit/reinit, tracked-branch update, URL sync, remove (working tree, module dir, `.gitmodules`, config section), uncommitted-add removal and dirty refusal, linked-worktree isolation, orphan gitlinks, unstaged `.gitmodules` refusal and path validation |
 
-Total: 274 tests. The integration suites create temporary repositories under
+Total: 297 tests. The integration suites create temporary repositories under
 `os.tmpdir()` and remove them afterwards; they require `git` on `PATH`.
 
 ## What is asserted, not just executed
@@ -42,6 +45,13 @@ Total: 274 tests. The integration suites create temporary repositories under
   child environment; redaction removes it from output.
 - **Console safety**: `git -c …`, alias definitions, `--exec`, `submodule foreach` and
   non-git commands are rejected.
+- **Commit selection**: a plain click replaces the selection, Ctrl/Cmd toggles one commit
+  and keeps the active row unless the toggled commit was the active one, Shift selects an
+  inclusive range that keeps its anchor across repeated clicks, and a removed anchor falls
+  back to the active commit. Reconciliation keeps a commit selected from elsewhere, drops
+  rows that were loaded and then disappeared, and clears a selection whose active commit is
+  gone. Multi-commit cherry-pick is replayed oldest first while revert walks newest first,
+  proven by a real temporary repository.
 - **Submodule lifecycle**: status flags are joined to normalized `.gitmodules` paths, local
   changes and checkout drift are detected, update restores the recorded commit, `--remote`
   follows the tracked branch, sync copies `.gitmodules` into the module config, and remove

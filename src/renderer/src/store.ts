@@ -81,6 +81,8 @@ export interface RepoTab {
   pulls: PullRequest[]
   view: ViewId
   selectedCommit: string | null
+  selectedCommits: string[]
+  selectionAnchor: string | null
   graphQuery: string
   graphBranch: string
   consoleLines: ConsoleLine[]
@@ -114,6 +116,8 @@ interface StoreState {
   pulls: PullRequest[]
   view: ViewId
   selectedCommit: string | null
+  selectedCommits: string[]
+  selectionAnchor: string | null
   graphQuery: string
   graphBranch: string
   repoLoading: boolean
@@ -160,6 +164,7 @@ interface StoreState {
   refreshSubmodules: (repoPath?: string) => Promise<void>
   setView: (view: ViewId) => void
   selectCommit: (sha: string | null) => void
+  selectCommits: (shas: string[], active: string | null, anchor?: string | null) => void
   setGraphQuery: (query: string) => void
   setGraphBranch: (branch: string) => void
   notify: (message: string, kind?: Toast['kind']) => void
@@ -202,6 +207,8 @@ const emptyRepoSlice: RepoSlice = {
   pulls: [],
   view: 'graph',
   selectedCommit: null,
+  selectedCommits: [],
+  selectionAnchor: null,
   graphQuery: '',
   graphBranch: '',
   consoleLines: []
@@ -262,6 +269,8 @@ function tabToStore(tab: RepoTab): Partial<StoreState> {
     pulls: tab.pulls,
     view: tab.view,
     selectedCommit: tab.selectedCommit,
+    selectedCommits: tab.selectedCommits,
+    selectionAnchor: tab.selectionAnchor,
     graphQuery: tab.graphQuery,
     graphBranch: tab.graphBranch,
     consoleLines: tab.consoleLines
@@ -437,6 +446,8 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
         pulls: [],
         view: 'graph',
         selectedCommit: commits[0]?.sha ?? null,
+        selectedCommits: commits[0] ? [commits[0].sha] : [],
+        selectionAnchor: commits[0]?.sha ?? null,
         graphQuery: '',
         graphBranch: '',
         consoleLines: []
@@ -686,7 +697,13 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
     set({ view })
   },
   selectCommit(sha) {
-    set({ selectedCommit: sha })
+    set({ selectedCommit: sha, selectedCommits: sha ? [sha] : [], selectionAnchor: sha })
+  },
+  selectCommits(shas, active, anchor) {
+    const selectedCommits = [...new Set(shas)]
+    const selectedCommit =
+      active && selectedCommits.includes(active) ? active : selectedCommits[selectedCommits.length - 1] ?? null
+    set({ selectedCommits, selectedCommit, selectionAnchor: anchor !== undefined ? anchor : selectedCommit })
   },
   setGraphQuery(query) {
     set({ graphQuery: query })
