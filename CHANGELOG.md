@@ -4,6 +4,43 @@ All notable changes to Commit87 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.6] — 2026-11-09
+
+### Added
+
+- Commit graph multi-select: click selects one commit, `Ctrl/Cmd`-click toggles individual
+  commits, `Shift`-click selects an inclusive range from the anchor, and `Ctrl/Cmd+Shift`
+  adds a range. The arrow keys move or extend the selection, `Ctrl/Cmd+A` selects every
+  loaded commit and `Escape` clears it. Selection and anchor are kept per repository tab.
+- A right-click context menu for the selection (also opened with the context-menu key or
+  `Shift+F10`): copy SHA/subject, open on forge, detached checkout, create a branch or tag
+  here, cherry-pick, revert, reset, select all and clear. Single-commit actions are offered
+  for one commit; cherry-pick, revert, copy, select-all and clear work on any selection.
+  Bulk cherry-pick replays oldest first, bulk revert rewrites newest first, merge commits
+  are excluded from both, and a selection summary in the details panel offers the bulk
+  actions without right-clicking.
+- Conflicts from a cherry-pick or revert are reported as errors while the status bar keeps
+  offering Continue, Skip and Abort.
+
+### Fixed
+
+- Commit-graph selection now reconciles correctly when a filter, refresh or history rewrite
+  removes commits: surviving commits stay selected, removed commits fall back to the
+  nearest selection, and a commit selected from the refs panel remains visible even when it
+  is outside the loaded window.
+- A removed or rewritten commit no longer leaves a stale selection behind when its details
+  cannot be loaded.
+- Windows release jobs now run the full test suite; the multi-commit history fixtures no
+  longer depend on the platform's `core.autocrlf` setting.
+- CI and release packaging retry transient Electron/toolchain download failures with
+  backoff and reuse the electron-builder cache, so one network blip no longer fails an
+  otherwise healthy release build.
+
+### Maintenance
+
+- Updated Vite from 8.3.5 to 8.3.6.
+- Updated lucide-react from 1.68.0 to 1.69.0.
+
 ## [0.2.0-beta.4] — 2026-11-09
 
 ### Fixed

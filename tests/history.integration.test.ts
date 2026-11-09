@@ -58,14 +58,14 @@ afterAll(async () => {
 describe('multi-commit history actions', () => {
   it('cherry-picks several commits in the given order and reverts them newest first', async () => {
     await createBranch(repoPath, 'side', 'main', true)
-    await write('side-a.txt', 'a\n')
+    await write('side-a.txt', 'a')
     const shaA = await commit('Side change A')
-    await write('side-b.txt', 'b\n')
+    await write('side-b.txt', 'b')
     const shaB = await commit('Side change B')
 
     await checkoutBranch({ repoPath, branch: 'main' })
     // Give main its own commit so the cherry-pick cannot fast-forward.
-    await write('main-only.txt', 'main\n')
+    await write('main-only.txt', 'main')
     const mainSha = await commit('Main only')
 
     const beforePick = await getLog({ repoPath, limit: 20 })
@@ -79,8 +79,8 @@ describe('multi-commit history actions', () => {
     const afterPick = await getLog({ repoPath, limit: 10, branch: 'main' })
     expect(afterPick.slice(0, 2).map((item) => item.subject)).toEqual(['Side change B', 'Side change A'])
     expect(afterPick[2]?.sha).toBe(mainSha)
-    await expect(fs.readFile(path.join(repoPath, 'side-a.txt'), 'utf8')).resolves.toBe('a\n')
-    await expect(fs.readFile(path.join(repoPath, 'side-b.txt'), 'utf8')).resolves.toBe('b\n')
+    await expect(fs.readFile(path.join(repoPath, 'side-a.txt'), 'utf8')).resolves.toBe('a')
+    await expect(fs.readFile(path.join(repoPath, 'side-b.txt'), 'utf8')).resolves.toBe('b')
 
     // The renderer passes newest first for revert so each child is undone first.
     const pickedShas = afterPick.slice(0, 2).map((item) => item.sha)
@@ -93,7 +93,7 @@ describe('multi-commit history actions', () => {
     expect(afterRevert.clean).toBe(true)
     await expect(fs.access(path.join(repoPath, 'side-a.txt'))).rejects.toThrow()
     await expect(fs.access(path.join(repoPath, 'side-b.txt'))).rejects.toThrow()
-    await expect(fs.readFile(path.join(repoPath, 'main-only.txt'), 'utf8')).resolves.toBe('main\n')
+    await expect(fs.readFile(path.join(repoPath, 'main-only.txt'), 'utf8')).resolves.toBe('main')
     const finalLog = await getLog({ repoPath, limit: 10, branch: 'main' })
     expect(finalLog.filter((item) => item.subject.startsWith('Revert'))).toHaveLength(2)
   })
