@@ -4,6 +4,19 @@ All notable changes to Commit87 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.6] — 2026-11-09
+
+### Fixed
+
+- macOS builds no longer offer **Restart & install** when the app is ad-hoc signed.
+  Squirrel.Mac validates a downloaded update against the running bundle's designated
+  requirement, and an ad-hoc signature pins that requirement to the current `cdhash`, so
+  every update was rejected with "code is not compliant with specified code requirements".
+  The updater now probes the bundle with `codesign`, reports in-place updates as
+  unavailable and points at the releases page, while Developer ID-signed builds keep
+  automatic updates. Existing ad-hoc installations need one manual DMG update to move onto
+  a signed build.
+
 ## [0.2.0-beta.5] — 2026-11-09
 
 ### Added
