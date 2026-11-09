@@ -367,7 +367,11 @@ then `git switch -c pr-N <ref>` with the integration token used for the fetch.
 packaged AppImages, NSIS installs and macOS app bundles qualify; Flatpak, Snap, portable
 and zip Windows builds and distro packages are rejected with a message pointing at their
 real update path. An NSIS install is recognised by its uninstaller next to the executable,
-so an extracted zip build is not offered an installer that would create a second copy. `main/updates.ts` owns the state machine (`idle`, `checking`, `up-to-date`,
+so an extracted zip build is not offered an installer that would create a second copy.
+macOS builds must also carry a Developer ID Application signature, probed with `codesign`
+by `main/mac-signing.ts`: Squirrel.Mac validates the downloaded bundle against the running
+app's designated requirement, and an ad-hoc signature pins it to the current cdhash, so
+every in-place update would be rejected. `main/updates.ts` owns the state machine (`idle`, `checking`, `up-to-date`,
 `available`, `downloading`, `ready`, `error`) and talks to an `UpdateAdapter`, which
 `main/update-adapter.ts` implements over `electron-updater`. The adapter is bundled into
 the main output, so the packaged ASAR still has no `node_modules` tree.

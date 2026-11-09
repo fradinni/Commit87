@@ -17,6 +17,16 @@ export interface UpdateEnvironment {
    * separates a real install from an extracted archive.
    */
   windowsUninstaller?: boolean
+  /**
+   * True when the running macOS bundle is signed with a Developer ID
+   * Application certificate. Squirrel.Mac validates the downloaded bundle
+   * against the designated requirement of the running app. An ad-hoc
+   * signature pins that requirement to the current cdhash, so every update is
+   * rejected with "code is not compliant with specified code requirements".
+   * Absent means "not capable", so a caller that cannot probe the bundle never
+   * offers an update that macOS is guaranteed to reject.
+   */
+  macDeveloperId?: boolean
 }
 
 export interface UpdateSupport {
@@ -64,6 +74,11 @@ export function detectUpdateSupport(env: UpdateEnvironment): UpdateSupport {
     return { supported: true, format: 'nsis', reason: null }
   }
   if (env.platform === 'darwin') {
+    if (!env.macDeveloperId) {
+      return unsupported(
+        'This build is not signed with an Apple Developer ID certificate, so macOS cannot validate an in-place update. Download the next release from the releases page instead.'
+      )
+    }
     return { supported: true, format: 'dmg', reason: null }
   }
   return unsupported(`Automatic updates are not available on ${env.platform}.`)

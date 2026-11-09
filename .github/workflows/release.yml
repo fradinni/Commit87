@@ -202,4 +202,5 @@ jobs:
           fi
           echo "::warning::macOS build is ad-hoc signed but not signed with a Developer ID certificate and not notarized."
           echo "::warning::Users downloading it will see a Gatekeeper prompt (System Settings > Privacy & Security > Open Anyway to launch)."
+          echo "::warning::In-place updates are unavailable on ad-hoc builds: Squirrel.Mac cannot validate them, so the app points users at this release page instead."
           echo "::warning::Configure MAC_CERT_P12, MAC_CERT_PASSWORD, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID secrets for fully signed, notarized releases."

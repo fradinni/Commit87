@@ -15,6 +15,7 @@ import { installMenu } from './menu'
 import { registerAppProtocol, registerAppScheme } from './protocol'
 import { UpdateService, type UpdateAdapter } from './updates'
 import { createElectronUpdater, createInertUpdater } from './update-adapter'
+import { hasDeveloperIdSignature } from './mac-signing'
 import { APP_VERSION } from './version'
 
 app.setName('Commit87')
@@ -192,6 +193,13 @@ app.whenReady().then(() => {
     } catch (error) {
       console.warn('[commit87:update] disabled:', error instanceof Error ? error.message : String(error))
     }
+    // Squirrel.Mac validates an update against the designated requirement of the
+    // running bundle. An ad-hoc signature pins that requirement to the current
+    // cdhash, so only a Developer ID-signed build can install an in-place update.
+    const macDeveloperId =
+      process.platform === 'darwin' && app.isPackaged
+        ? await hasDeveloperIdSignature(path.resolve(path.dirname(process.execPath), '../..'))
+        : false
     const updates = new UpdateService({
       adapter: updaterAdapter ?? createInertUpdater(),
       environment: {
@@ -203,7 +211,8 @@ app.whenReady().then(() => {
         flatpak: process.env.FLATPAK_ID,
         // NSIS installs ship an uninstaller next to the executable; portable and
         // zip builds do not, so they are not updated in place.
-        windowsUninstaller: existsSync(path.join(path.dirname(process.execPath), 'Uninstall Commit87.exe'))
+        windowsUninstaller: existsSync(path.join(path.dirname(process.execPath), 'Uninstall Commit87.exe')),
+        macDeveloperId
       },
       version: APP_VERSION,
       preferences: () => {

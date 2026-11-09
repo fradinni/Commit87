@@ -240,6 +240,27 @@ Consequences for users:
   Privacy & Security > Open Anyway (Apple removed the Control-click > Open shortcut); a
   fully clean experience requires configuring the secrets above and re-running the release.
 
+### macOS in-place updates require a Developer ID signature
+
+Squirrel.Mac compares the downloaded bundle with the designated requirement of the
+running app before it swaps anything. A Developer ID signature produces a requirement
+anchored to the certificate and team, which the next release also satisfies. An ad-hoc
+signature instead embeds the current build's `cdhash`; a later build has a different hash,
+so ShipIt rejects it with:
+
+```
+Code signature at URL … did not pass validation:
+code is not compliant with specified code requirements
+```
+
+`main/mac-signing.ts` probes the running bundle with `codesign --display --verbose=4`.
+Without a Developer ID authority, the updater reports in-place updates as unavailable and
+the Settings > Updates panel offers the releases page instead of **Restart & install**.
+Configure `MAC_CERT_P12`, `MAC_CERT_PASSWORD`, `APPLE_ID`,
+`APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` to make automatic macOS updates work;
+existing ad-hoc installs need one manual DMG update before they can follow the signed
+feed.
+
 ## Icons
 
 `build/icon.svg` is the single source of truth. `npm run icons` rasterises 16–1024 px PNGs

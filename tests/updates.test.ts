@@ -4,6 +4,7 @@ import type { UpdateAdapter, UpdateDownloadTask, UpdateInfoSummary, UpdatePrefer
 import { UpdateService, normalizeProgress, versionMatchesChannel } from '../src/main/updates'
 import { detectUpdateSupport } from '../src/main/update-support'
 import type { UpdateEnvironment } from '../src/main/update-support'
+import { isDeveloperIdSignature } from '../src/main/mac-signing'
 
 const info: UpdateInfoSummary = {
   version: '0.2.0',
@@ -187,11 +188,37 @@ describe('update support detection', () => {
       format: 'nsis',
       reason: null
     })
-    expect(detectUpdateSupport({ platform: 'darwin', isPackaged: true })).toEqual({
+    expect(detectUpdateSupport({ platform: 'darwin', isPackaged: true, macDeveloperId: true })).toEqual({
       supported: true,
       format: 'dmg',
       reason: null
     })
+  })
+
+  it('rejects ad-hoc macOS bundles that macOS cannot validate an update against', () => {
+    // Squirrel.Mac checks the new bundle against the running app's designated
+    // requirement. An ad-hoc signature pins the cdhash, so the update always
+    // fails with "code is not compliant with specified code requirements".
+    const adHoc = detectUpdateSupport({ platform: 'darwin', isPackaged: true, macDeveloperId: false })
+    expect(adHoc.supported).toBe(false)
+    expect(adHoc.format).toBeNull()
+    expect(adHoc.reason).toContain('Developer ID')
+  })
+
+  it('recognises a Developer ID signature from codesign output', () => {
+    const signed = [
+      'Executable=/Applications/Commit87.app/Contents/MacOS/Commit87',
+      'Identifier=fr.fradinni.Commit87',
+      'CodeDirectory v=20500 size=123 flags=0x10000(runtime) hashes=6+3 location=embedded',
+      'Authority=Developer ID Application: Commit87 Team (ABCDE12345)',
+      'Authority=Developer ID Certification Authority',
+      'Authority=Apple Root CA',
+      'TeamIdentifier=ABCDE12345'
+    ].join('\n')
+    expect(isDeveloperIdSignature(signed)).toBe(true)
+    // Ad-hoc builds print no Authority at all.
+    expect(isDeveloperIdSignature('Identifier=fr.fradinni.Commit87\nSignature=adhoc\nTeamIdentifier=not set')).toBe(false)
+    expect(isDeveloperIdSignature('')).toBe(false)
   })
 
   it('explains why other builds are not updated in place', () => {
