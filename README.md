@@ -208,7 +208,7 @@ Requirements: Node.js 24+ and Git 2.30+.
 npm install
 npm run dev          # electron-vite dev server with HMR
 npm run typecheck    # strict TypeScript for main, preload and renderer
-npm test             # 162 unit and integration tests against real git
+npm test             # unit and integration tests against real git
 npm run build        # production bundles in out/
 npm run pack:dir     # unpacked app in dist/linux-unpacked
 ```
