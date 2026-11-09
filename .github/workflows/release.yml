@@ -147,3 +147,40 @@ jobs:
           SIGN_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           SIGN_WIN_CERT: ${{ matrix.target == 'win' && secrets.WIN_CERT_P12 || '' }}
           SIGN_WIN_CERT_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD }}
+      # macOS refuses to run an app whose code signature does not match its
+      # binaries: the fuse patch invalidates Electron's linker ad-hoc signature,
+      # and without a Developer ID certificate electron-builder leaves it broken,
+      # so Gatekeeper kills the app at launch ("application is damaged"). The
+      # electronFuses.resetAdHocDarwinSignature option re-signs ad-hoc after the
+      # patch; this step proves the result is valid so a broken app can never
+      # reach the draft release.
+      - name: Verify macOS code signature
+        if: matrix.target == 'mac'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apps=(dist/mac*/Commit87.app)
+          if ((${#apps[@]} == 0)); then
+            echo "::error::No macOS app bundle found under dist/mac*"
+            exit 1
+          fi
+          for app in "${apps[@]}"; do
+            echo "Verifying $app..."
+            codesign --verify --deep --strict --verbose=1 "$app" || {
+              echo "::error::$app has an invalid code signature; macOS would report the app as damaged."
+              exit 1
+            }
+          done
+      - name: Warn on unsigned macOS build
+        if: matrix.target == 'mac'
+        shell: bash
+        env:
+          SIGN_MAC_CERT: ${{ secrets.MAC_CERT_P12 }}
+        run: |
+          if [ -n "${SIGN_MAC_CERT:-}" ]; then
+            exit 0
+          fi
+          echo "::warning::macOS build is ad-hoc signed but not signed with a Developer ID certificate and not notarized."
+          echo "::warning::Users downloading it will see a Gatekeeper prompt (System Settings > Privacy & Security > Open Anyway to launch)."
+          echo "::warning::Configure MAC_CERT_P12, MAC_CERT_PASSWORD, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID secrets for fully signed, notarized releases."

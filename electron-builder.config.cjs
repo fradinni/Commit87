@@ -59,7 +59,16 @@ module.exports = {
     enableEmbeddedAsarIntegrityValidation: true,
     onlyLoadAppFromAsar: true,
     loadBrowserProcessSpecificV8Snapshot: false,
-    grantFileProtocolExtraPrivileges: false
+    grantFileProtocolExtraPrivileges: false,
+    // Flipping fuses patches Electron's binaries, which invalidates the ad-hoc
+    // signature the linker stamped on them at build time. Without a Developer ID
+    // certificate electron-builder skips re-signing entirely, and macOS on Apple
+    // Silicon then kills the app at launch with SIGKILL (Code Signature Invalid),
+    // surfacing as "the application is damaged". Reset the ad-hoc signature right
+    // after the fuse patch so unsigned builds keep a valid signature. When a
+    // Developer ID IS available, electron-builder's own signing runs afterwards and
+    // replaces this ad-hoc signature, so the hardened/notarized path is unchanged.
+    resetAdHocDarwinSignature: true
   },
   protocols: [
     {
