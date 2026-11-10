@@ -57,6 +57,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
         # Nothing is published before the artifacts are built and verified, so
         # the release always starts as a draft; the publish job promotes it to
         # the channel state resolved above. An existing draft is emptied first so
@@ -94,14 +95,29 @@ jobs:
               exit 1
               ;;
           esac
+          # Release notes are the CHANGELOG section for this version, so the
+          # published release carries the same notes as the repository.
+          notes_file="${RUNNER_TEMP}/commit87-release-notes.md"
+          notes_body="$(awk -v v="$VERSION" '
+            index($0, "## [" v "]") == 1 { capture = 1; next }
+            capture && index($0, "## [") == 1 { exit }
+            capture { print }
+          ' CHANGELOG.md)"
+          if [[ -z "${notes_body//[[:space:]]/}" ]]; then
+            notes_body="See CHANGELOG.md for the changes in this release."
+          fi
+          printf '## Commit87 %s\n\n%s\n' "$VERSION" "$notes_body" > "$notes_file"
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$TAG" --draft --title "Commit87 ${TAG#v}" --target "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY"
+            gh release create "$TAG" --draft --title "Commit87 ${TAG#v}" --target "$GITHUB_SHA" \
+              --notes-file "$notes_file" --repo "$GITHUB_REPOSITORY"
             exit 0
           fi
           if [[ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" != "true" ]]; then
             echo "::error::Release $TAG is already published; delete it before rebuilding that version."
             exit 1
           fi
+          # A draft left by an earlier failed run gets the current notes too.
+          gh release edit "$TAG" --notes-file "$notes_file" --repo "$GITHUB_REPOSITORY"
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
             while IFS= read -r asset; do
               [[ -z "$asset" ]] && continue
