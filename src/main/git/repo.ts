@@ -20,6 +20,7 @@ import type {
   StashInfo,
   SubmoduleAddInput,
   SubmoduleInfo,
+  SubmoduleRemoveResult,
   SubmoduleUpdateInput,
   TagCreateInput,
   TagInfo,
@@ -28,7 +29,7 @@ import type {
   WorktreeStatus,
   CheckoutInput
 } from '@shared/types'
-import { buildAuthArgs, buildIdentityEnv, runGit, tryRunGit } from './runner'
+import { buildAuthArgs, buildIdentityEnv, gitError, runGit, tryRunGit } from './runner'
 import {
   parseBlame,
   parseBranches,
@@ -225,8 +226,13 @@ export async function getBranches(repoPath: string): Promise<RefInfo[]> {
 }
 
 export async function getTags(repoPath: string): Promise<TagInfo[]> {
-  const format = [
-    '%(refname:short)',
+  // `%(contents)` goes last: it may contain newlines and must not be split as
+  // a record delimiter. `%00` terminates each record so a message line can
+  // never be read as another tag.
+  const fields = [
+    // `strip=2` removes `refs/tags/` deterministically. `:short` returns
+    // `tags/v2` when a branch shares the name, which breaks the UI label.
+    '%(refname:strip=2)',
     '%(objectname)',
     '%(objecttype)',
     '%(*objectname)',
@@ -235,8 +241,12 @@ export async function getTags(repoPath: string): Promise<TagInfo[]> {
     '%(taggeremail)',
     '%(taggerdate:unix)',
     '%(committerdate:unix)',
+    // Fully qualified: `%(refname:short)` returns `tags/v2` when a branch and
+    // a tag share a name, and re-prefixing that yields `refs/tags/tags/v2`.
+    '%(refname)',
     '%(contents)'
-  ].join('%1f')
+  ]
+  const format = `${fields.join('%1f')}%00`
   const raw = await runGit(['for-each-ref', `--format=${format}`, 'refs/tags'], { cwd: repoPath })
   return parseTags(raw.stdout)
 }
@@ -336,7 +346,24 @@ export async function addSubmodule(input: SubmoduleAddInput, ctx: GitAuthContext
   if (input.force) addArgs.push('--force')
   addArgs.push('--', url)
   if (submodulePath) addArgs.push(submodulePath)
-  await runGit(addArgs, { cwd: repo.path, env, timeoutMs: 600_000 })
+
+  // Removing the last submodule drops `.gitmodules` from the working tree but
+  // leaves it in HEAD, and `git submodule add` then refuses because the file is
+  // "not in the working tree". That is exactly the state a just-removed
+  // submodule leaves behind, so recreate the empty file and retry once; Git
+  // fills it with the new section and stages it.
+  const options = { cwd: repo.path, env, timeoutMs: 600_000 }
+  let result = await runGit(addArgs, { ...options, allowFailure: true })
+  const gitmodulesPath = path.join(repo.path, '.gitmodules')
+  if (
+    result.exitCode !== 0 &&
+    /\.gitmodules file is in the working tree/i.test(result.stderr) &&
+    !(await pathExists(gitmodulesPath))
+  ) {
+    await fs.writeFile(gitmodulesPath, '')
+    result = await runGit(addArgs, { ...options, allowFailure: true })
+  }
+  if (result.exitCode !== 0) throw gitError(addArgs, result)
 }
 
 export async function updateSubmodules(
@@ -393,11 +420,17 @@ export async function syncSubmodules(repoPath: string, submodulePath?: string, r
 
 /**
  * Remove a tracked submodule: unregister it, remove the working tree and the
- * gitlink, then clean the module directory under the current worktree's git
- * dir. Only paths that appear in `git submodule status` are accepted, so this
- * can never delete an arbitrary folder.
+ * gitlink, then drop the submodule configuration. Only paths that appear in
+ * `git submodule status` are accepted, so this can never delete an arbitrary
+ * folder. The module clone under the Git directory is moved aside instead of
+ * deleted, so commits that were never pushed stay recoverable and the same URL
+ * can be added again at the same path.
  */
-export async function removeSubmodule(repoPath: string, submodulePath: string, force = false): Promise<void> {
+export async function removeSubmodule(
+  repoPath: string,
+  submodulePath: string,
+  force = false
+): Promise<SubmoduleRemoveResult> {
   const repo = await resolveRepo(repoPath)
   if (repo.isBare) throw new Error('Submodules need a working tree')
   const relative = validateSubmodulePath(repo.path, submodulePath)
@@ -406,12 +439,27 @@ export async function removeSubmodule(repoPath: string, submodulePath: string, f
   const entry = submodules.find((submodule) => submodule.path === relative)
   if (!entry) throw new Error(`Not a tracked submodule: ${relative}`)
   if (!force && (entry.dirty || entry.modified || entry.conflicted)) {
-    throw new Error('The submodule has local changes or unpushed commits; use force removal to discard them')
+    throw new Error(
+      'The submodule has local changes or unpushed commits; force removal discards its working-tree checkout but keeps the local module clone and its objects for recovery'
+    )
   }
 
   const configs = parseSubmoduleConfig(await readSubmoduleConfig(repo.path))
   const configured = [...configs.entries()].find(([, config]) => normalizeSubmodulePath(config.path) === relative)
   const name = configured?.[0] ?? entry.name
+
+  // Resolve the clone the way Git does for *this* worktree: a linked worktree
+  // keeps its own copy under <git-dir>/worktrees/<id>/modules. Resolve it
+  // before anything is removed so a hostile name in .gitmodules can never make
+  // the move touch a directory outside the modules root.
+  const modulesRoot = await gitPath(repo.path, 'modules')
+  const moduleDir = await gitPath(repo.path, `modules/${name}`)
+  const fromModulesRoot = path.relative(modulesRoot, moduleDir)
+  const escapesModulesRoot =
+    !fromModulesRoot || fromModulesRoot === '..' || fromModulesRoot.startsWith(`..${path.sep}`)
+  if (escapesModulesRoot || path.isAbsolute(fromModulesRoot)) {
+    throw new Error(`Refusing to move a module clone outside the Git modules directory: ${moduleDir}`)
+  }
 
   // `git submodule deinit` unregisters the checkout before `git rm` runs, so
   // reject an unstaged .gitmodules first: otherwise a failed rm would leave a
@@ -457,9 +505,6 @@ export async function removeSubmodule(repoPath: string, submodulePath: string, f
     })
   }
 
-  const moduleDir = await submoduleModuleDir(repo, name)
-  if (moduleDir) await fs.rm(moduleDir, { recursive: true, force: true })
-
   // `git rm` leaves an empty .gitmodules behind when the last submodule is
   // removed. Drop the file too so the change set is a single clean deletion.
   const remaining = parseSubmoduleConfig(await readSubmoduleConfig(repo.path))
@@ -470,6 +515,72 @@ export async function removeSubmodule(repoPath: string, submodulePath: string, f
       await runGit(['rm', '-f', '--', '.gitmodules'], { cwd: repo.path, allowFailure: true })
     }
   }
+
+  return { retainedPath: await retainModuleClone(moduleDir) }
+}
+
+/** Resolve a path inside this worktree's Git directory the way Git reports it. */
+async function gitPath(repoPath: string, target: string): Promise<string> {
+  const result = await runGit(['rev-parse', '--git-path', target], { cwd: repoPath })
+  const reported = result.stdout.trim()
+  if (!reported) throw new Error(`Git did not report the path of ${target}`)
+  return path.resolve(repoPath, reported)
+}
+
+const MODULE_RETENTION_INFIX = '.removed-'
+
+/**
+ * Move the module clone aside so the recovery copy survives while the original
+ * name becomes free again: `git submodule add` refuses a name whose directory
+ * already exists, and `git submodule update --init` still finds the clone when
+ * the user moves `<dir>.removed-<stamp>` back to `<dir>`. The move is a rename
+ * inside the same Git directory, so the objects are never copied or deleted.
+ */
+async function retainModuleClone(moduleDir: string): Promise<string | null> {
+  if (!(await pathExists(moduleDir))) return null
+
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')
+  let failure: unknown = null
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const target = `${moduleDir}${MODULE_RETENTION_INFIX}${stamp}${attempt === 0 ? '' : `-${attempt}`}`
+    try {
+      await fs.rename(moduleDir, target)
+      return target
+    } catch (error) {
+      failure = error
+      // The clone vanished underneath us: nothing is left to keep.
+      if (isErrorCode(error, 'ENOENT')) return null
+      // The target name is already taken; try the next counter.
+      if (isErrorCode(error, 'EEXIST', 'ENOTEMPTY', 'ENOTDIR')) continue
+      break
+    }
+  }
+
+  const reason = failure instanceof Error ? failure.message : String(failure)
+  throw new Error(
+    `The submodule was removed, but its module clone could not be moved aside: ${reason}\n` +
+      `The clone is still at ${moduleDir}; move or delete that directory before adding a submodule with the same name.`
+  )
+}
+
+/** Whether anything (directory, file or link) occupies the path. */
+async function pathExists(target: string): Promise<boolean> {
+  return fs.lstat(target).then(
+    () => true,
+    (error: unknown) => {
+      if (isErrorCode(error, 'ENOENT')) return false
+      throw error
+    }
+  )
+}
+
+function isErrorCode(error: unknown, ...codes: string[]): boolean {
+  return (
+    error instanceof Error &&
+    'code' in error &&
+    typeof error.code === 'string' &&
+    codes.includes(error.code)
+  )
 }
 
 async function readSubmoduleConfig(repoPath: string): Promise<string> {
@@ -500,20 +611,6 @@ function validateSubmodulePath(repoPath: string, submodulePath: string): string 
     throw new Error('Submodule path must be a subfolder of the repository')
   }
   return normalized
-}
-
-/**
- * Resolve the module dir for the current worktree. `git rev-parse --git-path`
- * is authoritative: the main worktree uses `<git-dir>/modules`, while a linked
- * worktree uses its own `<git-dir>/worktrees/<id>/modules`.
- */
-async function submoduleModuleDir(repo: RepoInfo, name: string): Promise<string | null> {
-  const modulesRoot = path.resolve(repo.gitDir, 'modules')
-  const raw = await tryRunGit(['rev-parse', '--git-path', `modules/${name}`], { cwd: repo.root })
-  const reported = raw?.stdout.trim()
-  const candidate = reported ? path.resolve(repo.root, reported) : path.resolve(modulesRoot, name)
-  if (candidate === modulesRoot || !isInside(modulesRoot, candidate)) return null
-  return candidate
 }
 
 /** Remove untracked files from a checkout and every nested submodule inside it. */
@@ -548,8 +645,8 @@ export async function getDiff(input: DiffInput): Promise<DiffResult> {
     statArgs.push('--', input.path)
   }
   const [patch, stats] = await Promise.all([
-    runGit(patchArgs, { cwd: input.repoPath, maxBuffer: 48 * 1024 * 1024 }),
-    runGit(statArgs, { cwd: input.repoPath, maxBuffer: 16 * 1024 * 1024 })
+    runGit(patchArgs, { cwd: input.repoPath, maxBuffer: 48 * 1024 * 1024, literalPathspecs: Boolean(input.path) }),
+    runGit(statArgs, { cwd: input.repoPath, maxBuffer: 16 * 1024 * 1024, literalPathspecs: Boolean(input.path) })
   ])
   return { patch: patch.stdout, files: parseNumstat(stats.stdout) }
 }
@@ -634,7 +731,7 @@ export async function resolveConflict(repoPath: string, file: string, content: s
   }
 
   await fs.writeFile(target, content, 'utf8')
-  await runGit(['add', '--', file], { cwd: repo.path })
+  await runGit(['add', '--', file], { cwd: repo.path, literalPathspecs: true })
 }
 
 export async function readFileContent(
@@ -692,7 +789,7 @@ function decodeText(buffer: Buffer): { content: string; binary: boolean } {
 export async function getBlame(repoPath: string, file: string, commit?: string): Promise<BlameLine[]> {
   const args = ['blame', '--line-porcelain', '--', file]
   if (commit) args.splice(1, 0, commit)
-  const raw = await runGit(args, { cwd: repoPath, maxBuffer: 32 * 1024 * 1024 })
+  const raw = await runGit(args, { cwd: repoPath, maxBuffer: 32 * 1024 * 1024, literalPathspecs: true })
   return parseBlame(raw.stdout)
 }
 
@@ -708,25 +805,32 @@ export async function setRepoConfig(repoPath: string, key: string, value: string
 
 export async function stageFiles(repoPath: string, files: string[]): Promise<void> {
   const safe = validateFiles(files)
-  await runGit(['add', '--', ...safe], { cwd: repoPath })
+  await runGit(['add', '--', ...safe], { cwd: repoPath, literalPathspecs: true })
+}
+
+/** Older Git releases predate `restore`; only that failure may fall back to `reset`. */
+function lacksRestoreCommand(stderr: string): boolean {
+  return /'restore' is not a git command/i.test(stderr)
 }
 
 export async function unstageFiles(repoPath: string, files: string[]): Promise<void> {
   const safe = validateFiles(files)
-  const result = await tryRunGit(['restore', '--staged', '--', ...safe], { cwd: repoPath })
-  if (!result || result.exitCode !== 0) {
-    await runGit(['reset', '--', ...safe], { cwd: repoPath })
-  }
+  const args = ['restore', '--staged', '--', ...safe]
+  const result = await runGit(args, { cwd: repoPath, allowFailure: true, literalPathspecs: true })
+  if (result.exitCode === 0) return
+  if (!lacksRestoreCommand(result.stderr)) throw gitError(args, result)
+  await runGit(['reset', '--', ...safe], { cwd: repoPath, literalPathspecs: true })
 }
 
 export async function discardFiles(repoPath: string, files: string[], includeUntracked: boolean): Promise<void> {
   const safe = validateFiles(files)
   await runGit(['restore', '--source=HEAD', '--staged', '--worktree', '--', ...safe], {
     cwd: repoPath,
-    allowFailure: true
+    allowFailure: true,
+    literalPathspecs: true
   })
   if (includeUntracked) {
-    await runGit(['clean', '-f', '-d', '--', ...safe], { cwd: repoPath })
+    await runGit(['clean', '-f', '-d', '--', ...safe], { cwd: repoPath, literalPathspecs: true })
   }
 }
 
@@ -744,19 +848,31 @@ export async function commitChanges(input: CommitInput, ctx: GitAuthContext): Pr
 
 export async function checkoutBranch(input: CheckoutInput): Promise<void> {
   if (input.create) {
+    validateRefName(input.repoPath, input.branch)
+    if (input.startPoint) validateCheckoutTarget(input.repoPath, input.startPoint, true)
     const args = ['switch', '-c', input.branch]
     if (input.track && input.startPoint) args.push('--track')
     if (input.startPoint) args.push(input.startPoint)
     await runGit(args, { cwd: input.repoPath })
     return
   }
+  // A checkout target may be a commit (detached) but must never be read as a
+  // path: the old `git checkout <name>` fallback restored a tracked file when
+  // the ref did not exist.
+  validateCheckoutTarget(input.repoPath, input.branch, Boolean(input.detach))
   const args = ['switch']
   if (input.force) args.push('--force')
+  if (input.detach) args.push('--detach')
   args.push(input.branch)
-  const result = await tryRunGit(args, { cwd: input.repoPath, allowFailure: true })
-  if (!result || result.exitCode !== 0) {
-    await runGit(['checkout', input.branch], { cwd: input.repoPath })
+  await runGit(args, { cwd: input.repoPath })
+}
+
+function validateCheckoutTarget(repoPath: string, target: string, allowCommit: boolean): void {
+  if (allowCommit && /^[0-9a-f]{4,64}$/i.test(target)) {
+    validateCommitShas([target])
+    return
   }
+  validateRefName(repoPath, target)
 }
 
 export async function createBranch(
@@ -1034,7 +1150,11 @@ export function validateRefName(repoPath: string, name: string): void {
 function validateFiles(files: string[]): string[] {
   if (!files.length) throw new Error('No files selected')
   return files.map((file) => {
-    if (path.isAbsolute(file) || file.split(/[\\/]/).includes('..')) {
+    if (!file || file.includes('\0') || path.isAbsolute(file)) {
+      throw new Error(`Invalid repository path: ${file}`)
+    }
+    const segments = file.split(/[\\/]/)
+    if (segments.includes('..') || segments.includes('.')) {
       throw new Error(`Invalid repository path: ${file}`)
     }
     return file

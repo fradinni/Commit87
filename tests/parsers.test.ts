@@ -49,6 +49,29 @@ describe('porcelain status parser', () => {
     expect(status.clean).toBe(false)
   })
 
+  it('distinguishes rename pairs from copy pairs', () => {
+    const output =
+      [
+        '2 R. N... 100644 100644 100644 aaaaaaa bbbbbbb R100 src/new.ts',
+        'src/old.ts',
+        '2 C. N... 100644 100644 100644 aaaaaaa bbbbbbb C100 src/copied.ts',
+        'src/source.ts'
+      ].join('\0') + '\0'
+    const status = parseStatus(output)
+    expect(status.files).toHaveLength(2)
+    expect(status.files[0]).toMatchObject({ path: 'src/new.ts', origPath: 'src/old.ts', stage: 'staged', rename: true })
+    expect(status.files[1]).toMatchObject({ path: 'src/copied.ts', origPath: 'src/source.ts', stage: 'staged' })
+    expect(status.files[1].rename).toBeUndefined()
+  })
+
+  it('parses a file that is staged and modified in the working tree', () => {
+    const output = ['# branch.head main', '1 MM N... 100644 100644 100644 aaaaaaa bbbbbbb src/app.ts', ''].join('\0')
+    const status = parseStatus(output)
+    expect(status.files[0]).toMatchObject({ index: 'M', worktree: 'M', stage: 'staged', label: 'Staged + modified' })
+    expect(status.stagedCount).toBe(1)
+    expect(status.unstagedCount).toBe(0)
+  })
+
   it('handles empty repositories and detached HEAD', () => {
     const output = ['# branch.oid (initial)', '# branch.head (detached)'].join('\0') + '\0'
     const status = parseStatus(output)
@@ -94,14 +117,59 @@ describe('refs and tags', () => {
   })
 
   it('parses annotated and lightweight tags', () => {
-    const output = [
-      ['v1.0.0', 'tagsha', 'tag', 'commitsha', 'Release 1.0', 'Alice', '<a@example.com>', '1700000000', '1700000001', 'Full message'].join(F),
-      ['v0.9.0', 'commitsha2', 'commit', '', 'Old release', '', '', '0', '1600000000', ''].join(F)
-    ].join('\n')
+    const output =
+      [
+        [
+          'v1.0.0',
+          'a1b2c3d4',
+          'tag',
+          'b1c2d3e4',
+          'Release 1.0',
+          'Alice',
+          '<a@example.com>',
+          '1700000000',
+          '1700000001',
+          'refs/tags/v1.0.0',
+          'Full message'
+        ].join(F),
+        ['v0.9.0', 'c1d2e3f4', 'commit', '', 'Old release', '', '', '0', '1600000000', 'refs/tags/v0.9.0', ''].join(F)
+      ]
+        .map((record) => `${record}\0\n`)
+        .join('') + '\0\n'
     const tags = parseTags(output)
     expect(tags).toHaveLength(2)
-    expect(tags[0]).toMatchObject({ name: 'v1.0.0', annotated: true, targetSha: 'commitsha', tagger: { name: 'Alice', email: 'a@example.com' } })
-    expect(tags[1]).toMatchObject({ name: 'v0.9.0', annotated: false, targetSha: 'commitsha2' })
+    expect(tags[0]).toMatchObject({
+      name: 'v1.0.0',
+      annotated: true,
+      targetSha: 'b1c2d3e4',
+      tagger: { name: 'Alice', email: 'a@example.com' }
+    })
+    expect(tags[1]).toMatchObject({ name: 'v0.9.0', ref: 'refs/tags/v0.9.0', annotated: false, targetSha: 'c1d2e3f4' })
+    expect(tags[0].ref).toBe('refs/tags/v1.0.0')
+  })
+
+  it('keeps a multiline tag message inside one record', () => {
+    const message = 'Release 2.0\n\nNotes:\n  src/app.ts\nv9.9.9\n- more details'
+    const output =
+      ['v2.0.0', 'a1b2c3d4', 'tag', 'b1c2d3e4', 'Release 2.0', 'Alice', '<a@example.com>', '1700000000', '1700000001', 'refs/tags/v2.0.0', message].join(F) +
+      '\0\r\n' +
+      '\0\n'
+    const tags = parseTags(output)
+    expect(tags).toHaveLength(1)
+    expect(tags[0]).toMatchObject({ name: 'v2.0.0', subject: 'Release 2.0' })
+    expect(tags[0].message).toContain('src/app.ts')
+    expect(tags[0].message).toContain('v9.9.9')
+    expect(tags.some((tag) => tag.name === 'src/app.ts')).toBe(false)
+  })
+
+  it('ignores tag records without a hexadecimal object id', () => {
+    const output = ['v1.0.0', 'not-a-sha', 'tag', '', 'Subject', '', '', '0', '0', 'refs/tags/v1.0.0', 'Body'].join(F) + '\0\n'
+    expect(parseTags(output)).toHaveLength(0)
+  })
+
+  it('rejects records that are not tag refs', () => {
+    const output = ['v1.0.0', 'a1b2c3d4', 'commit', '', 'Subject', '', '', '0', '0', 'refs/heads/v1.0.0', 'Body'].join(F) + '\0\n'
+    expect(parseTags(output)).toHaveLength(0)
   })
 })
 

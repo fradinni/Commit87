@@ -590,9 +590,11 @@ export function RefsPanel() {
   const doTagCheckout = (): void => {
     if (!tagCheckout || !repoPath) return
     void run(async () => {
-      await call('git.checkout', { repoPath, branch: tagCheckout.name })
+      // The fully qualified ref is authoritative: a branch with the same name
+      // must not win ref lookup, and a short name is not stable.
+      await call('git.checkout', { repoPath, branch: tagCheckout.ref, detach: true })
       setTagCheckout(null)
-    }, `Checked out ${tagCheckout.name} (detached)`)
+    }, `Checked out tag ${tagCheckout.name} (detached HEAD)`)
   }
 
   const applyStash = (stash: StashInfo, pop: boolean): void => {

@@ -45,6 +45,7 @@ import type {
   StatusFile,
   SubmoduleAddInput,
   SubmoduleInfo,
+  SubmoduleRemoveResult,
   SubmoduleUpdateInput,
   TagCreateInput,
   TagInfo,
@@ -146,7 +147,10 @@ export interface IpcMethods {
   'git.submoduleAdd': { request: SubmoduleAddInput; response: void }
   'git.submoduleUpdate': { request: SubmoduleUpdateInput; response: { output: string } }
   'git.submoduleSync': { request: { repoPath: string; submodulePath?: string; recursive?: boolean }; response: void }
-  'git.submoduleRemove': { request: { repoPath: string; submodulePath: string; force?: boolean }; response: void }
+  'git.submoduleRemove': {
+    request: { repoPath: string; submodulePath: string; force?: boolean }
+    response: SubmoduleRemoveResult
+  }
   'git.remoteAdd': { request: { path: string; name: string; url: string }; response: void }
   'git.remoteRemove': { request: { path: string; name: string }; response: void }
   'git.remoteSetUrl': { request: { path: string; name: string; url: string; push?: boolean }; response: void }

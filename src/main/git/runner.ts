@@ -23,6 +23,12 @@ export interface RunGitOptions {
   timeoutMs?: number
   maxBuffer?: number
   allowFailure?: boolean
+  /**
+   * Treat paths after `--` as exact filenames instead of pathspec patterns.
+   * Only enable this for commands that receive user-selected file names: a
+   * pattern such as `notes[1].txt` must not also match `notes1.txt`.
+   */
+  literalPathspecs?: boolean
 }
 
 export interface GitResult {
@@ -70,6 +76,7 @@ export async function runGit(args: string[], options: RunGitOptions): Promise<Gi
     GIT_TERMINAL_PROMPT: '0',
     GIT_OPTIONAL_LOCKS: '0',
     GIT_PAGER: 'cat',
+    ...(options.literalPathspecs ? { GIT_LITERAL_PATHSPECS: '1' } : {}),
     // Callers may install a controlled editor (the interactive rebase bridge);
     // otherwise git must never wait for an editor.
     GIT_EDITOR: options.env?.GIT_EDITOR || 'true',
@@ -131,7 +138,7 @@ export async function runGit(args: string[], options: RunGitOptions): Promise<Gi
       if (settled) return
       settled = true
       if (code !== 0 && !options.allowFailure) {
-        reject(new GitError(cleanGitMessage(stderr || stdout, fullArgs), fullArgs, stderr, code))
+        reject(gitError(fullArgs, { stdout, stderr, exitCode: code ?? 0 }))
         return
       }
       resolve({ stdout, stderr, exitCode: code ?? 0 })
@@ -151,6 +158,11 @@ export async function tryRunGit(args: string[], options: RunGitOptions): Promise
   } catch {
     return null
   }
+}
+
+/** Build the error a failed command would have thrown, for `allowFailure` results. */
+export function gitError(args: string[], result: GitResult): GitError {
+  return new GitError(cleanGitMessage(result.stderr || result.stdout, args), args, result.stderr, result.exitCode)
 }
 
 function cleanGitMessage(raw: string, args: string[]): string {

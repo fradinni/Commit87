@@ -113,20 +113,33 @@ export function SubmodulesView() {
   }
 
   const remove = (): void => {
-    if (!removeTarget) return
-    void run(
-      'remove',
-      async () => {
-        await call('git.submoduleRemove', {
+    const target = removeTarget
+    if (!target) return
+    setBusy('remove')
+    void (async () => {
+      try {
+        const { retainedPath } = await call('git.submoduleRemove', {
           repoPath: repo.path,
-          submodulePath: removeTarget.path,
+          submodulePath: target.path,
           force: forceRemove
         })
         setRemoveTarget(null)
         setForceRemove(false)
-      },
-      'Submodule removed — the change is staged'
-    )
+        notify(
+          retainedPath
+            ? `Removed the ${target.path} worktree and its gitlink. The local module clone is kept at ${retainedPath} for recovery.`
+            : `Removed the ${target.path} worktree and its gitlink. It had no local module clone to keep.`,
+          'success'
+        )
+      } catch (error) {
+        notifyError(error)
+      } finally {
+        // Removal can remove the checkout and still report a failed move, so
+        // reload either way to keep the list in step with the repository.
+        await Promise.all([refreshSubmodules(repo.path), refreshStatus(repo.path)]).catch(notifyError)
+        setBusy(null)
+      }
+    })()
   }
 
   const resetDirty = (): void => {
@@ -367,13 +380,17 @@ export function SubmodulesView() {
         }
       >
         <p className="confirm-message">
-          Remove <strong>{removeTarget?.path}</strong> from this repository? The working tree and the
-          <span className="mono"> .gitmodules</span> entry are removed and the change is staged. The submodule's
-          remote repository is not touched, but the local module clone is deleted.
+          Remove <strong>{removeTarget?.path}</strong> from this repository? The working-tree checkout, the
+          <span className="mono"> .gitmodules</span> entry and the recorded gitlink are removed and the change is
+          staged. The submodule's remote repository is not touched. Its local module clone and object database are
+          moved aside under this repository's Git directory, and the message after removal shows the exact path.
+          Re-adding the same URL at the same path afterwards works.
         </p>
         <label className="checkbox-row">
           <input type="checkbox" checked={forceRemove} onChange={(event) => setForceRemove(event.target.checked)} />
-          Force removal, discarding uncommitted changes and local commits that were never pushed
+          Force removal. Ordinary removal refuses when the submodule has local changes or unpushed commits. Forcing
+          discards the working-tree checkout only: the local module clone and its objects are retained at the path
+          shown after removal, so re-adding the submodule afterwards works.
         </label>
       </Modal>
 

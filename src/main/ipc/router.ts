@@ -370,7 +370,9 @@ export class Router {
           create: Boolean(data.create),
           startPoint: asOptionalString(data.startPoint, 'Start point'),
           track: Boolean(data.track),
-          force: Boolean(data.force)
+          force: Boolean(data.force),
+          // Only an actual `true` detaches; a truthy string must not.
+          detach: data.detach === true
         })
         return undefined
       case 'git.createBranch':
@@ -639,12 +641,11 @@ export class Router {
         )
         return undefined
       case 'git.submoduleRemove':
-        await repoOps.removeSubmodule(
+        return repoOps.removeSubmodule(
           requireString(data.repoPath, 'Repository path'),
           requireString(data.submodulePath, 'Submodule path'),
           Boolean(data.force)
         )
-        return undefined
       case 'git.remoteAdd':
         await repoOps.addRemote(
           requireString(data.path, 'Repository path'),

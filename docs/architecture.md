@@ -84,8 +84,11 @@ implementing it fails compilation.
   filesystem aliases). Removal only accepts a path reported by `git submodule status`,
   refuses local changes or unpushed commits without `force`, refuses an unstaged
   `.gitmodules`, deinitializes and `git rm`s the checkout, restores
-  it if the remove is refused, then cleans the module directory for the *current*
-  worktree (`git rev-parse --git-path modules/<name>`). Nested submodules are not listed
+  it if the remove is refused, and moves the module clone for the *current* worktree
+  (`git rev-parse --git-path modules/<name>`) aside to `<name>.removed-<timestamp>`.
+  Nothing is deleted: unpublished commits, other refs and stashes in that clone stay
+  recoverable, the path is returned to the renderer so the UI can show it, and re-adding the
+  same submodule afterwards works because the live module path is free. Nested submodules are not listed
   individually; recursive "Update all" advances them, and reset cleans every nested
   checkout inside the selected submodule.
 - Submodule add resolves the account with an exact host match against the submodule URL

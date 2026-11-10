@@ -255,6 +255,8 @@ export interface RefInfo {
 
 export interface TagInfo {
   name: string
+  /** Fully qualified ref (`refs/tags/<name>`), safe to use as a checkout target. */
+  ref: string
   sha: string
   targetSha: string
   annotated: boolean
@@ -322,6 +324,11 @@ export interface SubmoduleAddInput {
   accountId?: string
 }
 
+export interface SubmoduleRemoveResult {
+  /** Where the module clone was moved for recovery; null when it had none. */
+  retainedPath: string | null
+}
+
 export interface SubmoduleUpdateInput {
   repoPath: string
   submodulePath?: string
@@ -342,6 +349,12 @@ export interface StatusFile {
   worktree: string
   stage: FileStage
   label: string
+  /**
+   * True when porcelain v2 reported this pair as a rename. Copies also carry
+   * `origPath` but leave their source in place, so `origPath` alone is not a
+   * signal to act on both paths.
+   */
+  rename?: boolean
 }
 
 export interface RepoStatus {
@@ -620,11 +633,14 @@ export interface DiffInput {
 
 export interface CheckoutInput {
   repoPath: string
+  /** A branch, tag or (with `detach`) a commit or fully qualified ref. */
   branch: string
   create?: boolean
   startPoint?: string
   track?: boolean
   force?: boolean
+  /** Detach HEAD at the target instead of switching to a branch. */
+  detach?: boolean
 }
 
 export interface MergeInput {

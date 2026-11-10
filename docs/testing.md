@@ -55,9 +55,12 @@ Total: 297 tests. The integration suites create temporary repositories under
 - **Submodule lifecycle**: status flags are joined to normalized `.gitmodules` paths, local
   changes and checkout drift are detected, update restores the recorded commit, `--remote`
   follows the tracked branch, sync copies `.gitmodules` into the module config, and remove
-  clears the working tree, the current worktree's module directory and an empty `.gitmodules` while refusing
+  clears the working tree and gitlink plus an empty `.gitmodules` while refusing
   any path not reported by `git submodule status` and any unstaged `.gitmodules` edit.
-  Removing from a linked worktree leaves the main checkout's module clone untouched.
+  The module clone is moved aside to `<name>.removed-<timestamp>` rather than deleted, so
+  unpublished commits stay reachable, and re-adding the same submodule at the same path
+  works afterwards. Removing from a linked worktree leaves the main checkout's module clone
+  untouched and retains that worktree's own clone.
 - **Provider request shapes**: URL, method, headers and JSON body for dispatch, plus error
   text that includes the HTTP status.
 - **Repository tabs**: the renderer store is exercised with a stubbed preload bridge:

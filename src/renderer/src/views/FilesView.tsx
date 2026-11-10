@@ -19,6 +19,7 @@ import {
 import type { BlameLine, DiffResult, DirEntry, FileContent, StatusFile } from '@shared/types'
 import { activeIdentity, useStore } from '../store'
 import { call, errorMessage } from '../lib/ipc'
+import { actionPaths, actionPathsFor, stagePaths, stagePathsFor } from '../lib/files'
 import { formatRelativeTime, languageFromPath } from '../lib/format'
 import { Badge, Button, ConfirmDialog, EmptyState, Field, IconButton, LoadingBlock, Select, TextArea } from '../components/ui'
 import { DiffView } from '../components/DiffView'
@@ -215,7 +216,7 @@ export function FilesView() {
     try {
       await call('git.discard', {
         path: repo.path,
-        files: discardTarget.map((file) => file.path),
+        files: actionPathsFor(discardTarget),
         includeUntracked: discardTarget.some((file) => file.stage === 'untracked')
       })
       setDiscardTarget(null)
@@ -315,6 +316,9 @@ export function FilesView() {
     })
   }
 
+  const discardRename = discardTarget?.length === 1 && discardTarget[0]?.rename ? discardTarget[0] : null
+  const discardPaths = discardTarget ? actionPathsFor(discardTarget) : []
+
   return (
     <div className="view files-view">
       <div className="view-toolbar">
@@ -332,10 +336,22 @@ export function FilesView() {
         <div className="toolbar-actions">
           {tab === 'changes' ? (
             <>
-              <Button size="sm" variant="ghost" icon={<Plus size={13} />} onClick={() => void stageFiles(status.files.map((file) => file.path))} disabled={!status.files.length}>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<Plus size={13} />}
+                onClick={() => void stageFiles(stagePathsFor(status.files))}
+                disabled={!status.files.length}
+              >
                 Stage all
               </Button>
-              <Button size="sm" variant="ghost" icon={<Minus size={13} />} onClick={() => void unstageFiles(status.files.filter((file) => file.stage === 'staged').map((file) => file.path))} disabled={!status.stagedCount}>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<Minus size={13} />}
+                onClick={() => void unstageFiles(actionPathsFor(status.files.filter((file) => file.stage === 'staged')))}
+                disabled={!status.stagedCount}
+              >
                 Unstage all
               </Button>
               <Button size="sm" variant="outline" icon={<RotateCcw size={13} />} onClick={() => void refreshAll()}>
@@ -375,11 +391,11 @@ export function FilesView() {
                       </span>
                       <span className="change-group-actions">
                         {group.key === 'staged' ? (
-                          <IconButton label="Unstage all" onClick={() => void unstageFiles(group.files.map((file) => file.path))}>
+                          <IconButton label="Unstage all" onClick={() => void unstageFiles(actionPathsFor(group.files))}>
                             <Minus size={13} />
                           </IconButton>
                         ) : (
-                          <IconButton label="Stage all" onClick={() => void stageFiles(group.files.map((file) => file.path))}>
+                          <IconButton label="Stage all" onClick={() => void stageFiles(stagePathsFor(group.files))}>
                             <Plus size={13} />
                           </IconButton>
                         )}
@@ -400,17 +416,17 @@ export function FilesView() {
                         <span className="change-actions" onClick={(event) => event.stopPropagation()}>
                           {file.stage === 'staged' ? (
                             <>
-                              <IconButton label="Unstage" onClick={() => void unstageFiles([file.path])}>
+                              <IconButton label="Unstage" onClick={() => void unstageFiles(actionPaths(file))}>
                                 <Minus size={12} />
                               </IconButton>
                               {file.index !== '.' && file.worktree !== '.' ? (
-                                <IconButton label="Stage remaining changes" onClick={() => void stageFiles([file.path])}>
+                                <IconButton label="Stage remaining changes" onClick={() => void stageFiles(stagePaths(file))}>
                                   <Plus size={12} />
                                 </IconButton>
                               ) : null}
                             </>
                           ) : (
-                            <IconButton label="Stage" onClick={() => void stageFiles([file.path])}>
+                            <IconButton label="Stage" onClick={() => void stageFiles(stagePaths(file))}>
                               <Plus size={12} />
                             </IconButton>
                           )}
@@ -482,7 +498,7 @@ export function FilesView() {
               <div className="untracked-pane">
                 <div className="untracked-banner">
                   <FilePlus2 size={14} /> Untracked file — stage it to include it in the next commit.
-                  <Button size="sm" variant="ghost" icon={<Plus size={12} />} onClick={() => void stageFiles([selectedStatus.path])}>
+                  <Button size="sm" variant="ghost" icon={<Plus size={12} />} onClick={() => void stageFiles(stagePaths(selectedStatus))}>
                     Stage file
                   </Button>
                 </div>
@@ -587,7 +603,16 @@ export function FilesView() {
         title="Discard changes"
         message={
           <>
-            Discard changes in {discardTarget?.length === 1 ? <strong>{discardTarget[0]?.path}</strong> : `${discardTarget?.length ?? 0} files`}?
+            {discardRename ? (
+              <>
+                Discard the rename <strong>{discardRename.origPath}</strong> → <strong>{discardRename.path}</strong>?
+              </>
+            ) : (
+              <>
+                Discard changes in{' '}
+                {discardPaths.length === 1 ? <strong>{discardPaths[0]}</strong> : `${discardPaths.length} files`}?
+              </>
+            )}{' '}
             This cannot be undone.
           </>
         }

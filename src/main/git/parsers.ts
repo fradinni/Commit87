@@ -126,7 +126,10 @@ function makeStatusFile(path: string, xy: string, origPath: string | undefined):
     stage = 'unstaged'
     label = statusLabel(worktree)
   }
-  return { path, origPath, index, worktree, stage, label }
+  // Porcelain v2 marks renames and copies in the same X/Y columns; only a
+  // rename pairs a meaningfully removed source with the new path.
+  const rename = Boolean(origPath) && (index === 'R' || worktree === 'R')
+  return { path, origPath, index, worktree, stage, label, ...(rename ? { rename: true } : {}) }
 }
 
 function statusLabel(code: string): string {
@@ -224,12 +227,20 @@ export function parseBranches(output: string, currentBranch: string | null): Ref
 
 export function parseTags(output: string): TagInfo[] {
   const tags: TagInfo[] = []
-  for (const line of output.split('\n')) {
-    if (!line.trim()) continue
-    const f = line.split(FIELD)
-    const name = f[0] ?? ''
-    if (!name) continue
-    const objectSha = f[1] ?? ''
+  // Records are NUL-terminated and `%(contents)` is the last field, so message
+  // newlines can never start another record.
+  for (const chunk of output.split('\0')) {
+    // `for-each-ref` still ends each formatted record with a newline, and the
+    // final NUL leaves one empty trailing chunk.
+    const record = chunk.replace(/^\r?\n/, '').replace(/\r+$/, '')
+    if (!record.trim()) continue
+    const f = record.split(FIELD)
+    const name = (f[0] ?? '').trim()
+    const ref = (f[9] ?? '').trim()
+    if (!name || !ref.startsWith('refs/tags/')) continue
+    const objectSha = (f[1] ?? '').trim()
+    // Defensive guard: a record without a real object id is not a tag.
+    if (!/^[0-9a-f]{4,64}$/i.test(objectSha)) continue
     const objectType = f[2] ?? ''
     const deref = f[3] ?? ''
     const annotated = objectType === 'tag'
@@ -237,9 +248,10 @@ export function parseTags(output: string): TagInfo[] {
     const taggerEmail = (f[6] ?? '').replace(/^<|>$/g, '')
     const taggerDate = Number(f[7] ?? '') * 1000
     const commitDate = Number(f[8] ?? '') * 1000
-    const message = f.slice(9).join(FIELD).trim()
+    const message = f.slice(10).join(FIELD).trim()
     tags.push({
       name,
+      ref,
       sha: objectSha,
       targetSha: annotated && deref ? deref : objectSha,
       annotated,

@@ -535,7 +535,7 @@ export function GraphView() {
             title: 'Check out this commit?',
             message: `This detaches HEAD at ${shortSha(single.sha)}. Your branch will not move.`,
             run: async () => {
-              await call('git.checkout', { repoPath: repo.path, branch: single.sha })
+              await call('git.checkout', { repoPath: repo.path, branch: single.sha, detach: true })
               await useStore.getState().refreshAll(repo.path)
               notify(`Checked out ${shortSha(single.sha)} (detached)`, 'success')
             }
@@ -921,7 +921,7 @@ export function GraphView() {
                         title: 'Check out this commit?',
                         message: `This detaches HEAD at ${shortSha(detail.sha)}. Your branch will not move.`,
                         run: async () => {
-                          await call('git.checkout', { repoPath: repo.path, branch: detail.sha })
+                          await call('git.checkout', { repoPath: repo.path, branch: detail.sha, detach: true })
                           await useStore.getState().refreshAll(repo.path)
                           notify(`Checked out ${shortSha(detail.sha)} (detached)`, 'success')
                         }
