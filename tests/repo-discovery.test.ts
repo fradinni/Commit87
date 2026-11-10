@@ -11,6 +11,7 @@ import {
   resetRepoDiscoveryMetrics,
   resolveRepo
 } from '../src/main/git/repo'
+import { normalizePath } from '../src/main/git/parsers'
 
 const created: string[] = []
 
@@ -104,7 +105,8 @@ describe('repository discovery cache', () => {
     resetRepoDiscoveryMetrics()
     invalidateRepoDiscovery(dir)
     const again = await resolveRepo(dir)
-    expect(again.root).toBe(await fs.realpath(dir))
+    // Git reports forward slashes on Windows; compare in normalized form.
+    expect(normalizePath(again.root)).toBe(normalizePath(await fs.realpath(dir)))
     // An invalidated repository pays one fresh discovery (two processes).
     expect(repoDiscoveryMetrics.cacheHits).toBe(0)
     expect(repoDiscoveryMetrics.spawns).toBeGreaterThanOrEqual(2)

@@ -31,6 +31,7 @@ const { TaskManager } = await import('../src/main/tasks')
 const { ProviderService } = await import('../src/main/providers/service')
 const { UpdateService } = await import('../src/main/updates')
 const { destinationFromUrl } = await import('../src/main/providers/remote')
+const { resolveRepo } = await import('../src/main/git/repo')
 const { GrantStore } = await import('../src/main/ipc/grants')
 
 class InertAdapter implements UpdateAdapter {
@@ -215,8 +216,11 @@ describe('repository defaults bound to remote destinations', () => {
   it('clears a pinned account when the effective remote host changes', async () => {
     const account = await addAccount()
     const repo = await makeRepo({})
+    // Main keys repository defaults by the canonical checkout, which on macOS
+    // resolves the /var -> /private/var alias.
+    const canonical = (await resolveRepo(repo)).path
     await router.handle('git.remoteAdd', { path: repo, name: 'origin', url: 'https://gitlab.company.com/acme/app.git' })
-    await store.setRepoDefaults(repo, {
+    await store.setRepoDefaults(canonical, {
       identityId: undefined,
       defaultRemote: 'origin',
       integrationByProvider: { gitlab: account.id }
@@ -228,7 +232,7 @@ describe('repository defaults bound to remote destinations', () => {
       url: 'https://gitlab.other.example/acme/app.git'
     })
 
-    expect(store.getRepoDefaults(repo).integrationByProvider.gitlab).toBeUndefined()
+    expect(store.getRepoDefaults(canonical).integrationByProvider.gitlab).toBeUndefined()
   })
 
   it('keeps a pinned account when only the path changes', async () => {

@@ -327,6 +327,12 @@ describe('submodule service', () => {
 
     const mainModule = path.join(superRepo, '.git', 'modules', 'lib')
     const linkedModule = path.join(superRepo, '.git', 'worktrees', 'linked', 'modules', 'lib')
+    // Git reports canonical paths (macOS resolves /var to /private/var, Windows
+    // uses its own separators), so compare the module location in that form.
+    const linkedModuleCanonical = path.join(
+      await fs.realpath(path.dirname(linkedModule)),
+      path.basename(linkedModule)
+    )
     expect((await fs.stat(mainModule)).isDirectory()).toBe(true)
     expect((await fs.stat(linkedModule)).isDirectory()).toBe(true)
 
@@ -340,7 +346,7 @@ describe('submodule service', () => {
     const { retainedPath } = await removeSubmodule(linked, 'lib', true)
     expect(retainedPath).toBeTruthy()
     if (!retainedPath) throw new Error('Linked-worktree removal reported no retained module clone')
-    expect(normalizePath(retainedPath).startsWith(`${normalizePath(linkedModule)}.removed-`)).toBe(true)
+    expect(normalizePath(retainedPath).startsWith(`${normalizePath(linkedModuleCanonical)}.removed-`)).toBe(true)
 
     // Git reports canonical paths with its own separators and casing.
     expect(normalizePath((await resolveRepo(superRepo)).path)).toBe(normalizePath(await fs.realpath(superRepo)))
@@ -358,8 +364,9 @@ describe('submodule service', () => {
   it('reports a retained path inside the Git directory that is not the live module path', async () => {
     const { superRepo } = await createFixture('retained-path-case')
     const liveModule = path.join(superRepo, '.git', 'modules', 'lib')
+    const liveModuleCanonical = path.join(await fs.realpath(path.dirname(liveModule)), path.basename(liveModule))
     const gitDirOutput = (await runGit(['rev-parse', '--git-dir'], { cwd: superRepo })).stdout.trim()
-    const gitDir = path.resolve(superRepo, gitDirOutput)
+    const gitDir = await fs.realpath(path.resolve(superRepo, gitDirOutput))
 
     const { retainedPath } = await removeSubmodule(superRepo, 'lib')
     if (!retainedPath) throw new Error('Removal reported no retained module clone')
@@ -367,9 +374,9 @@ describe('submodule service', () => {
     const insideGitDir = path.relative(gitDir, retainedPath)
     expect(insideGitDir.startsWith('..')).toBe(false)
     expect(path.isAbsolute(insideGitDir)).toBe(false)
-    expect(path.dirname(retainedPath)).toBe(path.dirname(liveModule))
-    expect(normalizePath(retainedPath)).not.toBe(normalizePath(liveModule))
-    expect(retainedPath.startsWith(`${liveModule}.removed-`)).toBe(true)
+    expect(normalizePath(path.dirname(retainedPath))).toBe(normalizePath(path.dirname(liveModuleCanonical)))
+    expect(normalizePath(retainedPath)).not.toBe(normalizePath(liveModuleCanonical))
+    expect(normalizePath(retainedPath).startsWith(`${normalizePath(liveModuleCanonical)}.removed-`)).toBe(true)
     expect((await fs.stat(retainedPath)).isDirectory()).toBe(true)
     await expect(fs.stat(liveModule)).rejects.toThrow()
   })
