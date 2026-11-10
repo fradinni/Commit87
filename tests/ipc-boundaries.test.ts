@@ -370,8 +370,9 @@ describe('grant issuance and repository authorization', () => {
     await store.addRecentRepo(repo, path.basename(repo))
     const info = await router.handle('repo.open', { path: repo })
     // Git reports its own separators and resolves symlinked parents, so the
-    // path a successful open returns is compared in normalized form.
-    expect(normalizePath(info.path)).toBe(normalizePath(repo))
+    // path a successful open returns is compared with realpath in normalized
+    // form (macOS /var, Windows 8.3 short names).
+    expect(normalizePath(info.path)).toBe(normalizePath(await fs.realpath(repo)))
     expect(await grants.allowsRepoPath(repo)).toBe(true)
   })
 
@@ -393,7 +394,7 @@ describe('grant issuance and repository authorization', () => {
     const parent = await makeDir('commit87-ipc-init-')
     await grants.grantPath(parent)
     const info = await router.handle('repo.init', { directory: parent, name: 'fresh' })
-    expect(normalizePath(info.path)).toBe(normalizePath(path.join(parent, 'fresh')))
+    expect(normalizePath(info.path)).toBe(normalizePath(await fs.realpath(path.join(parent, 'fresh'))))
     expect(await grants.allowsRepoPath(info.path)).toBe(true)
     await router.handle('repo.open', { path: info.path })
   })
@@ -406,7 +407,7 @@ describe('grant issuance and repository authorization', () => {
     await grants.grantPath(outer)
 
     const info = await router.handle('repo.open', { path: inner })
-    expect(normalizePath(info.path)).toBe(normalizePath(inner))
+    expect(normalizePath(info.path)).toBe(normalizePath(await fs.realpath(inner)))
     await router.handle('git.status', { path: inner })
   })
 
