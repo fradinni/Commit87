@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   accountMatchesDestination,
+  cloneBaseForAccount,
   accountMatchesHost,
   destinationFromUrl,
   detectProviderFromUrl,
@@ -76,6 +77,33 @@ describe('remote URL parsing', () => {
     expect(webUrlFor('gitlab', 'gitlab.example.com', 'group/app', 'repo')).toBe('https://gitlab.example.com/group/app/repo')
     expect(normalizeBaseUrl('github', '')).toBe('https://api.github.com')
     expect(normalizeBaseUrl('gitea', 'https://git.example.com/')).toBe('https://git.example.com')
+  })
+})
+
+describe('clone base URLs', () => {
+  it('keeps a self-hosted port and sub-path instead of the ssh host', () => {
+    expect(cloneBaseForAccount(account('a', 'gitea', 'https://git.example:8443/gitea'))).toBe(
+      'https://git.example:8443/gitea'
+    )
+  })
+
+  it('maps API hosts back to their clone host', () => {
+    expect(cloneBaseForAccount(account('g', 'github', 'https://api.github.com'))).toBe('https://github.com')
+    expect(cloneBaseForAccount(account('b', 'bitbucket', 'https://api.bitbucket.org/2.0'))).toBe(
+      'https://bitbucket.org'
+    )
+  })
+
+  it('strips an API suffix from an enterprise base URL', () => {
+    expect(cloneBaseForAccount(account('e', 'github', 'https://ghe.example.com/api/v3'))).toBe(
+      'https://ghe.example.com'
+    )
+  })
+
+  it('uses an explicit clone host', () => {
+    expect(cloneBaseForAccount(account('x', 'gitlab', 'https://api.gitlab.example.com', 'gitlab.example.com'))).toBe(
+      'https://gitlab.example.com'
+    )
   })
 })
 

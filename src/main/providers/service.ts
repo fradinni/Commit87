@@ -4,17 +4,29 @@ import type {
   CreatePullRequestInput,
   CreateReleaseInput,
   IntegrationAccount,
+  PagedResult,
   ProviderConnection,
   ProviderDetection,
   ProviderRepo,
   PullRequest,
   Release
 } from '@shared/types'
+import { PROVIDERS, providerCapabilities } from '@shared/types'
 import { buildAuthArgs, runGit, tryRunGit } from '../git/runner'
 import { resolveRepo } from '../git/repo'
-import { accountMatchesDestination, destinationFromUrl, parseRemoteUrl, providerFromHost, webUrlFor } from './remote'
+import {
+  accountMatchesDestination,
+  cloneBaseForAccount,
+  destinationFromUrl,
+  parseRemoteUrl,
+  providerFromHost,
+  webUrlFor
+} from './remote'
 import { createProviderClient } from './index'
 import type { ProviderClient } from './types'
+import { planPullFetch, verifyFetchedHead } from './checkout'
+import type { PullFetchPlan } from './checkout'
+import { assertReleaseIntent } from './release'
 import { AppStore } from '../store'
 
 export class ProviderService {
@@ -27,7 +39,8 @@ export class ProviderService {
       username: account.username,
       baseUrl: account.baseUrl,
       label: account.label,
-      hasToken: account.hasToken
+      hasToken: account.hasToken,
+      capabilities: providerCapabilities(account.provider)
     }))
   }
 
@@ -60,13 +73,15 @@ export class ProviderService {
       const provider = remote.provider ?? providerFromHost(parsed.host, this.store.listIntegrations())
       const account = this.store.authorizeAccount(repo.path, provider, destination)
       if (provider || account) {
+        const effective = provider ?? account?.provider
         return {
-          provider,
+          provider: effective,
           accountId: account?.id,
           host: parsed.host,
           owner: parsed.owner,
           repo: parsed.repo,
-          webUrlBase: webUrlFor(provider, parsed.host, parsed.owner, parsed.repo)
+          webUrlBase: webUrlFor(effective, parsed.host, parsed.owner, parsed.repo),
+          capabilities: effective ? providerCapabilities(effective) : undefined
         }
       }
     }
@@ -78,9 +93,15 @@ export class ProviderService {
     return client.listRepos(search)
   }
 
-  async listPullRequests(accountId: string, owner: string, repo: string, state: 'open' | 'closed' | 'all' = 'open'): Promise<PullRequest[]> {
+  async listPullRequests(
+    accountId: string,
+    owner: string,
+    repo: string,
+    state: 'open' | 'closed' | 'all' = 'open',
+    page?: string
+  ): Promise<PagedResult<PullRequest>> {
     const { client } = await this.client(accountId)
-    return client.listPullRequests(owner, repo, state)
+    return client.listPullRequests(owner, repo, state, page)
   }
 
   async createPullRequest(accountId: string, owner: string, repo: string, input: CreatePullRequestInput): Promise<PullRequest> {
@@ -90,30 +111,40 @@ export class ProviderService {
     return client.createPullRequest(owner, repo, input)
   }
 
-  async listReleases(accountId: string, owner: string, repo: string): Promise<Release[]> {
+  async listReleases(accountId: string, owner: string, repo: string, page?: string): Promise<PagedResult<Release>> {
     const { client } = await this.client(accountId)
-    return client.listReleases(owner, repo)
+    return client.listReleases(owner, repo, page)
   }
 
   async createRelease(accountId: string, owner: string, repo: string, input: CreateReleaseInput): Promise<Release> {
     if (!/^[^\s]+$/.test(input.tagName)) throw new Error('A tag name is required')
-    const { client } = await this.client(accountId)
+    const { client, account } = await this.client(accountId)
+    assertReleaseIntent(account.provider, client.capabilities.releases, input)
     return client.createRelease(owner, repo, input)
   }
 
   async deleteRelease(accountId: string, owner: string, repo: string, id: string): Promise<void> {
-    const { client } = await this.client(accountId)
+    const { client, account } = await this.client(accountId)
+    if (!client.capabilities.releases.delete) {
+      throw new Error(`${PROVIDERS[account.provider].name} does not support deleting releases`)
+    }
     await client.deleteRelease(owner, repo, id)
   }
 
-  async listWorkflows(accountId: string, owner: string, repo: string): Promise<ActionWorkflow[]> {
+  async listWorkflows(accountId: string, owner: string, repo: string, page?: string): Promise<PagedResult<ActionWorkflow>> {
     const { client } = await this.client(accountId)
-    return client.listWorkflows(owner, repo)
+    return client.listWorkflows(owner, repo, page)
   }
 
-  async listRuns(accountId: string, owner: string, repo: string, workflowId?: string): Promise<ActionRun[]> {
+  async listRuns(
+    accountId: string,
+    owner: string,
+    repo: string,
+    workflowId?: string,
+    page?: string
+  ): Promise<PagedResult<ActionRun>> {
     const { client } = await this.client(accountId)
-    return client.listRuns(owner, repo, workflowId)
+    return client.listRuns(owner, repo, workflowId, page)
   }
 
   async triggerAction(
@@ -125,7 +156,13 @@ export class ProviderService {
     inputs?: Record<string, string>
   ): Promise<void> {
     if (!ref.trim()) throw new Error('A branch or ref is required')
-    const { client } = await this.client(accountId)
+    const { client, account } = await this.client(accountId)
+    const capabilities = client.capabilities.actions
+    const name = PROVIDERS[account.provider].name
+    if (!capabilities.dispatch) throw new Error(`${name} does not support dispatching workflows from Commit87.`)
+    if (inputs && Object.keys(inputs).length && !capabilities.inputs) {
+      throw new Error(`${name} workflows do not accept inputs. Remove them before dispatching.`)
+    }
     await client.triggerAction(owner, repo, workflowId, ref, inputs)
   }
 
@@ -151,21 +188,25 @@ export class ProviderService {
       return {
         remote,
         destination,
+        parsed,
         matchesRepo: Boolean(
           parsed && parsed.owner.toLowerCase() === owner.toLowerCase() && parsed.repo.toLowerCase() === repoName.toLowerCase()
         ),
         authorized: Boolean(destination && accountMatchesDestination(account, destination))
       }
     })
-    const exact = candidates.find((item) => item.matchesRepo)
+    // Prefer a remote that both names this repository and is authorized for the
+    // account: remote enumeration is alphabetical, so the first owner/repo
+    // match is not necessarily the one this account can talk to.
+    const matchingRepo = candidates.filter((item) => item.matchesRepo)
+    const exact = matchingRepo.find((item) => item.authorized)
     let chosen: (typeof candidates)[number]
     if (exact) {
-      if (!exact.authorized) {
-        throw new Error(
-          `The "${account.label}" account is not authorized for ${exact.destination?.host ?? 'that remote'}. Choose a matching account before checking out.`
-        )
-      }
       chosen = exact
+    } else if (matchingRepo.length) {
+      throw new Error(
+        `The "${account.label}" account is not authorized for ${matchingRepo[0].destination?.host ?? 'that remote'}. Choose a matching account before checking out.`
+      )
     } else {
       const authorized = candidates.filter((item) => item.authorized)
       if (!authorized.length) {
@@ -180,39 +221,93 @@ export class ProviderService {
     }
     const remote = chosen.remote
 
-    const provider = account.provider
-    let refspec: string
-    let startRef: string
-    if (provider === 'github') {
-      refspec = `+refs/pull/${number}/head:refs/remotes/${remote.name}/pr/${number}`
-      startRef = `refs/remotes/${remote.name}/pr/${number}`
-    } else if (provider === 'gitlab') {
-      refspec = `+refs/merge-requests/${number}/head:refs/remotes/${remote.name}/mr/${number}`
-      startRef = `refs/remotes/${remote.name}/mr/${number}`
-    } else {
-      const pulls = await client.listPullRequests(owner, repoName, 'all')
-      const pull = pulls.find((item) => item.number === number)
-      if (!pull?.sourceBranch) throw new Error(`Could not find pull request #${number}`)
-      refspec = `+refs/heads/${pull.sourceBranch}:refs/remotes/${remote.name}/${pull.sourceBranch}`
-      startRef = `refs/remotes/${remote.name}/${pull.sourceBranch}`
-    }
-    void identityId
-
-    const auth = chosen.destination?.origin
-      ? buildAuthArgs(account, token, chosen.destination.origin)
-      : { args: [], env: {} }
-    await runGit([...auth.args, 'fetch', remote.name, refspec], {
-      cwd: repo.path,
-      env: auth.env,
-      timeoutMs: 180_000
-    })
-
     const branch = branchName?.trim() || `pr-${number}`
     const exists = await tryRunGit(['rev-parse', '--verify', `refs/heads/${branch}`], { cwd: repo.path })
     if (exists && exists.exitCode === 0) {
       throw new Error(`Branch "${branch}" already exists. Choose another name or delete it first.`)
     }
-    await runGit(['switch', '-c', branch, startRef], { cwd: repo.path })
+
+    // Ask the forge for this pull request directly; never search a list page.
+    const pull = await client.getPullRequest(owner, repoName, number)
+    const host = chosen.parsed?.host ?? chosen.destination?.host
+    if (!host) throw new Error(`Could not determine the host of remote "${remote.name}".`)
+    // Build contributor URLs from the account's configured server, which keeps
+    // an explicit port and a self-hosted sub-path that an ssh remote omits.
+    const plan = planPullFetch(
+      account.provider,
+      number,
+      pull,
+      remote.name,
+      cloneBaseForAccount(account) ?? chosen.destination?.origin ?? host
+    )
+
+    const attempts: Array<{ url: string; refspec: string; origin?: string }> = []
+    const describeAttempt = (source: PullFetchPlan['source'], refspec: string) => {
+      if (source.kind === 'remote') {
+        // An ssh remote authenticates with keys; only an http(s) destination
+        // receives the scoped token helper.
+        return { url: remote.name, refspec, origin: chosen.destination?.origin }
+      }
+      const destination = destinationFromUrl(source.url)
+      if (!destination || !accountMatchesDestination(account, destination)) {
+        throw new Error(
+          `The "${account.label}" account is not authorized for the pull request's source repository ${pull.sourceRepo ?? ''}.`
+        )
+      }
+      return { url: source.url, refspec, origin: destination.origin }
+    }
+    attempts.push(describeAttempt(plan.source, plan.refspec))
+    if (plan.fallback) attempts.push(describeAttempt(plan.fallback.source, plan.fallback.refspec))
+
+    let lastError: unknown = null
+    let verified = false
+    for (const attempt of attempts) {
+      const auth = attempt.origin ? buildAuthArgs(account, token, attempt.origin) : { args: [], env: {} }
+      try {
+        await runGit([...auth.args, 'fetch', attempt.url, attempt.refspec], {
+          cwd: repo.path,
+          env: auth.env,
+          timeoutMs: 180_000
+        })
+      } catch (error) {
+        lastError = error
+        // A missing pull request ref is the documented Gitea fallback case;
+        // any other failure (auth, network) is still worth trying the
+        // contributor repository, whose authorization was checked above.
+        continue
+      }
+      // Verify per attempt: a published but stale pull ref must not block the
+      // contributor fetch that carries the authoritative head.
+      const resolved = await runGit(['rev-parse', '--verify', plan.verifyRef], {
+        cwd: repo.path,
+        allowFailure: true
+      })
+      try {
+        await verifyFetchedHead(plan, {
+          resolve: async () => (resolved.exitCode === 0 ? resolved.stdout : null),
+          deleteRef: async (ref) => {
+            await runGit(['update-ref', '-d', ref], { cwd: repo.path, allowFailure: true })
+          }
+        })
+        verified = true
+        break
+      } catch (error) {
+        lastError = error
+      }
+    }
+    if (!verified) {
+      const message = lastError instanceof Error ? lastError.message : String(lastError)
+      throw new Error(`Could not fetch the head of pull request #${number}: ${message}`)
+    }
+
+    try {
+      await runGit(['switch', '-c', branch, plan.verifyRef], { cwd: repo.path })
+    } finally {
+      if (plan.cleanupOnSuccess) {
+        await runGit(['update-ref', '-d', plan.tempRef], { cwd: repo.path, allowFailure: true })
+      }
+    }
+    void identityId
     return { branch }
   }
 }

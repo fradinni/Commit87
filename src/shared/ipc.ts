@@ -26,6 +26,7 @@ import type {
   ProviderConnection,
   ProviderDetection,
   ProviderRepo,
+  PagedResult,
   PullRequest,
   PushInput,
   PullInput,
@@ -167,14 +168,14 @@ export interface IpcMethods {
   'provider.detect': { request: { path: string }; response: ProviderDetection }
   'provider.connections': { request: void; response: ProviderConnection[] }
   'provider.repos': { request: { accountId: string; search?: string }; response: ProviderRepo[] }
-  'provider.pullRequests': { request: { accountId: string; owner: string; repo: string; state?: 'open' | 'closed' | 'all' }; response: PullRequest[] }
+  'provider.pullRequests': { request: { accountId: string; owner: string; repo: string; state?: 'open' | 'closed' | 'all'; page?: string }; response: PagedResult<PullRequest> }
   'provider.createPullRequest': { request: { accountId: string; owner: string; repo: string; input: CreatePullRequestInput }; response: PullRequest }
   'provider.checkoutPullRequest': { request: { path: string; accountId: string; owner: string; repo: string; number: number; branchName?: string; identityId?: string }; response: { branch: string } }
-  'provider.releases': { request: { accountId: string; owner: string; repo: string }; response: Release[] }
+  'provider.releases': { request: { accountId: string; owner: string; repo: string; page?: string }; response: PagedResult<Release> }
   'provider.createRelease': { request: { accountId: string; owner: string; repo: string; input: CreateReleaseInput }; response: Release }
   'provider.deleteRelease': { request: { accountId: string; owner: string; repo: string; id: string }; response: void }
-  'provider.workflows': { request: { accountId: string; owner: string; repo: string }; response: ActionWorkflow[] }
-  'provider.runs': { request: { accountId: string; owner: string; repo: string; workflowId?: string }; response: ActionRun[] }
+  'provider.workflows': { request: { accountId: string; owner: string; repo: string; page?: string }; response: PagedResult<ActionWorkflow> }
+  'provider.runs': { request: { accountId: string; owner: string; repo: string; workflowId?: string; page?: string }; response: PagedResult<ActionRun> }
   'provider.triggerAction': { request: TriggerActionInput; response: void }
 
   'window.minimize': { request: void; response: void }

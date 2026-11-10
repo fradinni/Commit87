@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUpRight, CircleDot, Play, RefreshCw, Rocket, Timer } from 'lucide-react'
 import type { ActionRun, ActionWorkflow } from '@shared/types'
+import { providerCapabilities } from '@shared/types'
 import { useStore } from '../store'
 import { call } from '../lib/ipc'
 import { formatRelativeTime } from '../lib/format'
@@ -16,6 +17,11 @@ export function ActionsView() {
   const setView = useStore((state) => state.setView)
   const [workflows, setWorkflows] = useState<ActionWorkflow[]>([])
   const [runs, setRuns] = useState<ActionRun[]>([])
+  const [nextPage, setNextPage] = useState<string | undefined>(undefined)
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const [unsupported, setUnsupported] = useState(false)
   const [workflowId, setWorkflowId] = useState('')
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -29,35 +35,85 @@ export function ActionsView() {
     [config?.integrations, detection.accountId]
   )
   const ready = Boolean(account && detection.owner && detection.repo)
+  const caps = detection.capabilities?.actions ?? (account ? providerCapabilities(account.provider).actions : undefined)
+  // Only the newest request may write state, so a slow page or an old workflow
+  // cannot replace a newer selection.
+  const requestGeneration = useRef(0)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (page?: string, background = false): Promise<void> => {
     if (!account || !detection.owner || !detection.repo) return
-    setLoading(true)
+    const generation = requestGeneration.current + 1
+    requestGeneration.current = generation
+    const appending = Boolean(page)
+    if (appending) {
+      setLoadingMore(true)
+      setLoading(false)
+    } else if (!background) {
+      setLoading(true)
+      setLoadingMore(false)
+    }
     try {
-      const [workflowList, runList] = await Promise.all([
-        call('provider.workflows', {
-          accountId: account.id,
-          owner: detection.owner,
-          repo: detection.repo
-        }),
-        call('provider.runs', {
+      if (appending) {
+        const runResult = await call('provider.runs', {
           accountId: account.id,
           owner: detection.owner,
           repo: detection.repo,
-          workflowId: workflowId || undefined
+          workflowId: workflowId || undefined,
+          page
         })
-      ])
-      setWorkflows(workflowList)
-      setRuns(runList)
-      if (!workflowId && workflowList.length === 1) setWorkflowId(workflowList[0].id)
+        if (generation !== requestGeneration.current) return
+        setRuns((previous) => mergeRuns(previous, runResult.items))
+        // A background poll only refreshes the first page; it must not rewind
+        // the paging cursor for pages the user already loaded.
+        if (!background) {
+          setNextPage(runResult.nextPage)
+          setHasMore(runResult.hasMore && Boolean(runResult.nextPage))
+        }
+        setUnsupported(Boolean(runResult.unsupported))
+      } else {
+        const [workflowResult, runResult] = await Promise.all([
+          call('provider.workflows', {
+            accountId: account.id,
+            owner: detection.owner,
+            repo: detection.repo
+          }),
+          call('provider.runs', {
+            accountId: account.id,
+            owner: detection.owner,
+            repo: detection.repo,
+            workflowId: workflowId || undefined
+          })
+        ])
+        if (generation !== requestGeneration.current) return
+        setWorkflows(workflowResult.items)
+        // A background poll refreshes the first page without discarding pages
+        // the user has already loaded.
+        setRuns((previous) => (background ? mergeRuns(runResult.items, previous) : runResult.items))
+        if (!background) {
+          setNextPage(runResult.nextPage)
+          setHasMore(runResult.hasMore && Boolean(runResult.nextPage))
+        }
+        setUnsupported(Boolean(runResult.unsupported))
+        if (!workflowId && workflowResult.items.length === 1) setWorkflowId(workflowResult.items[0].id)
+      }
+      setFailed(false)
     } catch (error) {
-      notifyError(error)
+      if (generation !== requestGeneration.current) return
+      setFailed(true)
+      if (!background) notifyError(error)
     } finally {
-      setLoading(false)
+      // Clear this request's own flag even when a newer request superseded it,
+      // otherwise a poll that interrupts "Load more" leaves the button disabled.
+      if (appending || background) setLoadingMore(false)
+      if (!background) setLoading(false)
     }
   }, [account, detection.owner, detection.repo, notifyError, workflowId])
 
   useEffect(() => {
+    setRuns([])
+    setNextPage(undefined)
+    setHasMore(false)
+    setLoadingMore(false)
     void load()
   }, [load])
 
@@ -68,7 +124,7 @@ export function ActionsView() {
   useEffect(() => {
     if (!autoRefresh || !ready || !account) return undefined
     const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void load()
+      if (document.visibilityState === 'visible') void load(undefined, true)
     }, 20_000)
     return () => window.clearInterval(timer)
   }, [account, autoRefresh, load, ready])
@@ -90,12 +146,16 @@ export function ActionsView() {
 
   const trigger = async (): Promise<void> => {
     if (!account) return
+    if (!caps?.dispatch) {
+      notify('This provider does not support dispatching workflows from Commit87', 'info')
+      return
+    }
     if (!ref.trim()) {
       notify('A branch or ref is required', 'info')
       return
     }
     let parsed: Record<string, string> | undefined
-    if (inputs.trim()) {
+    if (caps.inputs && inputs.trim()) {
       try {
         const value = JSON.parse(inputs) as Record<string, unknown>
         parsed = Object.fromEntries(Object.entries(value).map(([key, item]) => [key, String(item)]))
@@ -148,7 +208,7 @@ export function ActionsView() {
           <Button size="sm" variant="ghost" icon={<RefreshCw size={13} />} onClick={() => void load()} loading={loading}>
             Refresh
           </Button>
-          <Button size="sm" variant="primary" icon={<Play size={13} />} onClick={() => setRunOpen(true)} disabled={workflows.length === 0 && detection.provider === 'github'}>
+          <Button size="sm" variant="primary" icon={<Play size={13} />} onClick={() => setRunOpen(true)} disabled={!caps?.dispatch || (workflows.length === 0 && detection.provider === 'github')}>
             Run workflow
           </Button>
         </div>
@@ -181,12 +241,28 @@ export function ActionsView() {
 
         <div className="runs-panel">
           {runs.length === 0 && !loading ? (
-            <EmptyState
-              icon={<CircleDot size={22} />}
-              title="No pipeline runs"
-              description="Runs appear here after pushes, pull requests or manual dispatches."
-              action={<Button size="sm" variant="outline" onClick={() => void load()}>Reload</Button>}
-            />
+            unsupported ? (
+              <EmptyState
+                icon={<CircleDot size={22} />}
+                title="Actions are unavailable"
+                description="This repository does not expose Actions task runs. Check that Actions is enabled for it, or open the forge to inspect pipelines."
+                action={<Button size="sm" variant="outline" onClick={() => void load()}>Reload</Button>}
+              />
+            ) : failed ? (
+              <EmptyState
+                icon={<CircleDot size={22} />}
+                title="Could not load pipeline runs"
+                description="The forge request failed. Check the account token and try again."
+                action={<Button size="sm" variant="outline" onClick={() => void load()}>Retry</Button>}
+              />
+            ) : (
+              <EmptyState
+                icon={<CircleDot size={22} />}
+                title="No pipeline runs"
+                description="Runs appear here after pushes, pull requests or manual dispatches."
+                action={<Button size="sm" variant="outline" onClick={() => void load()}>Reload</Button>}
+              />
+            )
           ) : (
             <div className="run-list">
               {runs.map((run) => (
@@ -219,6 +295,13 @@ export function ActionsView() {
                   </Button>
                 </article>
               ))}
+              {hasMore ? (
+                <div className="list-load-more">
+                  <Button size="sm" variant="outline" loading={loadingMore} onClick={() => void load(nextPage)}>
+                    Load more runs
+                  </Button>
+                </div>
+              ) : null}
             </div>
           )}
         </div>
@@ -250,9 +333,11 @@ export function ActionsView() {
         <Field label="Branch or ref" hint="The workflow definition is read from this ref.">
           <TextInput value={ref} onChange={(event) => setRef(event.target.value)} placeholder="main" autoFocus />
         </Field>
-        <Field label="Inputs (JSON)" hint="Optional workflow_dispatch inputs, passed as key/value strings.">
-          <TextArea value={inputs} onChange={(event) => setInputs(event.target.value)} rows={3} placeholder={'{"environment":"staging"}'} />
-        </Field>
+        {caps?.inputs ? (
+          <Field label="Inputs (JSON)" hint="Optional workflow_dispatch inputs, passed as key/value strings.">
+            <TextArea value={inputs} onChange={(event) => setInputs(event.target.value)} rows={3} placeholder={'{"environment":"staging"}'} />
+          </Field>
+        ) : null}
         {detection.provider === 'bitbucket' ? <p className="muted">Bitbucket Pipelines starts the pipeline defined for this branch.</p> : null}
         {detection.provider === 'gitea' && workflows.length === 0 ? <p className="muted">No workflow files were found in .gitea/workflows or .github/workflows.</p> : null}
       </Modal>
@@ -272,4 +357,9 @@ function conclusionTone(conclusion: string | null): 'green' | 'red' | 'amber' | 
   if (conclusion === 'failure' || conclusion === 'cancelled' || conclusion === 'timed_out') return 'red'
   if (conclusion === 'skipped') return 'neutral'
   return 'blue'
+}
+
+function mergeRuns(existing: ActionRun[], incoming: ActionRun[]): ActionRun[] {
+  const seen = new Set(existing.map((run) => run.id))
+  return [...existing, ...incoming.filter((run) => !seen.has(run.id))]
 }

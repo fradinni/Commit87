@@ -383,15 +383,21 @@ Each provider implements `ProviderClient`:
 ```ts
 getCurrentUser()
 listRepos(search?)
-listPullRequests(owner, repo, state)
+getPullRequest(owner, repo, number)
+listPullRequests(owner, repo, state, page?)   // PagedResult<PullRequest>
 createPullRequest(owner, repo, input)
-listReleases() / createRelease() / deleteRelease()
-listWorkflows() / listRuns() / triggerAction()
+listReleases(owner, repo, page?)              // PagedResult<Release>
+createRelease() / deleteRelease()
+listWorkflows(owner, repo, page?)             // PagedResult<ActionWorkflow>
+listRuns(owner, repo, workflowId?, page?)     // PagedResult<ActionRun>
+triggerAction()
+readonly capabilities: ProviderCapabilities
 ```
 
 `providers/http.ts` centralizes authentication, timeouts (30 s, `AbortSignal.timeout`),
-error description (401/403/404 hints) and a `Commit87/0.1` user agent. Authentication per
-provider:
+error description (401/403/404 hints) and a `Commit87/0.1` user agent. A serialised JSON body
+always carries `Content-Type: application/json`; provider `Accept` headers are preserved.
+Authentication per provider:
 
 | Provider | Header |
 | --- | --- |
@@ -403,17 +409,62 @@ provider:
 Hosting variants are handled: GitHub Enterprise (`/api/v3`), self-hosted GitLab
 (`/api/v4`), self-hosted Gitea (`/api/v1`) and Bitbucket Server `scm/` URLs.
 
-Pull request checkout fetches the forge ref into a local branch:
+Collections return `{ items, hasMore, nextPage?, unsupported? }`. `nextPage` is an opaque
+continuation token: GitHub follows the `Link` header's `rel="next"` page, GitLab uses
+`X-Next-Page`, Gitea uses `X-Total-Count` (falling back to a full page) and Bitbucket passes
+its `next` URL through. Pull request, release and run lists offer **Load more** in the UI;
+an empty list, a failed request and a collection the forge does not expose are displayed
+differently (`unsupported` covers Gitea Actions and Bitbucket releases).
 
-| Provider | Refspec |
-| --- | --- |
-| GitHub | `+refs/pull/N/head:refs/remotes/<remote>/pr/N` |
-| GitLab | `+refs/merge-requests/N/head:refs/remotes/<remote>/mr/N` |
-| Bitbucket / Gitea | `+refs/heads/<source>:refs/remotes/<remote>/<source>` |
+### Provider capabilities
 
-then `git switch -c pr-N <ref>`. Checkout picks a remote whose destination the selected account
-is authorized for (an exact owner/repository match first) and never falls back to an unrelated
-remote; the fetch uses the same origin-scoped helper as other operations.
+`PROVIDER_CAPABILITIES` in `src/shared/types.ts` is static per forge and is returned with
+`provider.detect` and `provider.connections`:
+
+| Provider | Releases | Draft | Prerelease | Actions inputs | Pagination |
+| --- | --- | --- | --- | --- | --- |
+| GitHub | yes | yes | yes | yes | pulls, releases, workflows, runs |
+| GitLab | yes | no | no | yes | pulls, releases, runs |
+| Bitbucket | no | no | no | no | pulls, runs |
+| Gitea | yes | yes | yes | yes | pulls, releases, runs |
+
+The renderer hides controls a provider cannot honour. Main enforces the same rules before a
+write: `ProviderService.createRelease` rejects a requested draft or prerelease that the forge
+cannot represent (GitLab has neither; Bitbucket has no releases), and
+`ProviderService.triggerAction` rejects inputs for Bitbucket Pipelines. The adapters repeat
+those checks as a second barrier, so an unsupported intent never reaches HTTP.
+
+### Pull request checkout
+
+Checkout asks the forge for the pull request by number (`getPullRequest`); it never searches
+a list page. The normalized `PullRequest` carries `headSha` and, where the forge reports it,
+`sourceRepo` (`owner/repo`).
+
+| Provider | Fetch | Verification |
+| --- | --- | --- |
+| GitHub | `+refs/pull/N/head:refs/remotes/<remote>/pr/N` | commit equals `headSha` |
+| GitLab | `+refs/merge-requests/N/head:refs/remotes/<remote>/mr/N` | commit equals `headSha` |
+| Gitea | `+refs/pull/N/head:refs/commit87/pull/N`, falling back to the contributor repository | commit equals `headSha` |
+| Bitbucket | contributor repo from `sourceRepo`, `+refs/heads/<source>:refs/commit87/pull/N` | commit equals `headSha` |
+
+The contributor URL is built on the destination remote's origin and must match the selected
+account's authority. After fetching, `git rev-parse` must equal the reported head; on a
+mismatch the temporary ref is deleted and nothing is checked out. The local `pr-N` branch is
+only created after verification, and an existing branch still aborts the operation before
+anything is fetched. Checkout picks a remote whose destination the selected account is
+authorized for (an exact owner/repository match first) and never falls back to an unrelated
+remote; every fetch uses the same origin-scoped helper as other operations.
+
+### Provider contract details
+
+- **Bitbucket** PR lists send explicit `state` parameters: `OPEN`, the three closed states
+  (`MERGED`, `DECLINED`, `SUPERSEDED`) or all four. Repository, PR and pipeline lists follow
+  the `next` continuation; pipeline `sha` comes from the target commit.
+- **Gitea Actions** decodes the documented `{ workflow_runs, total_count? }` envelope and
+  still accepts a bare array or extra fields. A 404 is reported as `unsupported`, so "Actions
+  unavailable" is distinct from an empty run list.
+- **GitHub / GitLab** map merged and closed pull requests separately (Gitea too), and expose
+  completeness metadata instead of presenting the first page as the whole collection.
 
 ## UI
 

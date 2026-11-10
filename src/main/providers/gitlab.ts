@@ -4,13 +4,16 @@ import type {
   CreatePullRequestInput,
   CreateReleaseInput,
   IntegrationAccount,
-  PullRequest,
+  PagedResult,
+  ProviderCapabilities,
   ProviderRepo,
+  PullRequest,
   Release
 } from '@shared/types'
-import { apiRequest, encodeProjectPath } from './http'
+import { providerCapabilities } from '@shared/types'
+import { apiRequest, apiRequestWithHeaders, encodeProjectPath, joinUrl, positiveInt } from './http'
 import type { ProviderClient } from './types'
-import { requireToken, toEpoch } from './types'
+import { pageOf, requireToken, toEpoch } from './types'
 
 interface GitlabProject {
   id: number
@@ -37,6 +40,8 @@ interface GitlabMergeRequest {
   author?: { username?: string; name?: string }
   source_branch: string
   target_branch: string
+  sha?: string
+  merged_at?: string | null
   web_url: string
   created_at: string
   updated_at: string
@@ -71,9 +76,15 @@ function apiBase(account: IntegrationAccount): string {
   return base.endsWith('/api/v4') ? base : `${base}/api/v4`
 }
 
+function nextPage(headers: Headers): string | undefined {
+  const value = positiveInt(headers.get('x-next-page'))
+  return value ? String(value) : undefined
+}
+
 export class GitlabClient implements ProviderClient {
   readonly provider = 'gitlab'
   readonly account: IntegrationAccount
+  readonly capabilities: ProviderCapabilities = providerCapabilities('gitlab')
   private readonly token: string
   private readonly base: string
 
@@ -83,9 +94,25 @@ export class GitlabClient implements ProviderClient {
     this.base = apiBase(account)
   }
 
-  private request<T>(path: string, options: { method?: 'GET' | 'POST' | 'DELETE'; query?: Record<string, string | number | boolean | undefined>; body?: unknown } = {}): Promise<T> {
-    return apiRequest<T>(`${this.base}${path}`, {
+  private request<T>(
+    path: string,
+    options: {
+      method?: 'GET' | 'POST' | 'DELETE'
+      query?: Record<string, string | number | boolean | undefined>
+      body?: unknown
+    } = {}
+  ): Promise<T> {
+    return apiRequest<T>(joinUrl(this.base, path), {
       ...options,
+      token: this.token,
+      provider: this.provider,
+      username: this.account.username
+    })
+  }
+
+  private getWithHeaders<T>(path: string, query?: Record<string, string | number | boolean | undefined>) {
+    return apiRequestWithHeaders<T>(joinUrl(this.base, path), {
+      query,
       token: this.token,
       provider: this.provider,
       username: this.account.username
@@ -122,12 +149,29 @@ export class GitlabClient implements ProviderClient {
     }))
   }
 
-  async listPullRequests(owner: string, repo: string, state: 'open' | 'closed' | 'all'): Promise<PullRequest[]> {
+  async getPullRequest(owner: string, repo: string, number: number): Promise<PullRequest> {
+    const item = await this.request<GitlabMergeRequest>(
+      `/projects/${encodeProjectPath(owner, repo)}/merge_requests/${number}`
+    )
+    return this.mapMergeRequest(item)
+  }
+
+  async listPullRequests(
+    owner: string,
+    repo: string,
+    state: 'open' | 'closed' | 'all',
+    page?: string
+  ): Promise<PagedResult<PullRequest>> {
     const stateParam = state === 'open' ? 'opened' : state === 'closed' ? 'closed' : 'all'
-    const items = await this.request<GitlabMergeRequest[]>(`/projects/${encodeProjectPath(owner, repo)}/merge_requests`, {
-      query: { state: stateParam, per_page: 50, order_by: 'updated_at', sort: 'desc' }
-    })
-    return items.map((item) => this.mapMergeRequest(item, owner, repo))
+    const response = await this.getWithHeaders<GitlabMergeRequest[]>(
+      `/projects/${encodeProjectPath(owner, repo)}/merge_requests`,
+      { state: stateParam, per_page: 50, order_by: 'updated_at', sort: 'desc', page: positiveInt(page) }
+    )
+    const items = Array.isArray(response.data) ? response.data : []
+    return pageOf(
+      items.map((item) => this.mapMergeRequest(item)),
+      nextPage(response.headers)
+    )
   }
 
   async createPullRequest(owner: string, repo: string, input: CreatePullRequestInput): Promise<PullRequest> {
@@ -141,32 +185,42 @@ export class GitlabClient implements ProviderClient {
         description: input.body ?? ''
       }
     })
-    return this.mapMergeRequest(item, owner, repo)
+    return this.mapMergeRequest(item)
   }
 
-  async listReleases(owner: string, repo: string): Promise<Release[]> {
-    const items = await this.request<GitlabRelease[]>(`/projects/${encodeProjectPath(owner, repo)}/releases`, {
-      query: { per_page: 50, order_by: 'released_at', sort: 'desc' }
-    })
-    return items.map((item) => {
-      const host = new URL(this.base).host
-      const webUrl = `https://${host}/${owner}/${repo}/-/releases/${encodeURIComponent(item.tag_name)}`
-      return {
+  async listReleases(owner: string, repo: string, page?: string): Promise<PagedResult<Release>> {
+    const response = await this.getWithHeaders<GitlabRelease[]>(
+      `/projects/${encodeProjectPath(owner, repo)}/releases`,
+      { per_page: 50, order_by: 'released_at', sort: 'desc', page: positiveInt(page) }
+    )
+    const items = Array.isArray(response.data) ? response.data : []
+    const host = new URL(this.base).host
+    return pageOf(
+      items.map((item) => ({
         id: item.tag_name,
         tagName: item.tag_name,
         name: item.name || item.tag_name,
         draft: false,
-        prerelease: Boolean(item.upcoming_release),
+        // GitLab has no prerelease flag; an upcoming release is a scheduled
+        // publication, not a prerelease of an existing one.
+        prerelease: false,
         createdAt: toEpoch(item.created_at),
         publishedAt: item.released_at ? toEpoch(item.released_at) : undefined,
-        webUrl,
+        webUrl: `https://${host}/${owner}/${repo}/-/releases/${encodeURIComponent(item.tag_name)}`,
         author: item.author?.username,
         body: item.description
-      }
-    })
+      })),
+      nextPage(response.headers)
+    )
   }
 
   async createRelease(owner: string, repo: string, input: CreateReleaseInput): Promise<Release> {
+    if (input.draft) {
+      throw new Error('GitLab releases have no draft state. Publish the release, or use an upcoming release date in GitLab.')
+    }
+    if (input.prerelease) {
+      throw new Error('GitLab releases have no prerelease flag. Use a pre-release tag name instead.')
+    }
     const item = await this.request<GitlabRelease>(`/projects/${encodeProjectPath(owner, repo)}/releases`, {
       method: 'POST',
       body: {
@@ -196,31 +250,37 @@ export class GitlabClient implements ProviderClient {
     })
   }
 
-  async listWorkflows(owner: string, repo: string): Promise<ActionWorkflow[]> {
+  async listWorkflows(owner: string, repo: string, page?: string): Promise<PagedResult<ActionWorkflow>> {
     void owner
     void repo
-    return [{ id: 'pipeline', name: 'CI Pipelines', path: '.gitlab-ci.yml' }]
+    void page
+    return pageOf([{ id: 'pipeline', name: 'CI Pipelines', path: '.gitlab-ci.yml' }])
   }
 
-  async listRuns(owner: string, repo: string, workflowId?: string): Promise<ActionRun[]> {
+  async listRuns(owner: string, repo: string, workflowId?: string, page?: string): Promise<PagedResult<ActionRun>> {
     void workflowId
-    const pipelines = await this.request<GitlabPipeline[]>(`/projects/${encodeProjectPath(owner, repo)}/pipelines`, {
-      query: { per_page: 40, order_by: 'updated_at', sort: 'desc' }
-    })
-    return pipelines.map((pipeline) => ({
-      id: String(pipeline.id),
-      workflowId: 'pipeline',
-      workflowName: 'Pipeline',
-      number: pipeline.iid ?? pipeline.id,
-      status: pipeline.status,
-      conclusion: mapConclusion(pipeline.status),
-      branch: pipeline.ref,
-      sha: pipeline.sha,
-      event: pipeline.source ?? 'push',
-      createdAt: toEpoch(pipeline.created_at),
-      updatedAt: toEpoch(pipeline.updated_at),
-      webUrl: pipeline.web_url
-    }))
+    const response = await this.getWithHeaders<GitlabPipeline[]>(
+      `/projects/${encodeProjectPath(owner, repo)}/pipelines`,
+      { per_page: 40, order_by: 'updated_at', sort: 'desc', page: positiveInt(page) }
+    )
+    const pipelines = Array.isArray(response.data) ? response.data : []
+    return pageOf(
+      pipelines.map((pipeline) => ({
+        id: String(pipeline.id),
+        workflowId: 'pipeline',
+        workflowName: 'Pipeline',
+        number: pipeline.iid ?? pipeline.id,
+        status: pipeline.status,
+        conclusion: mapConclusion(pipeline.status),
+        branch: pipeline.ref,
+        sha: pipeline.sha,
+        event: pipeline.source ?? 'push',
+        createdAt: toEpoch(pipeline.created_at),
+        updatedAt: toEpoch(pipeline.updated_at),
+        webUrl: pipeline.web_url
+      })),
+      nextPage(response.headers)
+    )
   }
 
   async triggerAction(
@@ -237,12 +297,10 @@ export class GitlabClient implements ProviderClient {
     })
   }
 
-  private mapMergeRequest(item: GitlabMergeRequest, owner: string, repo: string): PullRequest {
+  private mapMergeRequest(item: GitlabMergeRequest): PullRequest {
     const isDraft = Boolean(item.draft || item.work_in_progress)
     const state: PullRequest['state'] =
       item.state === 'opened' ? (isDraft ? 'draft' : 'open') : item.state === 'merged' ? 'merged' : 'closed'
-    void owner
-    void repo
     return {
       id: String(item.id),
       number: item.iid,
@@ -251,6 +309,7 @@ export class GitlabClient implements ProviderClient {
       draft: isDraft,
       author: item.author?.username ?? item.author?.name ?? '',
       sourceBranch: item.source_branch,
+      headSha: item.sha ?? '',
       targetBranch: item.target_branch,
       webUrl: item.web_url,
       createdAt: toEpoch(item.created_at),

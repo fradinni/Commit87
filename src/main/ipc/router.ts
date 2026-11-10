@@ -621,7 +621,7 @@ export class Router {
       'provider.connections': async () => this.providers.connections(),
       'provider.repos': async (payload) => this.providers.listRepos(payload.accountId, payload.search),
       'provider.pullRequests': async (payload) =>
-        this.providers.listPullRequests(payload.accountId, payload.owner, payload.repo, payload.state),
+        this.providers.listPullRequests(payload.accountId, payload.owner, payload.repo, payload.state, payload.page),
       'provider.createPullRequest': async (payload) =>
         this.providers.createPullRequest(payload.accountId, payload.owner, payload.repo, payload.input),
       'provider.checkoutPullRequest': async (payload) =>
@@ -635,7 +635,7 @@ export class Router {
           payload.identityId
         ),
       'provider.releases': async (payload) =>
-        this.providers.listReleases(payload.accountId, payload.owner, payload.repo),
+        this.providers.listReleases(payload.accountId, payload.owner, payload.repo, payload.page),
       'provider.createRelease': async (payload) =>
         this.providers.createRelease(payload.accountId, payload.owner, payload.repo, payload.input),
       'provider.deleteRelease': async (payload) => {
@@ -643,9 +643,9 @@ export class Router {
         return undefined
       },
       'provider.workflows': async (payload) =>
-        this.providers.listWorkflows(payload.accountId, payload.owner, payload.repo),
+        this.providers.listWorkflows(payload.accountId, payload.owner, payload.repo, payload.page),
       'provider.runs': async (payload) =>
-        this.providers.listRuns(payload.accountId, payload.owner, payload.repo, payload.workflowId),
+        this.providers.listRuns(payload.accountId, payload.owner, payload.repo, payload.workflowId, payload.page),
       'provider.triggerAction': async (payload) => {
         await this.providers.triggerAction(
           payload.accountId,
@@ -1813,7 +1813,8 @@ const DECODERS: DecoderTable = {
       state:
         source.state === undefined
           ? 'open'
-          : enumOf(source.state, ['open', 'closed', 'all'] as const, 'Pull request state')
+          : enumOf(source.state, ['open', 'closed', 'all'] as const, 'Pull request state'),
+      page: optText(source.page, 'Page', 4096)
     }
   },
   'provider.createPullRequest': (value): IpcRequest<'provider.createPullRequest'> => {
@@ -1837,12 +1838,13 @@ const DECODERS: DecoderTable = {
       identityId: optStr(source.identityId, 'Identity id', { max: 240 })
     }
   },
-  'provider.releases': (value): { accountId: string; owner: string; repo: string } => {
+  'provider.releases': (value): IpcRequest<'provider.releases'> => {
     const source = objectPayload(value)
     return {
       accountId: str(source.accountId, 'Integration id', { max: 240 }),
       owner: slugPart(source.owner, 'Owner'),
-      repo: slugPart(source.repo, 'Repository')
+      repo: slugPart(source.repo, 'Repository'),
+      page: optText(source.page, 'Page', 4096)
     }
   },
   'provider.createRelease': (value): IpcRequest<'provider.createRelease'> => {
@@ -1863,12 +1865,13 @@ const DECODERS: DecoderTable = {
       id: slugPart(source.id, 'Release id')
     }
   },
-  'provider.workflows': (value): { accountId: string; owner: string; repo: string } => {
+  'provider.workflows': (value): IpcRequest<'provider.workflows'> => {
     const source = objectPayload(value)
     return {
       accountId: str(source.accountId, 'Integration id', { max: 240 }),
       owner: slugPart(source.owner, 'Owner'),
-      repo: slugPart(source.repo, 'Repository')
+      repo: slugPart(source.repo, 'Repository'),
+      page: optText(source.page, 'Page', 4096)
     }
   },
   'provider.runs': (value): IpcRequest<'provider.runs'> => {
@@ -1877,7 +1880,8 @@ const DECODERS: DecoderTable = {
       accountId: str(source.accountId, 'Integration id', { max: 240 }),
       owner: slugPart(source.owner, 'Owner'),
       repo: slugPart(source.repo, 'Repository'),
-      workflowId: optWord(source.workflowId, 'Workflow id')
+      workflowId: optWord(source.workflowId, 'Workflow id'),
+      page: optText(source.page, 'Page', 4096)
     }
   },
   'provider.triggerAction': (value): IpcRequest<'provider.triggerAction'> => {

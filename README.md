@@ -115,9 +115,14 @@ cherry-pick and revert because Git needs an explicit parent.
 
 - Detect the forge from any remote URL (HTTPS, `ssh://`, `git@host:owner/repo`)
 - Match a configured account to the remote host, or pin one per repository
-- Check out a pull request locally (`refs/pull/N/head`, GitLab merge refs, or the source
-  branch on Bitbucket/Gitea) into `pr-N`
+- Check out a pull request locally (`refs/pull/N/head`, GitLab merge refs, or the
+  contributor repository and head on Bitbucket/Gitea) into `pr-N`; the fetched commit must
+  match the forge-reported head before anything is switched
 - Create pull requests, create and delete releases, dispatch workflows and follow runs
+- Paginate pull requests, releases, workflows and runs with **Load more**; unsupported
+  collections and empty results are reported separately
+- Releases honour draft and prerelease where the forge can represent them; GitLab has
+  neither, so Commit87 rejects that intent instead of publishing silently
 - Never touches the network from the renderer: all API traffic runs in the main process
 
 ### Identity management

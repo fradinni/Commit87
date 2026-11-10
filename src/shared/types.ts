@@ -50,6 +50,71 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
   }
 }
 
+export interface ProviderCapabilities {
+  pullRequests: {
+    list: boolean
+    create: boolean
+    checkout: boolean
+  }
+  releases: {
+    list: boolean
+    create: boolean
+    delete: boolean
+    draft: boolean
+    prerelease: boolean
+  }
+  actions: {
+    list: boolean
+    dispatch: boolean
+    inputs: boolean
+  }
+  pagination: {
+    pullRequests: boolean
+    releases: boolean
+    workflows: boolean
+    runs: boolean
+  }
+}
+
+/**
+ * Static capabilities of each forge. The renderer uses these to hide or
+ * disable controls whose intent the provider cannot honour; main enforces the
+ * same limits before any write is sent.
+ */
+export const PROVIDER_CAPABILITIES: Record<ProviderId, ProviderCapabilities> = {
+  github: {
+    pullRequests: { list: true, create: true, checkout: true },
+    releases: { list: true, create: true, delete: true, draft: true, prerelease: true },
+    actions: { list: true, dispatch: true, inputs: true },
+    pagination: { pullRequests: true, releases: true, workflows: true, runs: true }
+  },
+  gitlab: {
+    pullRequests: { list: true, create: true, checkout: true },
+    // GitLab releases have no draft state and no faithful prerelease flag;
+    // "upcoming" is a scheduled release, not a prerelease.
+    releases: { list: true, create: true, delete: true, draft: false, prerelease: false },
+    actions: { list: true, dispatch: true, inputs: true },
+    pagination: { pullRequests: true, releases: true, workflows: false, runs: true }
+  },
+  bitbucket: {
+    pullRequests: { list: true, create: true, checkout: true },
+    releases: { list: false, create: false, delete: false, draft: false, prerelease: false },
+    // Pipelines cannot accept workflow_dispatch-style inputs.
+    actions: { list: true, dispatch: true, inputs: false },
+    pagination: { pullRequests: true, releases: false, workflows: false, runs: true }
+  },
+  gitea: {
+    pullRequests: { list: true, create: true, checkout: true },
+    releases: { list: true, create: true, delete: true, draft: true, prerelease: true },
+    actions: { list: true, dispatch: true, inputs: true },
+    pagination: { pullRequests: true, releases: true, workflows: false, runs: true }
+  }
+}
+
+export function providerCapabilities(provider: ProviderId): ProviderCapabilities {
+  return PROVIDER_CAPABILITIES[provider]
+}
+
 export interface GitIdentity {
   id: string
   label: string
@@ -464,6 +529,10 @@ export interface PullRequest {
   draft: boolean
   author: string
   sourceBranch: string
+  /** Full `owner/repo` of the contributor's repository when the forge reports it. */
+  sourceRepo?: string
+  /** Authoritative head commit. Empty only when the forge omitted it. */
+  headSha: string
   targetBranch: string
   webUrl: string
   createdAt: number
@@ -471,6 +540,16 @@ export interface PullRequest {
   additions?: number
   deletions?: number
   mergeable?: boolean | null
+}
+
+/** One page of a forge collection plus how to ask for the next one. */
+export interface PagedResult<T> {
+  items: T[]
+  hasMore: boolean
+  /** Opaque continuation token interpreted by the provider adapter. */
+  nextPage?: string
+  /** The provider does not expose this collection for the repository. */
+  unsupported?: boolean
 }
 
 export interface CreatePullRequestInput {
@@ -541,6 +620,7 @@ export interface ProviderDetection {
   owner?: string
   repo?: string
   webUrlBase?: string
+  capabilities?: ProviderCapabilities
 }
 
 export interface IntegrationTestResult {
@@ -764,6 +844,7 @@ export interface ProviderConnection {
   baseUrl: string
   label: string
   hasToken: boolean
+  capabilities: ProviderCapabilities
 }
 
 export interface ConsoleInput {

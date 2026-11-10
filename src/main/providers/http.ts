@@ -3,12 +3,35 @@ import type { RequestOptions } from './types'
 
 const REQUEST_TIMEOUT = 30_000
 
+export interface ApiResponse<T> {
+  data: T
+  headers: Headers
+}
+
+/** Absolute `next` links are used verbatim; relative paths are joined to the API base. */
+export function joinUrl(base: string, path: string): string {
+  return /^https?:\/\//i.test(path) ? path : `${base}${path}`
+}
+
 export async function apiRequest<T>(url: string, options: RequestOptions): Promise<T> {
+  return (await apiRequestWithHeaders<T>(url, options)).data
+}
+
+/**
+ * Same transport as `apiRequest`, with the response headers exposed so a
+ * caller can honour `Link` / `X-Next-Page` continuation. Headers are never
+ * returned to the renderer.
+ */
+export async function apiRequestWithHeaders<T>(url: string, options: RequestOptions): Promise<ApiResponse<T>> {
   const target = new URL(url)
   if (options.query) {
     for (const [key, value] of Object.entries(options.query)) {
       if (value === undefined) continue
-      target.searchParams.set(key, String(value))
+      if (Array.isArray(value)) {
+        for (const item of value) target.searchParams.append(key, String(item))
+      } else {
+        target.searchParams.set(key, String(value))
+      }
     }
   }
 
@@ -19,12 +42,20 @@ export async function apiRequest<T>(url: string, options: RequestOptions): Promi
   }
   applyAuth(headers, options)
 
+  let body: string | undefined
+  if (options.body !== undefined) {
+    body = JSON.stringify(options.body)
+    // A serialised JSON body must say so; string bodies never remain
+    // text/plain, and provider Accept headers set by applyAuth are kept.
+    headers['Content-Type'] = headers['Content-Type'] ?? 'application/json'
+  }
+
   let response: Response
   try {
     response = await fetch(target.toString(), {
       method: options.method ?? 'GET',
       headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT)
     })
   } catch (error) {
@@ -51,7 +82,34 @@ export async function apiRequest<T>(url: string, options: RequestOptions): Promi
     )
   }
 
-  return data as T
+  return { data: data as T, headers: response.headers }
+}
+
+/** The `page` number of the `rel="next"` entry in a GitHub-style Link header. */
+export function nextPageFromLink(link: string | null): string | undefined {
+  if (!link) return undefined
+  for (const part of link.split(',')) {
+    const section = part.trim()
+    const rel = /;\s*rel\s*=\s*"?([^";]+)"?/i.exec(section)
+    if (!rel) continue
+    if (!rel[1].trim().toLowerCase().split(/\s+/).includes('next')) continue
+    const match = /<([^>]+)>/.exec(section)
+    if (!match) continue
+    try {
+      const page = new URL(match[1]).searchParams.get('page')
+      if (page) return page
+    } catch {
+      const page = /[?&]page=(\d+)/.exec(match[1])?.[1]
+      if (page) return page
+    }
+  }
+  return undefined
+}
+
+export function positiveInt(value: string | null | undefined): number | undefined {
+  if (!value) return undefined
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
 }
 
 function applyAuth(headers: Record<string, string>, options: RequestOptions): void {

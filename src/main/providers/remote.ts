@@ -126,6 +126,27 @@ export function baseUrlAuthority(baseUrl: string): BaseUrlAuthority | undefined 
   }
 }
 
+/**
+ * Base URL used to clone from the account's server. The configured base URL is
+ * authoritative (it keeps a self-hosted port and sub-path), minus the API
+ * suffix, and the documented API-host mappings move GitHub/Bitbucket back to
+ * their clone host.
+ */
+export function cloneBaseForAccount(account: IntegrationAccount): string | undefined {
+  const base = baseUrlAuthority(account.baseUrl)
+  if (!base) return undefined
+  let host = account.authority?.cloneHost?.trim() || base.host
+  if (account.provider === 'github' && host === 'api.github.com') host = 'github.com'
+  if (account.provider === 'bitbucket' && host === 'api.bitbucket.org') host = 'bitbucket.org'
+  const port = base.port !== undefined ? `:${base.port}` : ''
+  const scheme = base.protocol === 'http' ? 'http' : 'https'
+  const path = base.path
+    .replace(/\/api\/(?:v3|v4|v1)$/i, '')
+    .replace(/\/2\.0$/i, '')
+    .replace(/\/+$/, '')
+  return `${scheme}://${host}${port}${path}`
+}
+
 export function parseRemoteUrl(rawUrl: string): ParsedRemote | null {
   const url = rawUrl.trim()
   if (!url) return null

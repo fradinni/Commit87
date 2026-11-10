@@ -4,14 +4,17 @@ import type {
   CreatePullRequestInput,
   CreateReleaseInput,
   IntegrationAccount,
-  PullRequest,
+  PagedResult,
+  ProviderCapabilities,
   ProviderRepo,
+  PullRequest,
   Release
 } from '@shared/types'
-import { apiRequest } from './http'
+import { providerCapabilities } from '@shared/types'
+import { apiRequest, apiRequestWithHeaders, joinUrl, positiveInt } from './http'
 import { ProviderError } from './types'
 import type { ProviderClient } from './types'
-import { requireToken, toEpoch } from './types'
+import { pageOf, requireToken, toEpoch, unsupportedPage } from './types'
 
 interface GiteaRepo {
   id: number
@@ -27,14 +30,22 @@ interface GiteaRepo {
   updated_at?: string
 }
 
+interface GiteaPullHead {
+  ref?: string
+  sha?: string
+  repo?: { full_name?: string } | null
+}
+
 interface GiteaPull {
   id: number
   number: number
   title: string
   state: string
   draft?: boolean
+  merged?: boolean
+  merged_at?: string | null
   user?: { login: string }
-  head?: { ref?: string }
+  head?: GiteaPullHead
   base?: { ref?: string }
   html_url: string
   created_at: string
@@ -73,6 +84,12 @@ interface GiteaTask {
   workflow_id?: string
 }
 
+/** Gitea 1.24 answers with this envelope; older/Forgejo servers may send a bare array. */
+interface GiteaTaskEnvelope {
+  workflow_runs?: GiteaTask[]
+  total_count?: number
+}
+
 interface GiteaContent {
   name: string
   path: string
@@ -84,9 +101,22 @@ function apiBase(account: IntegrationAccount): string {
   return base.endsWith('/api/v1') ? base : `${base}/api/v1`
 }
 
+function totalCount(headers: Headers): number | undefined {
+  const parsed = Number(headers.get('x-total-count'))
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined
+}
+
+function nextPage(headers: Headers, page: string | undefined, limit: number, received: number): string | undefined {
+  const current = positiveInt(page) ?? 1
+  const total = totalCount(headers)
+  const hasMore = total !== undefined ? current * limit < total : received === limit
+  return hasMore ? String(current + 1) : undefined
+}
+
 export class GiteaClient implements ProviderClient {
   readonly provider = 'gitea'
   readonly account: IntegrationAccount
+  readonly capabilities: ProviderCapabilities = providerCapabilities('gitea')
   private readonly token: string
   private readonly base: string
 
@@ -96,9 +126,25 @@ export class GiteaClient implements ProviderClient {
     this.base = apiBase(account)
   }
 
-  private request<T>(path: string, options: { method?: 'GET' | 'POST' | 'DELETE'; query?: Record<string, string | number | boolean | undefined>; body?: unknown } = {}): Promise<T> {
-    return apiRequest<T>(`${this.base}${path}`, {
+  private request<T>(
+    path: string,
+    options: {
+      method?: 'GET' | 'POST' | 'DELETE'
+      query?: Record<string, string | number | boolean | undefined>
+      body?: unknown
+    } = {}
+  ): Promise<T> {
+    return apiRequest<T>(joinUrl(this.base, path), {
       ...options,
+      token: this.token,
+      provider: this.provider,
+      username: this.account.username
+    })
+  }
+
+  private getWithHeaders<T>(path: string, query?: Record<string, string | number | boolean | undefined>) {
+    return apiRequestWithHeaders<T>(joinUrl(this.base, path), {
+      query,
       token: this.token,
       provider: this.provider,
       username: this.account.username
@@ -129,24 +175,28 @@ export class GiteaClient implements ProviderClient {
     }))
   }
 
-  async listPullRequests(owner: string, repo: string, state: 'open' | 'closed' | 'all'): Promise<PullRequest[]> {
-    const pulls = await this.request<GiteaPull[]>(`/repos/${owner}/${repo}/pulls`, {
-      query: { state, limit: 50, page: 1 }
+  async getPullRequest(owner: string, repo: string, number: number): Promise<PullRequest> {
+    const pull = await this.request<GiteaPull>(`/repos/${owner}/${repo}/pulls/${number}`)
+    return this.mapPull(pull)
+  }
+
+  async listPullRequests(
+    owner: string,
+    repo: string,
+    state: 'open' | 'closed' | 'all',
+    page?: string
+  ): Promise<PagedResult<PullRequest>> {
+    const limit = 50
+    const response = await this.getWithHeaders<GiteaPull[]>(`/repos/${owner}/${repo}/pulls`, {
+      state,
+      limit,
+      page: positiveInt(page) ?? 1
     })
-    return pulls.map((pull) => ({
-      id: String(pull.id),
-      number: pull.number,
-      title: pull.title,
-      state: pull.state === 'open' ? (pull.draft ? 'draft' : 'open') : 'closed',
-      draft: Boolean(pull.draft),
-      author: pull.user?.login ?? '',
-      sourceBranch: pull.head?.ref ?? '',
-      targetBranch: pull.base?.ref ?? '',
-      webUrl: pull.html_url,
-      createdAt: toEpoch(pull.created_at),
-      updatedAt: toEpoch(pull.updated_at),
-      mergeable: pull.mergeable ?? null
-    }))
+    const pulls = Array.isArray(response.data) ? response.data : []
+    return pageOf(
+      pulls.map((pull) => this.mapPull(pull)),
+      nextPage(response.headers, page, limit, pulls.length)
+    )
   }
 
   async createPullRequest(owner: string, repo: string, input: CreatePullRequestInput): Promise<PullRequest> {
@@ -168,6 +218,8 @@ export class GiteaClient implements ProviderClient {
       draft: Boolean(pull.draft),
       author: pull.user?.login ?? '',
       sourceBranch: input.sourceBranch,
+      sourceRepo: pull.head?.repo?.full_name,
+      headSha: pull.head?.sha ?? '',
       targetBranch: input.targetBranch,
       webUrl: pull.html_url,
       createdAt: toEpoch(pull.created_at),
@@ -176,22 +228,28 @@ export class GiteaClient implements ProviderClient {
     }
   }
 
-  async listReleases(owner: string, repo: string): Promise<Release[]> {
-    const releases = await this.request<GiteaRelease[]>(`/repos/${owner}/${repo}/releases`, {
-      query: { limit: 50, page: 1 }
+  async listReleases(owner: string, repo: string, page?: string): Promise<PagedResult<Release>> {
+    const limit = 50
+    const response = await this.getWithHeaders<GiteaRelease[]>(`/repos/${owner}/${repo}/releases`, {
+      limit,
+      page: positiveInt(page) ?? 1
     })
-    return releases.map((release) => ({
-      id: String(release.id),
-      tagName: release.tag_name,
-      name: release.name || release.tag_name,
-      draft: release.draft,
-      prerelease: release.prerelease,
-      createdAt: toEpoch(release.created_at),
-      publishedAt: release.published_at ? toEpoch(release.published_at) : undefined,
-      webUrl: release.html_url,
-      author: release.author?.login,
-      body: release.body
-    }))
+    const releases = Array.isArray(response.data) ? response.data : []
+    return pageOf(
+      releases.map((release) => ({
+        id: String(release.id),
+        tagName: release.tag_name,
+        name: release.name || release.tag_name,
+        draft: release.draft,
+        prerelease: release.prerelease,
+        createdAt: toEpoch(release.created_at),
+        publishedAt: release.published_at ? toEpoch(release.published_at) : undefined,
+        webUrl: release.html_url,
+        author: release.author?.login,
+        body: release.body
+      })),
+      nextPage(response.headers, page, limit, releases.length)
+    )
   }
 
   async createRelease(owner: string, repo: string, input: CreateReleaseInput): Promise<Release> {
@@ -223,52 +281,64 @@ export class GiteaClient implements ProviderClient {
     await this.request(`/repos/${owner}/${repo}/releases/${id}`, { method: 'DELETE' })
   }
 
-  async listWorkflows(owner: string, repo: string): Promise<ActionWorkflow[]> {
+  async listWorkflows(owner: string, repo: string, page?: string): Promise<PagedResult<ActionWorkflow>> {
+    void page
     for (const dir of ['.gitea/workflows', '.github/workflows']) {
       try {
         const contents = await this.request<GiteaContent[]>(`/repos/${owner}/${repo}/contents/${dir}`)
         if (Array.isArray(contents)) {
-          return contents
-            .filter((entry) => entry.type === 'file' && /\.ya?ml$/i.test(entry.name))
-            .map((entry) => ({
-              id: entry.name,
-              name: entry.name.replace(/\.ya?ml$/i, ''),
-              path: entry.path
-            }))
+          return pageOf(
+            contents
+              .filter((entry) => entry.type === 'file' && /\.ya?ml$/i.test(entry.name))
+              .map((entry) => ({
+                id: entry.name,
+                name: entry.name.replace(/\.ya?ml$/i, ''),
+                path: entry.path
+              }))
+          )
         }
       } catch (error) {
         if (error instanceof ProviderError && error.status !== 404) throw error
       }
     }
-    return []
+    return pageOf([])
   }
 
-  async listRuns(owner: string, repo: string, workflowId?: string): Promise<ActionRun[]> {
+  async listRuns(owner: string, repo: string, workflowId?: string, page?: string): Promise<PagedResult<ActionRun>> {
+    const limit = 40
+    let response: { data: GiteaTask[] | GiteaTaskEnvelope; headers: Headers }
     try {
-      const tasks = await this.request<GiteaTask[]>(`/repos/${owner}/${repo}/actions/tasks`, {
-        query: { limit: 40, page: 1 }
+      response = await this.getWithHeaders<GiteaTask[] | GiteaTaskEnvelope>(`/repos/${owner}/${repo}/actions/tasks`, {
+        limit,
+        page: positiveInt(page) ?? 1
       })
-      return tasks
-        .filter((task) => !workflowId || !task.workflow_id || task.workflow_id === workflowId)
-        .map((task) => ({
-          id: String(task.id),
-          workflowId: task.workflow_id,
-          workflowName: task.name || task.display_title || 'Task',
-          number: task.run_number,
-          status: task.status ?? 'unknown',
-          conclusion: task.conclusion ?? null,
-          branch: task.head_branch ?? '',
-          sha: task.head_sha ?? '',
-          event: task.event ?? '',
-          createdAt: toEpoch(task.created_at ?? task.run_started_at),
-          updatedAt: toEpoch(task.updated_at),
-          webUrl: task.html_url ?? task.web_url ?? '',
-          actor: undefined
-        }))
     } catch (error) {
-      if (error instanceof ProviderError && error.status === 404) return []
+      // A repository without Actions is not an empty run list: the caller can
+      // show "Actions unavailable" instead of "no runs".
+      if (error instanceof ProviderError && error.status === 404) return unsupportedPage()
       throw error
     }
+    const tasks = decodeTasks(response.data)
+    if (!tasks) return unsupportedPage()
+    const filtered = workflowId ? tasks.filter((task) => !task.workflow_id || task.workflow_id === workflowId) : tasks
+    return pageOf(
+      filtered.map((task) => ({
+        id: String(task.id),
+        workflowId: task.workflow_id,
+        workflowName: task.name || task.display_title || 'Task',
+        number: task.run_number,
+        status: task.status ?? 'unknown',
+        conclusion: task.conclusion ?? null,
+        branch: task.head_branch ?? '',
+        sha: task.head_sha ?? '',
+        event: task.event ?? '',
+        createdAt: toEpoch(task.created_at ?? task.run_started_at),
+        updatedAt: toEpoch(task.updated_at),
+        webUrl: task.html_url ?? task.web_url ?? '',
+        actor: undefined
+      })),
+      nextPage(response.headers, page, limit, tasks.length)
+    )
   }
 
   async triggerAction(
@@ -284,4 +354,34 @@ export class GiteaClient implements ProviderClient {
       body: { ref, ...(inputs && Object.keys(inputs).length ? { inputs } : {}) }
     })
   }
+
+  private mapPull(pull: GiteaPull): PullRequest {
+    return {
+      id: String(pull.id),
+      number: pull.number,
+      title: pull.title,
+      state: pullState(pull),
+      draft: Boolean(pull.draft),
+      author: pull.user?.login ?? '',
+      sourceBranch: pull.head?.ref ?? '',
+      sourceRepo: pull.head?.repo?.full_name,
+      headSha: pull.head?.sha ?? '',
+      targetBranch: pull.base?.ref ?? '',
+      webUrl: pull.html_url,
+      createdAt: toEpoch(pull.created_at),
+      updatedAt: toEpoch(pull.updated_at),
+      mergeable: pull.mergeable ?? null
+    }
+  }
+}
+
+function pullState(pull: GiteaPull): PullRequest['state'] {
+  if (pull.state === 'open') return pull.draft ? 'draft' : 'open'
+  return pull.merged || pull.merged_at ? 'merged' : 'closed'
+}
+
+function decodeTasks(data: GiteaTask[] | GiteaTaskEnvelope | null | undefined): GiteaTask[] | null {
+  if (Array.isArray(data)) return data
+  if (data && typeof data === 'object' && Array.isArray(data.workflow_runs)) return data.workflow_runs
+  return null
 }
