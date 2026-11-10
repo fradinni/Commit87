@@ -44,14 +44,6 @@ const identity: GitIdentity = {
 }
 
 let root = ''
-let repoPath = ''
-let realRepoPath = ''
-let worktreePath = ''
-
-async function write(file: string, content: string): Promise<void> {
-  await fs.mkdir(path.dirname(path.join(repoPath, file)), { recursive: true })
-  await fs.writeFile(path.join(repoPath, file), content)
-}
 
 /** Write inside an isolated repository created by `initRepo`. */
 async function writeIn(base: string, file: string, content: string): Promise<void> {
@@ -68,6 +60,16 @@ async function initRepo(name: string): Promise<string> {
   return dir
 }
 
+/** A repository with the initial files and commit used by the service cases. */
+async function createRepo(name: string): Promise<string> {
+  const dir = await initRepo(name)
+  await writeIn(dir, 'README.md', '# Commit87\n')
+  await writeIn(dir, 'src/app.ts', 'export const value = 1\n')
+  await runGit(['add', '.'], { cwd: dir })
+  await commitChanges({ repoPath: dir, message: 'Initial commit' }, { identity })
+  return dir
+}
+
 async function commitAll(dir: string, message: string): Promise<string> {
   await runGit(['add', '.'], { cwd: dir })
   await runGit(['commit', '-m', message], { cwd: dir })
@@ -77,20 +79,6 @@ async function commitAll(dir: string, message: string): Promise<string> {
 
 beforeAll(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'commit87-test-'))
-  repoPath = path.join(root, 'repo')
-  worktreePath = path.join(root, 'worktrees', 'feature-wt')
-  await fs.mkdir(repoPath)
-  realRepoPath = normalizePath(await fs.realpath(repoPath))
-  await runGit(['init', '-b', 'main'], { cwd: repoPath })
-  await runGit(['config', 'user.name', identity.name], { cwd: repoPath })
-  await runGit(['config', 'user.email', identity.email], { cwd: repoPath })
-  await write('README.md', '# Commit87\n')
-  await write('src/app.ts', 'export const value = 1\n')
-  await runGit(['add', '.'], { cwd: repoPath })
-  await commitChanges(
-    { repoPath, message: 'Initial commit' },
-    { identity }
-  )
 })
 
 afterAll(async () => {
@@ -99,6 +87,7 @@ afterAll(async () => {
 
 describe('git repository service', () => {
   it.skipIf(process.platform === 'win32')('canonicalises a symlinked repository path', async () => {
+    const repoPath = await initRepo('symlink-repo')
     const link = path.join(root, 'repo-link')
     await fs.symlink(repoPath, link, 'dir')
     const direct = await resolveRepo(repoPath)
@@ -108,8 +97,9 @@ describe('git repository service', () => {
   })
 
   it('resolves a repository and a clean status', async () => {
+    const repoPath = await createRepo('clean-status')
     const info = await resolveRepo(repoPath)
-    expect(info.name).toBe('repo')
+    expect(info.name).toBe('clean-status')
     expect(info.currentBranch).toBe('main')
     expect(info.detached).toBe(false)
     expect(info.state).toBe('clean')
@@ -120,7 +110,8 @@ describe('git repository service', () => {
   })
 
   it('commits staged changes with the selected identity', async () => {
-    await write('src/app.ts', 'export const value = 2\n')
+    const repoPath = await createRepo('commit-identity')
+    await writeIn(repoPath, 'src/app.ts', 'export const value = 2\n')
     let status = await getStatus(repoPath)
     expect(status.files).toHaveLength(1)
     expect(status.files[0].stage).toBe('unstaged')
@@ -147,10 +138,11 @@ describe('git repository service', () => {
   })
 
   it('creates, lists and merges branches', async () => {
+    const repoPath = await createRepo('branch-merge')
     await createBranch(repoPath, 'feature', 'main', true)
     const info = await resolveRepo(repoPath)
     expect(info.currentBranch).toBe('feature')
-    await write('feature.txt', 'feature\n')
+    await writeIn(repoPath, 'feature.txt', 'feature\n')
     await runGit(['add', '.'], { cwd: repoPath })
     await commitChanges({ repoPath, message: 'Add feature' }, { identity })
 
@@ -185,6 +177,7 @@ describe('git repository service', () => {
   })
 
   it('creates annotated tags and deletes them', async () => {
+    const repoPath = await createRepo('tags')
     await createTag(
       { repoPath, name: 'v1.0.0', message: 'First release' },
       { identity }
@@ -211,6 +204,9 @@ describe('git repository service', () => {
   })
 
   it('creates and removes worktrees', async () => {
+    const repoPath = await createRepo('worktree-main')
+    const realRepoPath = normalizePath(await fs.realpath(repoPath))
+    const worktreePath = path.join(root, 'worktrees', 'feature-wt')
     await addWorktree({
       repoPath,
       path: worktreePath,
@@ -246,6 +242,8 @@ describe('git repository service', () => {
   })
 
   it('reports a deleted worktree folder as unavailable instead of failing', async () => {
+    const repoPath = await createRepo('worktree-gone-main')
+    const realRepoPath = normalizePath(await fs.realpath(repoPath))
     const gonePath = path.join(root, 'worktrees', 'gone-wt')
     await addWorktree({
       repoPath,
@@ -267,7 +265,8 @@ describe('git repository service', () => {
   })
 
   it('stashes and restores changes', async () => {
-    await write('README.md', '# Commit87 changed\n')
+    const repoPath = await createRepo('stash')
+    await writeIn(repoPath, 'README.md', '# Commit87 changed\n')
     await stashPush(repoPath, 'Work in progress', true, { identity })
     const stashes = await getStashes(repoPath)
     expect(stashes).toHaveLength(1)

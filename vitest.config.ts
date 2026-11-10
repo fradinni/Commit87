@@ -8,6 +8,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['tests/**/*.test.ts'],
+    setupFiles: ['tests/helpers/git-setup.ts'],
     testTimeout: 20000,
     hookTimeout: 20000
   }

@@ -25,23 +25,67 @@ const identity: GitIdentity = {
 }
 
 let root = ''
-let remotePath = ''
-let repoPath = ''
-let submodulePath = ''
-let firstSha = ''
-let secondSha = ''
 const savedEnv = {
   count: process.env.GIT_CONFIG_COUNT,
   key: process.env.GIT_CONFIG_KEY_0,
   value: process.env.GIT_CONFIG_VALUE_0
 }
 
-async function commit(file: string, content: string, message: string): Promise<string> {
-  await fs.writeFile(path.join(remotePath, file), content)
-  await runGit(['add', '.'], { cwd: remotePath })
-  await runGit(['commit', '-m', message], { cwd: remotePath })
-  const head = await runGit(['rev-parse', 'HEAD'], { cwd: remotePath })
+async function commitIn(dir: string, file: string, content: string, message: string): Promise<string> {
+  await fs.writeFile(path.join(dir, file), content)
+  await runGit(['add', '.'], { cwd: dir })
+  await runGit(['commit', '-m', message], { cwd: dir })
+  const head = await runGit(['rev-parse', 'HEAD'], { cwd: dir })
   return head.stdout.trim()
+}
+
+async function initRepo(dir: string): Promise<void> {
+  await fs.mkdir(dir, { recursive: true })
+  await runGit(['init', '-b', 'main'], { cwd: dir })
+  await runGit(['config', 'user.name', identity.name], { cwd: dir })
+  await runGit(['config', 'user.email', identity.email], { cwd: dir })
+}
+
+interface AppFixture {
+  remotePath: string
+  repoPath: string
+  submodulePath: string
+  firstSha: string
+  secondSha: string
+}
+
+/** An application repository plus the local library repository it can add as a submodule. */
+async function createAppFixture(label: string): Promise<AppFixture> {
+  const base = path.join(root, label)
+  const remote = path.join(base, 'remote-lib')
+  const app = path.join(base, 'app')
+  await initRepo(remote)
+  const first = await commitIn(remote, 'lib.txt', 'one\n', 'First library commit')
+  const second = await commitIn(remote, 'lib.txt', 'two\n', 'Second library commit')
+
+  await initRepo(app)
+  await fs.writeFile(path.join(app, 'README.md'), '# App\n')
+  await runGit(['add', '.'], { cwd: app })
+  await runGit(['commit', '-m', 'Initial app commit'], { cwd: app })
+  return {
+    remotePath: remote,
+    repoPath: app,
+    submodulePath: path.join(app, 'vendor', 'lib'),
+    firstSha: first,
+    secondSha: second
+  }
+}
+
+/** A fixture with the library already added and committed at `vendor/lib`. */
+async function createInitializedFixture(label: string): Promise<AppFixture> {
+  const fixture = await createAppFixture(label)
+  await addSubmodule(
+    { repoPath: fixture.repoPath, url: fixture.remotePath, path: 'vendor/lib', branch: 'main' },
+    { identity }
+  )
+  await runGit(['add', '.'], { cwd: fixture.repoPath })
+  await runGit(['commit', '-m', 'Add library submodule'], { cwd: fixture.repoPath })
+  return fixture
 }
 
 /** A superproject with one committed `lib` submodule cloned from a local repository. */
@@ -90,24 +134,6 @@ beforeAll(async () => {
   process.env.GIT_CONFIG_VALUE_0 = 'always'
 
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'commit87-submodule-'))
-  remotePath = path.join(root, 'remote-lib')
-  repoPath = path.join(root, 'app')
-  submodulePath = path.join(repoPath, 'vendor', 'lib')
-
-  await fs.mkdir(remotePath)
-  await runGit(['init', '-b', 'main'], { cwd: remotePath })
-  await runGit(['config', 'user.name', identity.name], { cwd: remotePath })
-  await runGit(['config', 'user.email', identity.email], { cwd: remotePath })
-  firstSha = await commit('lib.txt', 'one\n', 'First library commit')
-  secondSha = await commit('lib.txt', 'two\n', 'Second library commit')
-
-  await fs.mkdir(repoPath)
-  await runGit(['init', '-b', 'main'], { cwd: repoPath })
-  await runGit(['config', 'user.name', identity.name], { cwd: repoPath })
-  await runGit(['config', 'user.email', identity.email], { cwd: repoPath })
-  await fs.writeFile(path.join(repoPath, 'README.md'), '# App\n')
-  await runGit(['add', '.'], { cwd: repoPath })
-  await runGit(['commit', '-m', 'Initial app commit'], { cwd: repoPath })
 })
 
 afterAll(async () => {
@@ -122,6 +148,7 @@ afterAll(async () => {
 
 describe('submodule service', () => {
   it('adds a submodule and joins status with the .gitmodules configuration', async () => {
+    const { repoPath, remotePath, submodulePath, secondSha } = await createAppFixture('add-case')
     await addSubmodule(
       { repoPath, url: remotePath, path: 'vendor/lib', branch: 'main' },
       { identity }
@@ -149,6 +176,7 @@ describe('submodule service', () => {
   })
 
   it('reports local changes inside an initialized checkout', async () => {
+    const { repoPath, submodulePath } = await createInitializedFixture('dirty-check-case')
     await fs.writeFile(path.join(submodulePath, 'scratch.txt'), 'temporary\n')
     const dirty = await getSubmodules(repoPath)
     expect(dirty[0].dirty).toBe(true)
@@ -157,6 +185,7 @@ describe('submodule service', () => {
   })
 
   it('removes untracked files when a forced reset asks for a clean checkout', async () => {
+    const { repoPath, submodulePath } = await createInitializedFixture('forced-reset-case')
     await fs.writeFile(path.join(submodulePath, 'build-artifact.tmp'), 'temporary\n')
     expect((await getSubmodules(repoPath))[0].dirty).toBe(true)
 
@@ -172,6 +201,7 @@ describe('submodule service', () => {
   })
 
   it('detects an out-of-sync checkout and updates it to the recorded commit', async () => {
+    const { repoPath, submodulePath, firstSha, secondSha } = await createInitializedFixture('drift-case')
     await runGit(['checkout', firstSha], { cwd: submodulePath })
     const modified = await getSubmodules(repoPath)
     expect(modified[0].state).toBe('modified')
@@ -188,6 +218,7 @@ describe('submodule service', () => {
   })
 
   it('reports and reinitializes a deinitialized submodule', async () => {
+    const { repoPath, secondSha } = await createInitializedFixture('deinit-case')
     await runGit(['submodule', 'deinit', '--', 'vendor/lib'], { cwd: repoPath })
     const uninitialized = await getSubmodules(repoPath)
     expect(uninitialized[0]).toMatchObject({
@@ -203,7 +234,8 @@ describe('submodule service', () => {
   })
 
   it('updates a branch-tracking submodule to the remote tip', async () => {
-    const thirdSha = await commit('lib.txt', 'three\n', 'Third library commit')
+    const { repoPath, remotePath } = await createInitializedFixture('remote-tip-case')
+    const thirdSha = await commitIn(remotePath, 'lib.txt', 'three\n', 'Third library commit')
     await updateSubmodules(
       { repoPath, submodulePath: 'vendor/lib', init: true, remote: true }
     )
@@ -213,6 +245,7 @@ describe('submodule service', () => {
   })
 
   it('syncs a changed submodule URL into the module configuration', async () => {
+    const { repoPath, remotePath, submodulePath } = await createInitializedFixture('sync-url-case')
     const syncedUrl = `${remotePath}-synced`
     await runGit(['config', '-f', '.gitmodules', 'submodule.vendor/lib.url', syncedUrl], { cwd: repoPath })
     await syncSubmodules(repoPath, 'vendor/lib')
@@ -498,6 +531,7 @@ describe('submodule service', () => {
   })
 
   it('rejects paths that escape the repository or hit Git metadata', async () => {
+    const { repoPath, remotePath } = await createAppFixture('path-validation-case')
     await expect(
       addSubmodule({ repoPath, url: remotePath, path: '../escape' }, { identity })
     ).rejects.toThrow(/escapes the repository/)

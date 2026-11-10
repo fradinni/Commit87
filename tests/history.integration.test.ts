@@ -30,28 +30,18 @@ const identity: GitIdentity = {
 }
 
 let root = ''
-let repoPath = ''
 
-async function write(file: string, content: string): Promise<void> {
-  await fs.mkdir(path.dirname(path.join(repoPath, file)), { recursive: true })
-  await fs.writeFile(path.join(repoPath, file), content)
-}
-
-async function commit(message: string): Promise<string> {
-  await runGit(['add', '.'], { cwd: repoPath })
-  const result = await commitChanges({ repoPath, message }, { identity })
-  return result.sha
+async function initRepo(name: string): Promise<string> {
+  const dir = path.join(root, name)
+  await fs.mkdir(dir, { recursive: true })
+  await runGit(['init', '-b', 'main'], { cwd: dir })
+  await runGit(['config', 'user.name', identity.name], { cwd: dir })
+  await runGit(['config', 'user.email', identity.email], { cwd: dir })
+  return dir
 }
 
 beforeAll(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'commit87-history-'))
-  repoPath = path.join(root, 'repo')
-  await fs.mkdir(repoPath)
-  await runGit(['init', '-b', 'main'], { cwd: repoPath })
-  await runGit(['config', 'user.name', identity.name], { cwd: repoPath })
-  await runGit(['config', 'user.email', identity.email], { cwd: repoPath })
-  await write('base.txt', 'base\n')
-  await commit('Base commit')
 })
 
 afterAll(async () => {
@@ -60,6 +50,18 @@ afterAll(async () => {
 
 describe('multi-commit history actions', () => {
   it('cherry-picks several commits in the given order and reverts them newest first', async () => {
+    const repoPath = await initRepo('cherry-pick-lifecycle')
+    const write = async (file: string, content: string): Promise<void> => {
+      await fs.mkdir(path.dirname(path.join(repoPath, file)), { recursive: true })
+      await fs.writeFile(path.join(repoPath, file), content)
+    }
+    const commit = async (message: string): Promise<string> => {
+      await runGit(['add', '.'], { cwd: repoPath })
+      return (await commitChanges({ repoPath, message }, { identity })).sha
+    }
+    await write('base.txt', 'base\n')
+    await commit('Base commit')
+
     await createBranch(repoPath, 'side', 'main', true)
     await write('side-a.txt', 'a')
     const shaA = await commit('Side change A')
