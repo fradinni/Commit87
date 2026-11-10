@@ -34,6 +34,28 @@ jobs:
           path: out
           retention-days: 7
 
+  # Native tests used to run only in the release workflow, so a platform-only
+  # failure (path separators, canonical paths, POSIX modes) could block a
+  # release after the pull request was green. Run them on the platforms we ship.
+  verify-native:
+    name: Native tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
   package-linux:
     name: Linux packages (x64 + arm64)
     needs: verify

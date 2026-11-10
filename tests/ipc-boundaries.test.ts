@@ -26,6 +26,7 @@ import { validateConsoleCommand } from '../src/main/tasks'
 import { GrantStore } from '../src/main/ipc/grants'
 import { validateGitExecutable } from '../src/main/git/runner'
 import { getBlame, listTree, readFileContent, setRepoConfig } from '../src/main/git/repo'
+import { normalizePath } from '../src/main/git/parsers'
 import type { UpdateAdapter, UpdateDownloadTask, UpdateInfoSummary } from '../src/main/updates'
 import type { UpdateProgress } from '../src/shared/types'
 import type { VerifiedAppImage } from '../src/main/appimage-binding'
@@ -368,7 +369,9 @@ describe('grant issuance and repository authorization', () => {
     const repo = await makeRepo()
     await store.addRecentRepo(repo, path.basename(repo))
     const info = await router.handle('repo.open', { path: repo })
-    expect(info.path).toBe(repo)
+    // Git reports its own separators and resolves symlinked parents, so the
+    // path a successful open returns is compared in normalized form.
+    expect(normalizePath(info.path)).toBe(normalizePath(repo))
     expect(await grants.allowsRepoPath(repo)).toBe(true)
   })
 
@@ -390,7 +393,7 @@ describe('grant issuance and repository authorization', () => {
     const parent = await makeDir('commit87-ipc-init-')
     await grants.grantPath(parent)
     const info = await router.handle('repo.init', { directory: parent, name: 'fresh' })
-    expect(info.path).toBe(path.join(parent, 'fresh'))
+    expect(normalizePath(info.path)).toBe(normalizePath(path.join(parent, 'fresh')))
     expect(await grants.allowsRepoPath(info.path)).toBe(true)
     await router.handle('repo.open', { path: info.path })
   })
@@ -403,7 +406,7 @@ describe('grant issuance and repository authorization', () => {
     await grants.grantPath(outer)
 
     const info = await router.handle('repo.open', { path: inner })
-    expect(info.path).toBe(inner)
+    expect(normalizePath(info.path)).toBe(normalizePath(inner))
     await router.handle('git.status', { path: inner })
   })
 
@@ -421,7 +424,7 @@ describe('grant issuance and repository authorization', () => {
       createBranch: true,
       startPoint: 'main'
     })
-    expect(result.path).toBe(await fs.realpath(target))
+    expect(normalizePath(result.path)).toBe(normalizePath(await fs.realpath(target)))
     await router.handle('git.status', { path: result.path })
   })
 
@@ -490,8 +493,12 @@ describe('grant issuance and repository authorization', () => {
     await reloaded.load()
     expect(await reloaded.allowsRepoPath(repo)).toBe(true)
     expect(await reloaded.isGrantedExecutable(executable)).toBe(true)
-    const mode = (await fs.stat(path.join(profile.dir, 'grants.json'))).mode & 0o777
-    expect(mode).toBe(0o600)
+    // Windows has no POSIX mode bits; the file is created with the owner-only
+    // mode and that is all the platform can enforce.
+    if (process.platform !== 'win32') {
+      const mode = (await fs.stat(path.join(profile.dir, 'grants.json'))).mode & 0o777
+      expect(mode).toBe(0o600)
+    }
   })
 })
 

@@ -217,8 +217,9 @@ AppImage were launched on Linux/Wayland and driven through the Chrome DevTools p
 - No rendered-DOM or component test harness: renderer logic is covered through the store
   with a stubbed preload bridge and the packaged app was driven manually, but there is no
   automated Electron regression gate for a complete click-to-commit flow.
-- macOS and Windows packages are built on CI's native runners; no installer or app launch
-  is automated, and none was exercised on the Linux validation host for this branch.
+- The suite runs in CI on Linux, Windows and macOS (`Native tests` jobs), so platform path,
+  casing and POSIX-mode assumptions fail before a release. Installers and app launches are
+  still not automated, and none was exercised on the Linux validation host for this branch.
 - Provider tests use a mocked `fetch` with strict expectations; a nightly job against a
   throwaway repository on each forge would catch live API drift.
 - Clone and worktree flows are covered at the Git layer and partly through the store, but
