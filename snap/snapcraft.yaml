@@ -17,7 +17,7 @@ description: |
 grade: stable
 confinement: strict
 compression: lzo
-icon: gui/commit87.png
+icon: snap/gui/commit87.png
 license: MIT
 website: https://commit87.fradinni.fr
 source-code: https://github.com/fradinni/Commit87
@@ -55,7 +55,10 @@ apps:
 parts:
   commit87:
     plugin: dump
-    source: ../dist/linux-unpacked
+    # scripts/build-snap.sh stages the host architecture's electron-builder
+    # output here (linux-unpacked or linux-arm64-unpacked -> dist/snap-app).
+    # Paths in this file are relative to the project directory, not to snap/.
+    source: dist/snap-app
     source-type: local
     stage-packages:
       - git
@@ -86,11 +89,16 @@ parts:
       - usr/share/git-core
       - usr/bin/git-lfs
       - usr/bin/ssh
+      # The launcher points GIT_SSL_CAINFO and OpenSSL at these paths; without
+      # them HTTPS Git operations fail inside the strictly confined snap.
+      - etc/ssl/certs
+      - usr/lib/ssl
+      - usr/share/ca-certificates
       - usr/share/applications
       - usr/share/icons
   launcher:
     plugin: dump
-    source: local
+    source: snap/local
     organize:
       command.sh: bin/command.sh
       commit87.desktop: share/applications/commit87.desktop

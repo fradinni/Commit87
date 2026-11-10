@@ -1,4 +1,8 @@
 app-id: fr.fradinni.Commit87
+# scripts/build-flatpak.sh reads both values and passes the branch to
+# flatpak-builder (--default-branch) and flatpak build-bundle, so the built ref
+# and the exported bundle can never disagree.
+branch: stable
 runtime: org.freedesktop.Platform
 runtime-version: '24.08'
 sdk: org.freedesktop.Sdk
@@ -59,8 +63,10 @@ modules:
         path: fr.fradinni.Commit87.desktop
       - type: file
         path: fr.fradinni.Commit87.metainfo.xml
+      # scripts/build-flatpak.sh stages the host architecture's electron-builder
+      # output here (linux-unpacked or linux-arm64-unpacked -> dist/flatpak-app).
       - type: dir
-        path: ../dist/linux-unpacked
+        path: ../dist/flatpak-app
         dest: commit87
       - type: dir
         path: ../build/icons
