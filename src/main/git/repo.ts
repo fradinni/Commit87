@@ -47,6 +47,7 @@ import {
   parseWorktrees
 } from './parsers'
 import { detectProviderFromUrl } from '../providers/remote'
+import { configKey, headPath, refName, relPath, remoteName, revision, revisionRange, text } from '../ipc/validate'
 
 export interface GitAuthContext {
   identity?: GitIdentity | null
@@ -194,8 +195,11 @@ export async function getLog(input: LogInput): Promise<Commit[]> {
   if (input.search) {
     args.push('--regexp-ignore-case', `--grep=${input.search}`)
   }
-  if (input.branch) args.push(input.branch)
-  else if (input.all !== false) args.push('--branches', '--tags', '--remotes', 'HEAD')
+  if (input.branch) {
+    args.push('--end-of-options', revision(input.branch, 'Branch'))
+  } else if (input.all !== false) {
+    args.push('--branches', '--tags', '--remotes', '--end-of-options', 'HEAD')
+  }
   args.push('--')
   const raw = await runGit(args, { cwd: input.repoPath, maxBuffer: 32 * 1024 * 1024 })
   return parseLog(raw.stdout)
@@ -203,7 +207,13 @@ export async function getLog(input: LogInput): Promise<Commit[]> {
 
 export async function getCommit(repoPath: string, sha: string): Promise<Commit> {
   const raw = await runGit(
-    ['show', '-s', '--pretty=format:%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ce%x1f%ct%x1f%D%x1f%s%x1f%b', sha],
+    [
+      'show',
+      '-s',
+      '--pretty=format:%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ce%x1f%ct%x1f%D%x1f%s%x1f%b',
+      '--end-of-options',
+      revision(sha, 'Commit')
+    ],
     { cwd: repoPath }
   )
   const commits = parseLog(raw.stdout + '\x1e')
@@ -631,19 +641,21 @@ export async function getDiff(input: DiffInput): Promise<DiffResult> {
   const statArgs = ['diff', '--no-color', '--no-ext-diff', '--find-renames', '--numstat']
   const extra: string[] = []
   if (input.staged) extra.push('--cached')
-  if (input.compare) extra.push(input.compare)
+  if (input.compare) extra.push('--end-of-options', revisionRange(input.compare, 'Compare'))
   if (input.commit) {
+    const commit = revision(input.commit, 'Commit')
     patchArgs.length = 0
-    patchArgs.push('show', '--no-color', '--no-ext-diff', '--format=', '--patch', input.commit)
+    patchArgs.push('show', '--no-color', '--no-ext-diff', '--format=', '--patch', '--end-of-options', commit)
     statArgs.length = 0
-    statArgs.push('show', '--no-color', '--no-ext-diff', '--format=', '--numstat', input.commit)
+    statArgs.push('show', '--no-color', '--no-ext-diff', '--format=', '--numstat', '--end-of-options', commit)
   } else {
     patchArgs.push(...extra)
     statArgs.push(...extra)
   }
   if (input.path) {
-    patchArgs.push('--', input.path)
-    statArgs.push('--', input.path)
+    const file = relPath(input.path, 'File')
+    patchArgs.push('--', file)
+    statArgs.push('--', file)
   }
   const [patch, stats] = await Promise.all([
     runGit(patchArgs, { cwd: input.repoPath, maxBuffer: 48 * 1024 * 1024, literalPathspecs: Boolean(input.path) }),
@@ -652,23 +664,45 @@ export async function getDiff(input: DiffInput): Promise<DiffResult> {
   return { patch: patch.stdout, files: parseNumstat(stats.stdout) }
 }
 
+/**
+ * Walk from the real repository root to `target`, rejecting every symlinked
+ * segment (the root itself was already resolved). A link is never followed, so
+ * a lexical `..` check cannot be tricked into reading outside the checkout.
+ */
+async function assertNoSymlinkPath(root: string, target: string): Promise<void> {
+  const relative = path.relative(root, target)
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error('Path escapes the repository')
+  }
+  let current = root
+  for (const segment of relative ? relative.split(path.sep) : []) {
+    current = path.join(current, segment)
+    const stat = await fs.lstat(current)
+    if (stat.isSymbolicLink()) throw new Error(`Path passes through a symbolic link: ${relative}`)
+  }
+}
+
 export async function listTree(repoPath: string, dir = ''): Promise<DirEntry[]> {
-  const root = path.resolve(repoPath)
+  const root = await fs.realpath(repoPath)
   const target = safeJoin(root, dir)
+  await assertNoSymlinkPath(root, target)
+  const targetStat = await fs.lstat(target)
+  if (!targetStat.isDirectory()) throw new Error(`Not a folder: ${dir}`)
   const entries = await fs.readdir(target, { withFileTypes: true })
   const result: DirEntry[] = []
   for (const entry of entries) {
     if (entry.name === '.git') continue
     const rel = dir ? `${dir}/${entry.name}` : entry.name
-    const abs = path.join(target, entry.name)
     if (entry.isDirectory()) {
       result.push({ name: entry.name, path: rel, type: 'directory' })
     } else if (entry.isSymbolicLink()) {
-      result.push({ name: entry.name, path: rel, type: 'file' })
+      // Listed but never followed: the renderer shows it as a link, and reads
+      // of it are rejected below.
+      result.push({ name: entry.name, path: rel, type: 'symlink' })
     } else if (entry.isFile()) {
       let size: number | undefined
       try {
-        size = (await fs.stat(abs)).size
+        size = (await fs.lstat(path.join(target, entry.name))).size
       } catch {
         size = undefined
       }
@@ -706,13 +740,14 @@ export async function resolveConflict(
     throw new Error('Remove the conflict markers before staging the file')
   }
 
+  const relative = relPath(file, 'File')
   const repo = await resolveRepo(repoPath)
   if (repo.isBare) throw new Error('Conflicted files need a working tree')
   const status = await getStatus(repo.path)
-  const entry = status.files.find((item) => item.path === file)
+  const entry = status.files.find((item) => item.path === relative)
   if (!entry || entry.stage !== 'conflicted') throw new Error('This file is not in conflict')
 
-  const target = safeJoin(repo.path, file)
+  const target = safeJoin(repo.path, relative)
   const rootReal = await fs.realpath(repo.path)
   let parentReal: string
   try {
@@ -742,7 +777,7 @@ export async function resolveConflict(
   }
 
   await fs.writeFile(target, content, 'utf8')
-  await runGit(['add', '--', file], { cwd: repo.path, literalPathspecs: true })
+  await runGit(['add', '--', relative], { cwd: repo.path, literalPathspecs: true })
 }
 
 export async function readFileContent(
@@ -751,26 +786,42 @@ export async function readFileContent(
   from: 'worktree' | 'head' = 'worktree',
   commit?: string
 ): Promise<FileContent> {
-  const root = path.resolve(repoPath)
+  const root = await fs.realpath(repoPath)
   let buffer: Buffer
   let size = 0
   if (from === 'worktree') {
-    const abs = safeJoin(root, file)
-    const stat = await fs.stat(abs)
-    if (!stat.isFile()) throw new Error(`Not a file: ${file}`)
-    size = stat.size
-    const handle = await fs.open(abs, 'r')
+    const relative = relPath(file, 'File')
+    const abs = safeJoin(root, relative)
+    await assertNoSymlinkPath(root, abs)
+    const stat = await fs.lstat(abs)
+    if (stat.isSymbolicLink()) throw new Error(`Not a regular file: ${relative}`)
+    if (!stat.isFile()) throw new Error(`Not a file: ${relative}`)
+    // O_NOFOLLOW closes the race between the lstat above and the open. On
+    // platforms without it the value is 0 and the lstat remains the guard.
+    const noFollow = fs.constants.O_NOFOLLOW ?? 0
+    const handle = await fs.open(abs, fs.constants.O_RDONLY | noFollow).catch((error: unknown) => {
+      if (isErrorCode(error, 'ELOOP')) throw new Error(`Not a regular file: ${relative}`)
+      throw error
+    })
     try {
-      const length = Math.min(stat.size, MAX_FILE_BYTES)
+      const opened = await handle.stat()
+      if (!opened.isFile()) throw new Error(`Not a file: ${relative}`)
+      size = opened.size
+      const length = Math.min(size, MAX_FILE_BYTES)
       const chunk = Buffer.alloc(length)
-      await handle.read(chunk, 0, length, 0)
+      if (length) await handle.read(chunk, 0, length, 0)
       buffer = chunk
     } finally {
       await handle.close()
     }
   } else {
-    const spec = `${commit ?? 'HEAD'}:${file.replace(/\\/g, '/')}`
-    const result = await runGit(['show', spec], { cwd: root, maxBuffer: MAX_FILE_BYTES + 1024 })
+    const rev = commit ? revision(commit, 'Commit') : 'HEAD'
+    const relative = headPath(file, 'File').replace(/\\/g, '/')
+    const spec = `${rev}:${relative}`
+    const result = await runGit(['show', '--end-of-options', spec], {
+      cwd: root,
+      maxBuffer: MAX_FILE_BYTES + 1024
+    })
     buffer = Buffer.from(result.stdout, 'utf8')
     size = buffer.length
   }
@@ -807,8 +858,11 @@ function decodeText(buffer: Buffer): { content: string; binary: boolean } {
 }
 
 export async function getBlame(repoPath: string, file: string, commit?: string): Promise<BlameLine[]> {
-  const args = ['blame', '--line-porcelain', '--', file]
-  if (commit) args.splice(1, 0, commit)
+  const relative = relPath(file, 'File')
+  const args = ['blame', '--line-porcelain']
+  if (commit) args.push(revision(commit, 'Commit'))
+  // `git blame` only treats `--` as the path separator after --end-of-options.
+  args.push('--end-of-options', '--', relative)
   const raw = await runGit(args, { cwd: repoPath, maxBuffer: 32 * 1024 * 1024, literalPathspecs: true })
   return parseBlame(raw.stdout)
 }
@@ -818,9 +872,41 @@ export async function getRepoConfig(repoPath: string): Promise<RepoConfigEntry[]
   return parseConfig(raw.stdout)
 }
 
+/**
+ * Keys that make Git or a helper execute a program. The console and
+ * `git.setConfig` share this policy: ordinary repository settings keep working,
+ * while a local config write can never install code that runs later.
+ */
+const EXECUTION_CONFIG_KEYS: RegExp[] = [
+  /^core\.(hooksPath|fsmonitor|sshCommand|pager|editor|askPass|gitProxy)$/i,
+  /^sequence\.editor$/i,
+  /^gpg\.program$/i,
+  /^credential\./i,
+  /^alias\./i,
+  /^include(if)?\./i,
+  /^protocol\./i,
+  /^filter\./i,
+  /^diff\..*\.(textconv|command)$/i,
+  /^merge\..*\.driver$/i,
+  /^submodule\..*\.update$/i,
+  /^url\..*\.insteadOf$/i,
+  /^remote\..*\.(uploadpack|receivepack)$/i
+]
+
+function isExecutionConfigKey(key: string): boolean {
+  return EXECUTION_CONFIG_KEYS.some((pattern) => pattern.test(key))
+}
+
 export async function setRepoConfig(repoPath: string, key: string, value: string): Promise<void> {
-  if (!/^[a-zA-Z0-9.-]+$/.test(key)) throw new Error('Invalid configuration key')
-  await runGit(['config', '--local', key, value], { cwd: repoPath })
+  const name = configKey(key)
+  if (isExecutionConfigKey(name)) {
+    throw new Error(
+      `"${name}" controls a program Git runs. Set it outside the app; Commit87 does not install executable configuration.`
+    )
+  }
+  const content = text(value, 'Configuration value', { max: 4096 })
+  if (/[\r\n]/.test(content)) throw new Error('Configuration value must be a single line')
+  await runGit(['config', '--local', name, content], { cwd: repoPath })
 }
 
 export async function stageFiles(repoPath: string, files: string[]): Promise<void> {
@@ -869,7 +955,7 @@ export async function commitChanges(input: CommitInput, ctx: GitAuthContext): Pr
 export async function checkoutBranch(input: CheckoutInput): Promise<void> {
   if (input.create) {
     validateRefName(input.repoPath, input.branch)
-    if (input.startPoint) validateCheckoutTarget(input.repoPath, input.startPoint, true)
+    if (input.startPoint) revision(input.startPoint, 'Start point')
     const args = ['switch', '-c', input.branch]
     if (input.track && input.startPoint) args.push('--track')
     if (input.startPoint) args.push(input.startPoint)
@@ -888,8 +974,8 @@ export async function checkoutBranch(input: CheckoutInput): Promise<void> {
 }
 
 function validateCheckoutTarget(repoPath: string, target: string, allowCommit: boolean): void {
-  if (allowCommit && /^[0-9a-f]{4,64}$/i.test(target)) {
-    validateCommitShas([target])
+  if (allowCommit) {
+    revision(target, 'Checkout target')
     return
   }
   validateRefName(repoPath, target)
@@ -903,24 +989,27 @@ export async function createBranch(
   track = false
 ): Promise<void> {
   validateRefName(repoPath, name)
+  const start = startPoint ? revision(startPoint, 'Start point') : undefined
   if (checkout) {
     const args = ['switch', '-c', name]
-    if (track && startPoint) args.push('--track')
-    if (startPoint) args.push(startPoint)
+    if (track && start) args.push('--track')
+    if (start) args.push(start)
     await runGit(args, { cwd: repoPath })
     return
   }
   const args = ['branch', name]
-  if (startPoint) args.push(startPoint)
+  if (start) args.push(start)
   await runGit(args, { cwd: repoPath })
 }
 
 export async function renameBranch(repoPath: string, from: string, to: string): Promise<void> {
+  validateRefName(repoPath, from)
   validateRefName(repoPath, to)
   await runGit(['branch', '-m', from, to], { cwd: repoPath })
 }
 
 export async function deleteBranch(repoPath: string, name: string, force = false): Promise<void> {
+  validateRefName(repoPath, name)
   await runGit(['branch', force ? '-D' : '-d', name], { cwd: repoPath })
 }
 
@@ -931,10 +1020,14 @@ export async function deleteRemoteBranch(
   ctx: GitAuthContext
 ): Promise<void> {
   const { args, env } = contextArgs(ctx)
+  validateRemoteName(remote)
+  validateRefName(repoPath, branch)
   await runGit([...args, 'push', remote, '--delete', branch], { cwd: repoPath, env })
 }
 
 export async function setUpstream(repoPath: string, branch: string, upstream: string): Promise<void> {
+  validateRefName(repoPath, branch)
+  validateRefName(repoPath, upstream)
   await runGit(['branch', `--set-upstream-to=${upstream}`, branch], { cwd: repoPath })
 }
 
@@ -945,14 +1038,18 @@ export async function mergeBranch(input: MergeInput, ctx: GitAuthContext): Promi
   else if (input.noFf) mergeArgs.push('--no-ff')
   if (input.squash) mergeArgs.push('--squash')
   if (input.message) mergeArgs.push('-m', input.message)
-  mergeArgs.push(input.branch)
+  mergeArgs.push('--end-of-options', revision(input.branch, 'Merge target'))
   const result = await runGit(mergeArgs, { cwd: input.repoPath, env, allowFailure: true })
   return { output: result.stdout + result.stderr }
 }
 
 export async function rebaseBranch(repoPath: string, onto: string, ctx: GitAuthContext): Promise<{ output: string }> {
   const { args, env } = contextArgs(ctx)
-  const result = await runGit([...args, 'rebase', onto], { cwd: repoPath, env, allowFailure: true })
+  const result = await runGit([...args, 'rebase', '--end-of-options', revision(onto, 'Rebase base')], {
+    cwd: repoPath,
+    env,
+    allowFailure: true
+  })
   return { output: result.stdout + result.stderr }
 }
 
@@ -988,7 +1085,7 @@ export async function revertCommit(repoPath: string, shas: string[], ctx: GitAut
 }
 
 export async function resetTo(repoPath: string, commit: string, mode: ResetInput['mode']): Promise<void> {
-  await runGit(['reset', `--${mode}`, commit], { cwd: repoPath })
+  await runGit(['reset', `--${mode}`, '--end-of-options', revision(commit, 'Commit')], { cwd: repoPath })
 }
 
 export async function abortOperation(repoPath: string): Promise<void> {
@@ -1061,17 +1158,20 @@ export async function skipOperation(repoPath: string, extraEnv: NodeJS.ProcessEn
 export async function createTag(input: TagCreateInput, ctx: GitAuthContext): Promise<void> {
   validateRefName(input.repoPath, input.name)
   const args = input.message ? ['tag', '-a', input.name, '-m', input.message] : ['tag', input.name]
-  if (input.commit) args.push(input.commit)
+  if (input.commit) args.push('--end-of-options', revision(input.commit, 'Commit'))
   const { args: identArgs, env } = contextArgs(ctx)
   await runGit([...identArgs, ...args], { cwd: input.repoPath, env })
   if (input.push) {
-    await runGit([...identArgs, 'push', input.remote || 'origin', input.name], { cwd: input.repoPath, env })
+    const remote = input.remote ? remoteName(input.remote) : 'origin'
+    await runGit([...identArgs, 'push', remote, input.name], { cwd: input.repoPath, env })
   }
 }
 
 export async function deleteTag(repoPath: string, name: string, remote?: string, ctx?: GitAuthContext): Promise<void> {
+  validateRefName(repoPath, name)
   await runGit(['tag', '-d', name], { cwd: repoPath })
   if (remote) {
+    validateRemoteName(remote)
     const { args, env } = contextArgs(ctx ?? {})
     await runGit([...args, 'push', remote, `:refs/tags/${name}`], { cwd: repoPath, env })
   }
@@ -1083,13 +1183,14 @@ export async function addWorktree(input: WorktreeAddInput): Promise<{ path: stri
   const repo = await resolveRepo(input.repoPath)
   if (isInside(repo.root, target)) throw new Error('Worktree must be outside the main repository folder')
   await fs.mkdir(path.dirname(target), { recursive: true })
-  validateRefName(input.repoPath, input.branch)
+  const startPoint = input.startPoint ? revision(input.startPoint, 'Start point') : undefined
+  if (!input.detach) validateRefName(input.repoPath, input.branch)
   const args = ['worktree', 'add']
   if (input.detach) {
-    args.push('--detach', target, input.startPoint || input.branch)
+    args.push('--detach', target, revision(startPoint || input.branch, 'Worktree target'))
   } else if (input.createBranch) {
     args.push('-b', input.branch, target)
-    if (input.startPoint) args.push(input.startPoint)
+    if (startPoint) args.push(startPoint)
   } else {
     args.push(target, input.branch)
   }
@@ -1135,24 +1236,31 @@ export async function stashPush(
   await runGit(stashArgs, { cwd: repoPath, env })
 }
 
+function stashIndex(index: number): string {
+  if (!Number.isInteger(index) || index < 0 || index > 100_000) throw new Error('Invalid stash index')
+  return `stash@{${index}}`
+}
+
 export async function stashApply(repoPath: string, index: number, pop: boolean): Promise<void> {
-  await runGit(['stash', pop ? 'pop' : 'apply', `stash@{${index}}`], { cwd: repoPath })
+  await runGit(['stash', pop ? 'pop' : 'apply', stashIndex(index)], { cwd: repoPath })
 }
 
 export async function stashDrop(repoPath: string, index: number): Promise<void> {
-  await runGit(['stash', 'drop', `stash@{${index}}`], { cwd: repoPath })
+  await runGit(['stash', 'drop', stashIndex(index)], { cwd: repoPath })
 }
 
 export async function addRemote(repoPath: string, name: string, url: string): Promise<void> {
-  if (!/^[A-Za-z0-9._-]+$/.test(name)) throw new Error('Invalid remote name')
+  validateRemoteName(name)
   await runGit(['remote', 'add', name, url], { cwd: repoPath })
 }
 
 export async function removeRemote(repoPath: string, name: string): Promise<void> {
+  validateRemoteName(name)
   await runGit(['remote', 'remove', name], { cwd: repoPath })
 }
 
 export async function setRemoteUrl(repoPath: string, name: string, url: string, push = false): Promise<void> {
+  validateRemoteName(name)
   const args = ['remote', 'set-url']
   if (push) args.push('--push')
   args.push(name, url)
@@ -1160,11 +1268,13 @@ export async function setRemoteUrl(repoPath: string, name: string, url: string, 
 }
 
 export function validateRefName(repoPath: string, name: string): void {
-  if (!name || name.length > 240 || name.includes('..') || name.startsWith('-') || /[\s~^:?*\[\]\\]/.test(name)) {
-    throw new Error(`Invalid branch or tag name: ${name}`)
-  }
+  refName(name, 'Branch or tag name')
   // git check-ref-format is synchronous-free but we validate conservatively here.
   void repoPath
+}
+
+function validateRemoteName(name: string): void {
+  remoteName(name)
 }
 
 function validateFiles(files: string[]): string[] {

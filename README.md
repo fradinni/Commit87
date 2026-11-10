@@ -158,9 +158,10 @@ cherry-pick and revert because Git needs an explicit parent.
 | `Ctrl/Cmd + 1…9` | Jump to a repository tab |
 | `Ctrl/Cmd + W` | Close the active repository tab |
 
-The git console runs **only git commands, without a shell**, validates subcommands
-against an allow-list, and blocks `-c`, `--git-dir`, alias definitions, `--exec` and
-`submodule foreach`.
+The git console runs **only git commands, without a shell**. A bounded per-command
+grammar lists the flags, verbs and positional kinds it accepts, rejects global overrides
+and execution options (`-c`, `-C`, `--git-dir`, `--upload-pack`, `--exec`, …) in every
+attached, separate or short spelling, and allows only read-only `git config` queries.
 
 ![Git console](docs/screenshots/git-console.png)
 ![Command palette](docs/screenshots/command-palette.png)
@@ -272,7 +273,7 @@ src/
 │  ├─ protocol.ts             commit87:// app scheme (no file:// renderer)
 │  ├─ menu.ts                 native menu
 │  ├─ store.ts                config + encrypted secrets, repo defaults
-│  ├─ tasks.ts                streaming git tasks, console allow-list
+│  ├─ tasks.ts                streaming git tasks, console grammar
 │  ├─ git/
 │  │  ├─ runner.ts            spawn wrapper, identity and credential env
 │  │  ├─ parsers.ts           porcelain v2, log, refs, worktrees, submodules, blame
@@ -315,7 +316,7 @@ See [docs/architecture.md](docs/architecture.md) for the full design and data fl
 - Tokens encrypted with Electron `safeStorage` (OS keychain) when available; otherwise
   stored in `secrets.json` with mode `0600` and clearly reported in Settings
 - IPC accepts only the known channel table and only from the main window's webContents
-- Git console: git-only, allow-listed subcommands, no shell, no config writes
+- Git console: git-only bounded grammar, no shell, no global overrides or config writes
 - Path traversal is rejected for every file, worktree and repository argument
 - Electron fuses disable `runAsNode`, `NODE_OPTIONS`, CLI inspect and extra `file://`
   privileges, and enable ASAR integrity validation

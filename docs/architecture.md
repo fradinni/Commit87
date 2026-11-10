@@ -21,10 +21,10 @@
 │  window.ts       hardened BrowserWindow + navigation guards                   │
 │  protocol.ts     commit87://app scheme, serving out/renderer                  │
 │  store.ts        config.json + secrets.json (safeStorage), repo defaults       │
-│  tasks.ts        TaskManager, git console allow-list                          │
+│  tasks.ts        TaskManager, git console grammar                             │
 │  git/            runner (spawn), parsers, repo operations                     │
 │  providers/      HTTP clients for GitHub/GitLab/Bitbucket/Gitea               │
-│  ipc/router.ts   channel table, argument validation, auth resolution          │
+│  ipc/            router tables, strict decoders, main-owned grants            │
 └──────────────▲───────────────────────────────┬───────────────────────────────┘
                │ ipcRenderer.invoke            │ webContents.send
 ┌──────────────┴───────────────────────────────▼───────────────────────────────┐
@@ -67,18 +67,97 @@ Channels are grouped:
 | `update.*` | update status, check, download and install |
 | `window.*` | minimize/maximize/close for the custom title bar |
 
-`Router.handle` is a single `switch` over the union. The default branch uses an
-exhaustiveness check (`const exhaustive: never = channel`), so adding a channel without
-implementing it fails compilation.
+`Router.handle` dispatches through two exhaustive tables in `src/main/ipc/router.ts`:
 
-### Validation helpers
+- `DECODERS` maps every channel to a strict decoder from `unknown` to that channel's
+  declared request type;
+- `handlers` maps every channel to a handler whose return type is pinned to
+  `IpcResponse<K>`.
 
-- `requireString` / `requireNumber` / `requireStringArray` reject empty or wrongly typed
-  values before they reach Git.
+Both tables are checked against mapped types, so a missing channel or a handler that
+returns the wrong shape fails compilation. The payload is never cast: handlers only see
+already-decoded values, and decoders ignore harmless extra fields but reject a field that
+is present and wrong. `handle` still exposes the same signature to `index.ts`, with a
+typed overload for callers that know the channel.
+
+### Validation and authorization
+
+`src/main/ipc/validate.ts` holds the decoders:
+
+- `str` / `optStr` / `text` reject wrong types, empty required values and NUL bytes;
+  `bool` accepts only `true` and `false`, so the string `"false"` never enables
+  `force`, `amend`, `includeUntracked`, `staged`, `detach`, `prune`, `rebase` or any other
+  flag. Optional flags use a strict `bool(value ?? false)`.
+- `num` requires a finite whole number inside an explicit range; `enumOf` rejects an
+  unknown member instead of falling back to a default (reset mode, pull-request state,
+  update channel, provider).
+- `revision` accepts a branch, tag, remote ref, `HEAD~N` or an abbreviated/full object
+  name and rejects a leading `-`, whitespace/control characters, `..` and `@{`.
+  `revisionRange` validates both sides of `A..B` / `A...B`. `refName` applies Git's
+  branch/tag rules, `relPath`/`headPath` require a repository-relative path, and
+  `repoPath` requires an absolute path. `hexDigest`, `remoteName`, `slugPart`, `word`,
+  `remoteUrl`, `configKey` and `folderName` cover the remaining field shapes.
+- Every caller-provided revision or ref is validated before it reaches `argv`: checkout
+  targets and start points, branch create/rename/delete, merge, rebase, tag target/name,
+  reset, worktree branch/start point, log/diff/commit-detail/blame, upstream, submodule
+  branch, and remote name/URL. Where Git supports it, revisions are also passed after
+  `--end-of-options`.
+- File lists for stage/unstage/discard are re-validated; no path may be empty, contain
+  NUL, be absolute, or have `.`/`..` segments. Every file-oriented command also passes them
+  after `--` with literal-pathspec semantics, so a name that looks like an option or a
+  wildcard stays one file.
 - `safeJoin` in `git/repo.ts` resolves repository-relative paths and rejects anything that
   escapes the repository (including `..` and absolute paths).
-- Branch and tag names are checked for Git's reserved characters and leading dashes.
-- File lists for stage/unstage/discard are re-validated; no path may be absolute.
+
+### Authorization grants
+
+A renderer string is never proof that the user chose a path. `src/main/ipc/grants.ts`
+persists `userData/grants.json` (mode `0600`, atomic writes) with:
+
+- canonical `realpath` repository roots;
+- linked-worktree aliases, recorded as the shared common Git directory;
+- canonical custom Git executables.
+
+Grants are issued only in the main process:
+
+- a folder or file returned by `app.pickDirectory` / `app.pickFile` / `app.pickGitBinary`;
+- an OS launch argument or deep link handled in `src/main/index.ts`;
+- `repo.clone` (the destination is derived and granted before the task starts) and
+  `repo.init` (the target must already be inside a granted folder);
+- `git.worktreeAdd` (the target must be inside a granted folder, including a worktree
+  parent chosen with the picker, or directly next to the repository) and the created
+  worktree;
+- `repo.open` of a remembered recent repository (recents are loaded into the grant store
+  at startup), or of a repository nested inside a granted root such as a submodule; the
+  resolved repository then gets its own exact grant.
+
+Every `repo.*`, `git.*` and file-oriented `provider.*` operation first checks the grant
+without spawning Git, then resolves the repository and checks the canonical path/common
+Git directory again before any read or write. That second check closes the
+pick-then-swap race. An arbitrary `repo.open`, a renderer confirmation flag or an opaque
+value minted by the renderer does not create access. `app.openPath` and
+`showItemInFolder` are restricted to granted paths and the app profile folder.
+
+A custom Git executable can only be chosen through the native picker; `config.update`
+refuses a `gitBinary` field. When it is chosen, the file must be absolute, regular and
+executable and `--version` must succeed; before every spawn it must still exist as a
+regular executable file. `app.checkGit` accepts an already-granted path (or PATH `git`),
+and a configured executable that was not granted is cleared at startup. `COMMIT87_GIT`
+remains a deliberate local override for automation and tests; it is read from the
+process environment, never from the renderer, and the same per-spawn check applies.
+
+Grant writes are best effort: a read-only or full profile keeps the in-memory grant for
+the session and logs the failure instead of blocking `repo.open` or startup. Removing a
+repository from the recent list also revokes its grant.
+
+### File reads
+
+`git.fileTree` and `git.fileContent` authorize the repository first, resolve its real
+path, and walk every segment with `lstat`. A symlinked file or directory is listed as
+`symlink` but never followed, and reads of it are rejected. The final worktree file is
+opened with `O_NOFOLLOW` where the platform provides it, and the existing 3 MiB limit and
+binary detection still apply. `HEAD` reads validate the revision and reject a path that
+contains `:` or a line break.
 - Submodule paths must be repository-relative, stay inside the worktree and avoid `.git`
   and `.gitmodules` after normalization (including `./`, trailing slashes and
   filesystem aliases). Removal only accepts a path reported by `git submodule status`,
@@ -97,11 +176,13 @@ implementing it fails compilation.
   resolution. Updates install no credential helper, so app tokens are never offered to an
   arbitrary `.gitmodules` URL; they use the ambient credential helper/SSH agent and the
   repository identity's SSH key.
-- Remote names are restricted to `[A-Za-z0-9._-]+`.
+- Remote names are restricted to `[A-Za-z0-9._/-]+` and may not start with `-` or contain
+  `..`.
 - Provider base URLs are parsed as URLs before storage.
-- The optional default worktree parent must be an absolute path; worktree creation itself
-  still validates that the target stays outside the repository and that the branch name is a
-  valid ref.
+- The optional default worktree parent must be an absolute path; worktree creation still
+  requires the target folder to be granted (the Settings picker grants it) or a direct
+  sibling of the repository, keeps it outside the repository, and validates the branch,
+  start point and worktree target.
 
 ## Git execution
 
@@ -184,18 +265,41 @@ The UI shows progress in the title bar and a persistent task chip in the status 
 exit the store refreshes status, branches and, after clones, the recent repository list,
 targeting the tab that started the task.
 
-### Git console allow-list
+### Git console grammar
 
 `validateConsoleCommand` tokenizes with quote handling and requires the first token to be
-`git`. It then:
+`git`. It does not compare whole strings against a spelling denylist. Instead:
 
-- rejects global options (`-c`, `-C`, `--git-dir`, `--work-tree`, `--config-env`)
-- requires the subcommand to be in a read/write allow-list of normal Git commands
-- only allows **read-only** `git config` verbs (`--get`, `--get-all`, `--list`, …)
-- blocks `rebase --exec`, `bisect --exec`, `alias.*` and `submodule foreach`
+- only harmless global flags (`--no-pager`, `--no-replace-objects`,
+  `--literal-pathspecs`, `--no-optional-locks`) may appear before the subcommand; every
+  other global option is rejected, including `-cX`, `-C/path`, `--config-env=K=V` and
+  `--git-dir`/`--work-tree` in attached or separate form;
+- each supported subcommand has a table of allowed long and short flags with their value
+  arity, a positional count and whether a pathspec is allowed. Attached (`-n20`,
+  `-C/path`), `=` (`--pretty=oneline`) and clustered short forms (`-sb`, `-am`) are
+  classified token by token;
+- nested commands (`remote`, `worktree`, `stash`, `submodule`, `reflog`,
+  `maintenance`) accept only their listed verbs: `submodule foreach/add/update`,
+  `worktree add`, `reflog expire` and similar forms are not in the table;
+- execution-related options (`--exec`, `--exec-path`, `--upload-pack`,
+  `--receive-pack`, `--config-env`, `--git-dir`, `--work-tree`, `--namespace`, `--pager`,
+  `--editor`) are rejected wherever they appear, in separate or attached form;
+- `config` requires a read-only verb (`--get`, `--get-all`, `--get-regexp`, `--list`),
+  so a write, `--file`, `--blob` or `--edit` never passes;
+- every revision positional is validated with `revision()` and every pathspec is a
+  repository-relative path with no `..` or leading `-`.
 
-The command runs with the repository cwd, no shell, and the same environment as every
-other Git call.
+The normal forms used by the UI and docs keep working: `status --short --branch`,
+`log --oneline -n N`, `remote -v`, `worktree list`, `config --get <key>`, `fetch`, `pull`,
+`push`, `branch`, `diff`, `show`, `stash list` and the other documented read/write
+commands. The command runs with the repository cwd, no shell, and the same environment as
+every other Git call.
+
+`git.setConfig` applies a matching policy: `core.hooksPath`, `core.fsmonitor`,
+`core.sshCommand`, `core.pager`, `core.editor`, `filter.*`, `diff.*.textconv`,
+`merge.*.driver`, `credential.*`, `alias.*`, `include.*`, `protocol.*`,
+`submodule.*.update`, `url.*.insteadOf` and similar keys are refused with an explanation;
+ordinary keys keep working.
 
 ## Identity and authentication
 
@@ -350,9 +454,9 @@ remote; the fetch uses the same origin-scoped helper as other operations.
   stays a header even when expanded. When a section below is expanded, collapsing Local
   gives it that height so the panes close up instead of leaving a gap. While filtering,
   the results share a single scroll area.
-  New worktrees are created next to the main repository by default, or in the absolute
-  `worktreeParent` preference set in Settings, and every dialog still accepts a one-off
-  folder.
+  New worktrees are created next to the main repository by default, or in the
+  `worktreeParent` folder chosen with the picker in Settings, and every dialog still
+  accepts a one-off folder chosen with the picker.
 - **Views**: launchpad, commit graph, files/staging, branches, worktrees, submodules, tags,
   stashes, remotes, pull requests, releases, pipelines, settings.
 - **Interactive rebase**: a modal planner over `onto..HEAD` where commits can be reordered,

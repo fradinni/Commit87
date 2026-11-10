@@ -8,6 +8,7 @@ import {
   Folder,
   FolderOpen,
   GitCommitHorizontal,
+  Link2,
   ListTree,
   Minus,
   Plus,
@@ -426,6 +427,21 @@ export function FilesView() {
               <span>{entry.name}</span>
             </button>
             {isOpen ? renderTree(entry.path, depth + 1) : null}
+          </div>
+        )
+      }
+      if (entry.type === 'symlink') {
+        // Links are listed but never followed, so they are not selectable.
+        return (
+          <div
+            key={entry.path}
+            className="tree-row is-file is-symlink"
+            style={{ paddingLeft: 8 + depth * 14 + 16 }}
+            title="Symbolic links are not opened inside the app"
+          >
+            <Link2 size={13} />
+            <span>{entry.name}</span>
+            <span className="change-side">link</span>
           </div>
         )
       }

@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { constants, existsSync, statSync } from 'node:fs'
+import { access, stat } from 'node:fs/promises'
+import path from 'node:path'
 import type { GitIdentity, IntegrationAccount, ProviderId } from '@shared/types'
 
 export class GitError extends Error {
@@ -50,7 +52,28 @@ export function setGitBinary(binary: string | null): void {
 
 export function getGitBinary(): string {
   if (gitBinaryOverride) return gitBinaryOverride
+  // Deliberate local override for tests and automation; it is an operator
+  // setting, never something the renderer can set.
   return process.env.COMMIT87_GIT || 'git'
+}
+
+/**
+ * Cheap use-time check for an explicitly configured executable. A path that
+ * existed when it was chosen must still be a regular, executable file when it
+ * is actually run; a bare name (`git`) keeps resolving through PATH.
+ */
+export function assertGitBinaryUsable(binary: string): void {
+  if (!binary.includes('/') && !binary.includes('\\')) return
+  try {
+    const stat = statSync(binary)
+    if (!stat.isFile()) throw new Error(`Git executable is not a file: ${binary}`)
+    if (process.platform !== 'win32' && (stat.mode & 0o111) === 0) {
+      throw new Error(`Git executable is not executable: ${binary}`)
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('Git executable')) throw error
+    throw new Error(`Git executable is no longer available: ${binary}`)
+  }
 }
 
 export function gitBaseArgs(): string[] {
@@ -69,6 +92,7 @@ export function gitBaseArgs(): string[] {
 
 export async function runGit(args: string[], options: RunGitOptions): Promise<GitResult> {
   const binary = getGitBinary()
+  assertGitBinaryUsable(binary)
   const fullArgs = [...gitBaseArgs(), ...args]
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -287,6 +311,35 @@ export async function detectGit(path?: string): Promise<{ path: string; version:
   } finally {
     if (path && previous !== path) setGitBinary(previous)
   }
+}
+
+export interface GitExecutableCheck {
+  ok: boolean
+  path?: string
+  error?: string
+}
+
+/**
+ * A custom Git binary must be an absolute path to a regular executable file.
+ * The caller additionally grants the canonical path and checks `--version`.
+ */
+export async function validateGitExecutable(candidate: string): Promise<GitExecutableCheck> {
+  const target = candidate.trim()
+  if (!target) return { ok: false, error: 'Choose a Git executable' }
+  if (!path.isAbsolute(target)) return { ok: false, error: 'The Git executable must be an absolute path' }
+  let info
+  try {
+    info = await stat(target)
+  } catch {
+    return { ok: false, error: 'The Git executable does not exist' }
+  }
+  if (!info.isFile()) return { ok: false, error: 'The Git executable must be a regular file' }
+  try {
+    await access(target, constants.X_OK)
+  } catch {
+    return { ok: false, error: 'The selected file is not executable' }
+  }
+  return { ok: true, path: target }
 }
 
 export function assertGitAvailableSync(): boolean {

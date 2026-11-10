@@ -19,9 +19,10 @@ Trust boundaries:
 | Boundary | Assumption |
 | --- | --- |
 | Renderer | Untrusted. Sandboxed, no Node, no credentials, CSP-restricted |
-| IPC | Untrusted input. Every field re-validated in the main process |
+| IPC | Untrusted input. Every field strictly decoded in the main process |
+| Repository paths | Untrusted strings. Only main-owned grants authorize a root |
 | Git output | Untrusted data. Parsed, never executed; rendered as text |
-| Repository content | Untrusted. Paths validated; no template or HTML execution |
+| Repository content | Untrusted. Paths validated; symlinks never followed; no template or HTML execution |
 | Provider responses | Untrusted. Parsed JSON, fields coerced, no HTML rendering |
 | Secrets at rest | Protected by OS keychain when available |
 
@@ -33,10 +34,22 @@ Trust boundaries:
 - Navigation, popups and `will-attach-webview` blocked; http(s) links open externally
 - Electron fuses: no `runAsNode`, no `NODE_OPTIONS`, no CLI inspect, ASAR-only loading,
   ASAR integrity validation, no extra `file://` privileges, cookie encryption
-- IPC restricted to the main window's `webContents` and to a compile-time channel table
-- Path traversal rejected for repository files, worktrees and remote names
-- Git spawned with `shell: false`; console accepts git-only, allow-listed subcommands and
-  blocks config writes, aliases, `--exec` and `submodule foreach`
+- IPC restricted to the main window's `webContents` and to a compile-time channel table;
+  every payload is strictly decoded (only real booleans, known enum members, validated
+  revisions and refs) before it reaches Git
+- Repository access requires a main-owned grant: a native picker, an OS launch
+  argument/deep link, a derived clone/init/worktree destination or a remembered recent.
+  An arbitrary path, a renderer string or a confirmation flag is never authority, and the
+  canonical real path / common Git directory is checked again at use time
+- A custom Git executable can only come from the native picker and must be an absolute,
+  regular, executable file; `config.update` cannot install a path
+- Path traversal rejected for repository files, worktrees and remote names; file tree and
+  content reads reject symlinked files and directories and open the final file without
+  following a link
+- Git spawned with `shell: false`; console accepts git-only commands under a bounded
+  per-command grammar (flags with value arity, nested verbs, positional kinds) and rejects
+  global overrides, config writes, aliases, `--exec` and `submodule foreach` in any
+  spelling
 - Tokens passed via environment to an ephemeral credential helper scoped to the exact
   destination origin, never in `argv`, and redacted from all streamed output
 - Tokens are only released to a host that exactly matches the integration's configured

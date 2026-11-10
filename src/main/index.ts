@@ -7,8 +7,10 @@ import type { IpcChannel, IpcEnvelope } from '@shared/ipc'
 import { AppStore } from './store'
 import { parseLaunchTarget } from './launch'
 import { TaskManager } from './tasks'
+import { validateGitExecutable } from './git/runner'
 import { ProviderService } from './providers/service'
 import { Router } from './ipc/router'
+import { GrantStore } from './ipc/grants'
 import { createMainWindow } from './window'
 import { createSplashWindow } from './splash'
 import { installMenu } from './menu'
@@ -42,6 +44,8 @@ if (!app.requestSingleInstanceLock()) {
 
 let mainWindow: BrowserWindow | null = null
 let launchTarget: string | null = null
+/** Main-owned grants for repository roots, worktree aliases and executables. */
+let grants: GrantStore | null = null
 /** True once the renderer has asked for its launch target and listens for open-path events. */
 let rendererBooted = false
 /** Recreates the window after macOS closed it; set when the app is ready. */
@@ -52,9 +56,24 @@ const routerReady = new Promise<Router>((resolve) => {
   resolveRouter = resolve
 })
 
+/**
+ * An OS launch argument, deep link or Finder event names a folder the user (or
+ * the system acting for them) chose, so it is a main-owned grant before the
+ * renderer is allowed to open it.
+ */
+async function grantLaunchTarget(target: string): Promise<void> {
+  try {
+    await grants?.grantPath(target)
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    console.warn(`[commit87] could not grant the launch target: ${detail}`)
+  }
+  queueOrDeliver(target)
+}
+
 function deliverLaunch(raw: string): void {
   const target = parseLaunchTarget([raw], app.getAppPath())
-  if (target) queueOrDeliver(target)
+  if (target) void grantLaunchTarget(target)
 }
 
 /**
@@ -80,7 +99,7 @@ app.on('second-instance', (_event, argv, _workingDirectory) => {
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.focus()
   }
-  if (target) queueOrDeliver(target)
+  if (target) void grantLaunchTarget(target)
 })
 
 app.on('open-url', (event, url) => {
@@ -115,6 +134,7 @@ function registerIpc(): void {
 
 app.whenReady().then(() => {
   traceBoot('app ready')
+  grants = new GrantStore(path.join(app.getPath('userData'), 'grants.json'))
   const splash = createSplashWindow()
   splash.once('ready-to-show', () => traceBoot('splash ready'))
   let splashDismissed = false
@@ -180,6 +200,23 @@ app.whenReady().then(() => {
     await store.init()
     traceBoot('app store ready')
 
+    if (!grants) throw new Error('The authorization store could not be created')
+    const grantStore = grants
+    await grantStore.load()
+    // Repositories the user already opened and the folder passed on this
+    // launch are the grants this session starts with.
+    await grantStore.seedRecent(store.getConfig().recentRepos.map((repo) => repo.path))
+    if (launchTarget) await grantStore.grantPath(launchTarget)
+    const configuredGit = store.getConfig().gitBinary
+    if (configuredGit) {
+      const granted = await grantStore.isGrantedExecutable(configuredGit)
+      const check = granted ? await validateGitExecutable(configuredGit) : { ok: false }
+      if (!check.ok) {
+        console.warn('[commit87] ignoring a Git executable that is no longer granted and executable')
+        await store.setGitBinary('')
+      }
+    }
+
     const tasks = new TaskManager((taskEvent) => {
       mainWindow?.webContents.send(IPC_TASK_EVENT, { event: taskEvent })
     })
@@ -233,7 +270,7 @@ app.whenReady().then(() => {
       }
     })
     updates.start()
-    const router = new Router(store, tasks, providers, updates, () => mainWindow, () => {
+    const router = new Router(store, tasks, providers, updates, grantStore, () => mainWindow, () => {
       const target = launchTarget
       launchTarget = null
       rendererBooted = true

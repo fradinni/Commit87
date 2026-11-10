@@ -31,6 +31,7 @@ const { TaskManager } = await import('../src/main/tasks')
 const { ProviderService } = await import('../src/main/providers/service')
 const { UpdateService } = await import('../src/main/updates')
 const { destinationFromUrl } = await import('../src/main/providers/remote')
+const { GrantStore } = await import('../src/main/ipc/grants')
 
 class InertAdapter implements UpdateAdapter {
   setChannel(): void {}
@@ -56,6 +57,7 @@ const dirs: string[] = []
 let store: InstanceType<typeof AppStore>
 let router: InstanceType<typeof Router>
 let providers: InstanceType<typeof ProviderService>
+let grants: InstanceType<typeof GrantStore>
 let started: TaskSpec[] = []
 
 async function makeDir(prefix: string): Promise<string> {
@@ -70,6 +72,9 @@ async function makeRepo(remotes: Record<string, string>): Promise<string> {
   for (const [name, url] of Object.entries(remotes)) {
     await run('git', ['remote', 'add', name, url], { cwd: dir })
   }
+  // The tests play the main process: a repository they created stands for one
+  // the user opened through a native picker.
+  await grants.grantPath(dir)
   return dir
 }
 
@@ -97,6 +102,8 @@ beforeEach(async () => {
   store = new AppStore()
   await store.init()
   providers = new ProviderService(store)
+  grants = new GrantStore(path.join(profile.dir, 'grants.json'))
+  await grants.load()
   const tasks = new TaskManager(() => undefined)
   const updates = new UpdateService({
     adapter: new InertAdapter(),
@@ -104,7 +111,7 @@ beforeEach(async () => {
     version: '0.0.0-test',
     preferences: () => ({ channel: 'stable', autoCheck: false })
   })
-  router = new Router(store, tasks, providers, updates, () => null, () => null)
+  router = new Router(store, tasks, providers, updates, grants, () => null, () => null)
   started = []
   vi.spyOn(TaskManager.prototype, 'start').mockImplementation((spec: TaskSpec) => {
     started.push(spec)
@@ -124,6 +131,7 @@ describe('clone authorization', () => {
   it('rejects an explicit account that does not match the clone destination', async () => {
     const account = await addAccount()
     const directory = await makeDir('commit87-clone-')
+    await grants.grantPath(directory)
     await expect(
       router.handle('repo.clone', {
         url: 'https://github.com/acme/app.git',
@@ -137,6 +145,7 @@ describe('clone authorization', () => {
   it('starts an automatic clone anonymous when the only account is for another host', async () => {
     await addAccount()
     const directory = await makeDir('commit87-clone-')
+    await grants.grantPath(directory)
     await router.handle('repo.clone', { url: 'https://github.com/acme/app.git', directory })
     const spec = started.at(-1)
     if (!spec) throw new Error('expected a clone task')
@@ -148,6 +157,7 @@ describe('clone authorization', () => {
   it('scopes the helper to the matching clone origin only', async () => {
     await addAccount()
     const directory = await makeDir('commit87-clone-')
+    await grants.grantPath(directory)
     await router.handle('repo.clone', { url: 'https://gitlab.company.com/acme/app.git', directory })
     const spec = started.at(-1)
     if (!spec) throw new Error('expected a clone task')

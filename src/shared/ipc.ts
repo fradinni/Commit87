@@ -63,12 +63,16 @@ import type {
 export interface IpcMethods {
   'app.info': { request: void; response: AppInfo }
   'app.launchTarget': { request: void; response: string | null }
-  'app.checkGit': { request: { path?: string } | void; response: GitBinaryInfo }
+  'app.checkGit': { request: { path?: string }; response: GitBinaryInfo }
+  /** Native picker for a custom Git executable; grants and stores the choice. */
+  'app.pickGitBinary': { request: void; response: GitBinaryInfo | null }
+  /** Forget a custom executable and use the `git` found on PATH. */
+  'app.useSystemGit': { request: void; response: GitBinaryInfo }
   'app.openExternal': { request: { url: string }; response: void }
   'app.openPath': { request: { path: string }; response: { ok: boolean; error?: string } }
   'app.showItemInFolder': { request: { path: string }; response: void }
-  'app.pickDirectory': { request: { title?: string; defaultPath?: string } | void; response: string | null }
-  'app.pickFile': { request: { title?: string; defaultPath?: string; filters?: { name: string; extensions: string[] }[] } | void; response: string | null }
+  'app.pickDirectory': { request: { title?: string; defaultPath?: string }; response: string | null }
+  'app.pickFile': { request: { title?: string; defaultPath?: string; filters?: { name: string; extensions: string[] }[] }; response: string | null }
   'app.openConfigFolder': { request: void; response: void }
 
   'config.get': { request: void; response: AppConfig }

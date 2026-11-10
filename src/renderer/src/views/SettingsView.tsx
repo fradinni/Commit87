@@ -97,23 +97,38 @@ function GeneralSettings({
   patch: (value: Partial<AppConfig>) => Promise<void>
   notify: (message: string, kind?: 'info' | 'success' | 'error') => void
 }) {
-  const [gitPath, setGitPath] = useState(config.gitBinary)
   const [worktreeParent, setWorktreeParent] = useState(config.worktreeParent ?? '')
   const [checking, setChecking] = useState(false)
   const [gitResult, setGitResult] = useState<{ available: boolean; version: string; error?: string } | null>(null)
 
-  const checkGit = async (path?: string): Promise<void> => {
+  const refreshGit = async (result: { available: boolean; version: string; error?: string } | null): Promise<void> => {
+    if (result) setGitResult(result)
+    await useStore.getState().refreshConfig()
+    useStore.setState({ appInfo: await call('app.info', undefined) })
+  }
+
+  const chooseGit = async (): Promise<void> => {
     setChecking(true)
     try {
-      const result = await call('app.checkGit', { path: path || undefined })
-      setGitResult(result)
-      if (result.available) {
-        notify(result.version, 'success')
-        await useStore.getState().refreshConfig()
-        useStore.setState({ appInfo: await call('app.info', undefined) })
-      } else {
-        notify(result.error || 'Git not found', 'error')
-      }
+      const result = await call('app.pickGitBinary', undefined)
+      if (!result) return
+      await refreshGit(result)
+      if (result.available) notify(result.version, 'success')
+      else notify(result.error || 'Git not found', 'error')
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), 'error')
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  const useSystemGit = async (): Promise<void> => {
+    setChecking(true)
+    try {
+      const result = await call('app.useSystemGit', undefined)
+      await refreshGit(result)
+      if (result.available) notify(result.version, 'success')
+      else notify(result.error || 'Git not found', 'error')
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error), 'error')
     } finally {
@@ -161,18 +176,10 @@ function GeneralSettings({
         <p>Where new worktrees are created by default. Each worktree dialog still lets you pick another folder.</p>
         <Field
           label="Default worktree parent"
-          hint="Leave empty to create worktrees next to the repository. Use an absolute path."
+          hint="Leave empty to create worktrees next to the repository. Choose the folder so Commit87 can authorize it."
         >
           <div className="row-gap">
-            <TextInput
-              value={worktreeParent}
-              onChange={(event) => setWorktreeParent(event.target.value)}
-              onBlur={() => void patch({ worktreeParent: worktreeParent.trim() })}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') event.currentTarget.blur()
-              }}
-              placeholder="/home/you/worktrees"
-            />
+            <span className="settings-static-path">{worktreeParent || 'Next to the repository'}</span>
             <Button
               size="sm"
               variant="ghost"
@@ -216,27 +223,26 @@ function GeneralSettings({
           </span>
           <Badge tone={appInfo?.git.available ? 'green' : 'red'}>{appInfo?.git.path}</Badge>
         </div>
-        <Field label="Git executable" hint="Leave empty to use git from PATH. A custom path is stored in the app config.">
+        <Field
+          label="Git executable"
+          hint="Commit87 uses git from PATH unless you choose a specific binary. Only a file selected with this picker is accepted."
+        >
           <div className="row-gap">
-            <TextInput value={gitPath} onChange={(event) => setGitPath(event.target.value)} placeholder="/usr/bin/git" />
-            <Button size="sm" variant="outline" loading={checking} onClick={() => void checkGit(gitPath)}>
-              Test
-            </Button>
+            <span className="settings-static-path">{config.gitBinary || 'git from PATH'}</span>
             <Button
               size="sm"
-              variant="ghost"
+              variant="outline"
+              loading={checking}
               icon={<FolderOpen size={13} />}
-              onClick={() =>
-                void call('app.pickFile', { title: 'Select the git executable' }).then((chosen) => {
-                  if (chosen) {
-                    setGitPath(chosen)
-                    void checkGit(chosen)
-                  }
-                })
-              }
+              onClick={() => void chooseGit()}
             >
-              Browse
+              Choose…
             </Button>
+            {config.gitBinary ? (
+              <Button size="sm" variant="ghost" onClick={() => void useSystemGit()}>
+                Use system Git
+              </Button>
+            ) : null}
           </div>
         </Field>
         {gitResult ? (

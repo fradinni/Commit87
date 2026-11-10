@@ -20,9 +20,10 @@ npm run typecheck        # strict TS across main, preload, renderer
 | `tests/recent.test.ts` | recents policy: regular checkouts are recorded, linked worktrees only when the OS opened them standalone, and a failed write is logged instead of failing the open |
 | `tests/launch.test.ts` | OS launch parsing: plain folder argv, `file://` URLs from the Linux file manager, `commit87://` deep links, and rejection of files, flags, relative paths and the app itself |
 | `tests/credentials.test.ts` | identity environment, SSH command quoting, credential-helper argv safety, secret redaction |
-| `tests/ui-logic.test.ts` | unified diff parser (adds/deletes/renames/binary), commit graph lane layout, console tokenizer and allow-list |
+| `tests/ui-logic.test.ts` | unified diff parser (adds/deletes/renames/binary), commit graph lane layout, console tokenizer and bounded command grammar |
 | `tests/commit-selection.test.ts` | graph selection model: replace/toggle/range, anchor fallback when a commit disappears, loaded-order normalization, and cherry-pick (oldest first) versus revert (newest first) ordering |
 | `tests/commit-shas.test.ts` | IPC commit-list validation for cherry-pick/revert: hex-only object names, duplicate collapsing, empty/oversized lists and option-like values |
+| `tests/ipc-boundaries.test.ts` | strict decoding (real booleans, enums, revisions, paths), the console's bounded grammar and its bypass matrix, grant issuance/authorization (picks, recents, linked worktrees, clone/init targets, persistence), custom-executable policy, symlink-aware file reads and the config execution-key policy |
 | `tests/refs.test.ts` | refs panel helpers: local/remote folder grouping, current-first ordering, worktree lookup (main checkout excluded from linked worktrees), query matching, cross-platform sibling paths and configured worktree parents |
 | `tests/updates.test.ts` | update support per packaging format, progress clamping, channel and auto-check preferences, the check → available → download → ready state machine, error sanitization, concurrent checks, install gating and the automatic check timer |
 | `tests/providers.test.ts` | GitHub, GitLab, Bitbucket and Gitea mapping, auth headers, enterprise base paths, error messages, workflow dispatch payloads |

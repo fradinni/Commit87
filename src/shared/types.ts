@@ -415,7 +415,8 @@ export interface RepoConfigEntry {
 export interface DirEntry {
   name: string
   path: string
-  type: 'file' | 'directory'
+  /** A symbolic link is listed but never followed or read by the app. */
+  type: 'file' | 'directory' | 'symlink'
   size?: number
 }
 
