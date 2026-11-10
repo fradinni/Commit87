@@ -1,10 +1,18 @@
+import type { VerifiedAppImage } from './appimage-binding'
+
 export type UpdateFormat = 'appimage' | 'nsis' | 'dmg'
 
 export interface UpdateEnvironment {
   platform: NodeJS.Platform
   isPackaged: boolean
-  /** Set by the AppImage runtime to the path of the running image. */
-  appImage?: string
+  /**
+   * A replacement target bound to the running AppImage mount. Never a raw
+   * `APPIMAGE` string: an inherited environment value alone is not proof of
+   * ownership.
+   */
+  appImage?: VerifiedAppImage | null
+  /** Why AppImage verification failed, when a hint was present but unproven. */
+  appImageReason?: string
   /** Set by electron-builder's portable Windows target. */
   portable?: string
   /** Set inside a Snap sandbox. */
@@ -61,7 +69,8 @@ export function detectUpdateSupport(env: UpdateEnvironment): UpdateSupport {
       return { supported: true, format: 'appimage', reason: null }
     }
     return unsupported(
-      'Automatic updates are available for the AppImage build. Use your package manager to update this installation.'
+      env.appImageReason ??
+        'Automatic updates are available for the AppImage build. Use your package manager to update this installation.'
     )
   }
   if (env.platform === 'win32') {

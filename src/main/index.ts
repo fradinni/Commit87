@@ -15,6 +15,7 @@ import { installMenu } from './menu'
 import { registerAppProtocol, registerAppScheme } from './protocol'
 import { UpdateService, type UpdateAdapter } from './updates'
 import { createElectronUpdater, createInertUpdater } from './update-adapter'
+import { createAppImageProbe, verifyAppImage } from './appimage-binding'
 import { hasDeveloperIdSignature } from './mac-signing'
 import { APP_VERSION } from './version'
 
@@ -200,12 +201,20 @@ app.whenReady().then(() => {
       process.platform === 'darwin' && app.isPackaged
         ? await hasDeveloperIdSignature(path.resolve(path.dirname(process.execPath), '../..'))
         : false
+    // `APPIMAGE`/`APPDIR` are untrusted hints: bind the replacement target to
+    // the kernel mount that actually contains this executable, and fail closed
+    // when no such mount exists.
+    const appImage = verifyAppImage(createAppImageProbe())
     const updates = new UpdateService({
       adapter: updaterAdapter ?? createInertUpdater(),
       environment: {
         platform: process.platform,
         isPackaged: updaterAdapter ? app.isPackaged : false,
-        appImage: process.env.APPIMAGE,
+        appImage: appImage.ok ? appImage.target : null,
+        // Only explain AppImage verification when the environment actually
+        // claimed to be one; a .deb/.rpm/tar.gz run has no hint and must keep
+        // the package-manager wording.
+        appImageReason: !appImage.ok && process.env.APPIMAGE ? appImage.reason : undefined,
         portable: process.env.PORTABLE_EXECUTABLE_FILE,
         snap: process.env.SNAP,
         flatpak: process.env.FLATPAK_ID,

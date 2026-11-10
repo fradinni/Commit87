@@ -379,6 +379,18 @@ every in-place update would be rejected. `main/updates.ts` owns the state machin
 `main/update-adapter.ts` implements over `electron-updater`. The adapter is bundled into
 the main output, so the packaged ASAR still has no `node_modules` tree.
 
+The replacement target is bound to the running installation before any update work:
+`main/appimage-binding.ts` accepts an AppImage only when `realpath(process.execPath)` lies
+inside a kernel mount recorded in `/proc/self/mountinfo` whose filesystem is a squashfs
+AppImage mount and whose mount source resolves to the same file as `APPIMAGE`. `APPIMAGE`
+and `APPDIR` are treated as untrusted hints: an inherited variable, a path that exists, an
+executable bit or an AppImage header prove nothing. Extracted/unpacked runs, Snap, Flatpak
+and loop-mounted copies fail closed with an explicit reason. The verified target's device,
+inode, size, modification time, mount point and mount source are retained; the adapter
+receives that object, sets `APPIMAGE` from it immediately before delegating, and the
+service revalidates the identity immediately before download and again immediately before
+install, refusing to reach the library when anything changed.
+
 Preferences are part of `AppConfig`:
 
 - `updateChannel` is `stable` (electron-updater channel `latest`) or `beta` (`beta`).

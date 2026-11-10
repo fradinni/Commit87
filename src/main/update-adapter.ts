@@ -1,6 +1,7 @@
 import { autoUpdater, CancellationToken } from 'electron-updater'
 import type { ProgressInfo, UpdateInfo } from 'electron-updater'
 import type { UpdateChannel, UpdateProgress } from '@shared/types'
+import type { VerifiedAppImage } from './appimage-binding'
 import type { UpdateAdapter, UpdateDownloadTask, UpdateInfoSummary } from './updates'
 
 const MAX_NOTES_LENGTH = 6000
@@ -94,14 +95,19 @@ export function createElectronUpdater(): UpdateAdapter {
       const result = await autoUpdater.checkForUpdates()
       return result?.updateInfo ? summarize(result.updateInfo) : null
     },
-    download(): UpdateDownloadTask {
+    download(target: VerifiedAppImage | null): UpdateDownloadTask {
       const cancellationToken = new CancellationToken()
+      // electron-updater's AppImage updater reads `APPIMAGE`. Set it from the
+      // verified target immediately before delegating so a mutated environment
+      // cannot redirect the download or the replacement.
+      if (target) process.env.APPIMAGE = target.imagePath
       return {
         promise: autoUpdater.downloadUpdate(cancellationToken).then(() => undefined),
         cancel: () => cancellationToken.cancel()
       }
     },
-    quitAndInstall(): void {
+    quitAndInstall(target: VerifiedAppImage | null): void {
+      if (target) process.env.APPIMAGE = target.imagePath
       // Silent on Windows so the NSIS wizard does not interrupt the restart;
       // relaunch the app afterwards.
       autoUpdater.quitAndInstall(true, true)

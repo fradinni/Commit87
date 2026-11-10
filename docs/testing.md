@@ -93,13 +93,15 @@ node scripts/build-packages.mts --config electron-builder.config.cjs --linux --x
 
 node scripts/demo-updates.mjs prepare dist/Commit87-0.1.0-linux-x86_64.AppImage
 node scripts/demo-updates.mjs serve          # terminal 2
-APPIMAGE="$PWD/dist/Commit87-0.1.0-linux-x86_64.AppImage" dist/update-demo/squashfs-root/AppRun
 ```
 
-The feed metadata is x64-only (`latest-linux.yml`); use an x64 AppImage. The unpacked
-`dist/linux-unpacked` build can also be used by pointing its
-`resources/app-update.yml` at `http://127.0.0.1:8787/` and launching it with
-`APPIMAGE` set to any executable path.
+Run the **AppImage itself**, not the tree `prepare` unpacks. The update path is bound to
+the mount that contains the running executable, so an extracted `squashfs-root/AppRun`
+started with `APPIMAGE` set is now refused by design and only shows the unsupported state.
+To exercise check, channel, progress and ready states, build an AppImage whose bundled
+`app-update.yml` points at `http://127.0.0.1:8787/` (generic publish URL), launch it as an
+AppImage so its own runtime provides `APPIMAGE`, and open Settings → Updates. The feed
+metadata is x64-only (`latest-linux.yml`); use an x64 AppImage.
 
 Open Settings → Updates. The flow to check:
 
