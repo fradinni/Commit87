@@ -52,7 +52,7 @@ trust.**
 | Repository tabs | Keep several repositories open at once, each with its own view, selection, status and console; drag to reorder, middle-click to close |
 | Commit graph | Lane layout, refs and tags, search, branch filter, load more, commit details, Ctrl/Cmd and Shift multi-select, right-click actions |
 | History actions | Branch here, tag here, detached checkout and reset for one commit; cherry-pick and revert for one commit or a selection |
-| Staging | Staged / modified / untracked / conflicted groups, per-file stage, discard with undo |
+| Staging | Staged and worktree sides of each file, per-file stage and unstage, discard (no app-level undo), keyboard-navigable rows, drafts kept per repository |
 | Commits | Amend, sign-off, `--allow-empty`, identity override per commit, Ctrl/Cmd+Enter |
 | Code browsing | Worktree and `HEAD` file tree, syntax highlighting, blame, open in OS editor |
 | Diffs | Unified diffs with per-file stats, binary detection, rename detection |

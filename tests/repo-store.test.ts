@@ -127,7 +127,7 @@ const bridge = {
 const globalScope = globalThis as { commit87?: Commit87Bridge }
 globalScope.commit87 = bridge
 
-const { useStore } = await import('../src/renderer/src/store')
+const { useStore, conflictDraftKey } = await import('../src/renderer/src/store')
 
 const A = '/tmp/commit87-tabs/alpha'
 const B = '/tmp/commit87-tabs/beta'
@@ -479,6 +479,86 @@ describe('tab-aware task events', () => {
     })
     const line = useStore.getState().tabs[0].consoleLines.at(-1)
     expect(line?.stream).toBe('stderr')
+  })
+})
+
+describe('repository drafts', () => {
+  it('keeps a commit draft per repository across tab switches', async () => {
+    await useStore.getState().openRepo(A)
+    useStore.getState().setCommitDraft({ message: 'feat: alpha', amend: true, signoff: true })
+    expect(useStore.getState().commitMessage).toBe('feat: alpha')
+
+    await useStore.getState().openRepo(B)
+    expect(useStore.getState().commitMessage).toBe('')
+    expect(useStore.getState().commitAmend).toBe(false)
+    expect(useStore.getState().commitSignoff).toBe(false)
+
+    useStore.getState().activateTab(A)
+    expect(useStore.getState().commitMessage).toBe('feat: alpha')
+    expect(useStore.getState().commitAmend).toBe(true)
+    expect(useStore.getState().commitSignoff).toBe(true)
+    expect(useStore.getState().tabs.find((tab) => tab.id === A)?.commitMessage).toBe('feat: alpha')
+  })
+
+  it('clears the commit draft of the active repository only', async () => {
+    await useStore.getState().openRepo(A)
+    useStore.getState().setCommitDraft({ message: 'alpha message' })
+    await useStore.getState().openRepo(B)
+    useStore.getState().setCommitDraft({ message: 'beta message' })
+
+    useStore.getState().clearCommitDraft()
+    expect(useStore.getState().commitMessage).toBe('')
+    expect(useStore.getState().tabs.find((tab) => tab.id === B)?.commitMessage).toBe('')
+
+    useStore.getState().activateTab(A)
+    expect(useStore.getState().commitMessage).toBe('alpha message')
+  })
+
+  it('keys conflict drafts by repository, file and baseline', async () => {
+    await useStore.getState().openRepo(A)
+    const sha = 'a'.repeat(64)
+    const alphaKey = conflictDraftKey(A, 'src/app.ts', sha)
+    const otherShaKey = conflictDraftKey(A, 'src/app.ts', 'b'.repeat(64))
+    useStore.getState().saveConflictDraft(alphaKey, { output: 'ours\n', eol: '\n', updatedAt: 1 })
+    useStore.getState().saveConflictDraft(otherShaKey, { output: 'stale\n', eol: '\r\n', updatedAt: 2 })
+    expect(useStore.getState().conflictDrafts[alphaKey]?.output).toBe('ours\n')
+
+    await useStore.getState().openRepo(B)
+    expect(useStore.getState().conflictDrafts[alphaKey]).toBeUndefined()
+    const betaKey = conflictDraftKey(B, 'src/app.ts', sha)
+    useStore.getState().saveConflictDraft(betaKey, { output: 'beta\n', eol: '\n', updatedAt: 3 })
+    expect(useStore.getState().conflictDrafts[betaKey]?.output).toBe('beta\n')
+    expect(useStore.getState().tabs.find((tab) => tab.id === A)?.conflictDrafts[betaKey]).toBeUndefined()
+
+    useStore.getState().activateTab(A)
+    expect(useStore.getState().conflictDrafts[alphaKey]?.output).toBe('ours\n')
+    expect(useStore.getState().conflictDrafts[otherShaKey]?.eol).toBe('\r\n')
+    expect(useStore.getState().conflictDrafts[betaKey]).toBeUndefined()
+  })
+
+  it('clears every baseline draft for a saved file and leaves other files alone', async () => {
+    await useStore.getState().openRepo(A)
+    const fileKey = conflictDraftKey(A, 'src/app.ts', 'a'.repeat(64))
+    const oldFileKey = conflictDraftKey(A, 'src/app.ts', 'c'.repeat(64))
+    const otherFileKey = conflictDraftKey(A, 'src/other.ts', 'd'.repeat(64))
+    useStore.getState().saveConflictDraft(fileKey, { output: 'one\n', eol: '\n', updatedAt: 1 })
+    useStore.getState().saveConflictDraft(oldFileKey, { output: 'two\n', eol: '\n', updatedAt: 2 })
+    useStore.getState().saveConflictDraft(otherFileKey, { output: 'three\n', eol: '\n', updatedAt: 3 })
+
+    useStore.getState().clearConflictDrafts(A, 'src/app.ts')
+    const drafts = useStore.getState().conflictDrafts
+    expect(drafts[fileKey]).toBeUndefined()
+    expect(drafts[oldFileKey]).toBeUndefined()
+    expect(drafts[otherFileKey]?.output).toBe('three\n')
+  })
+
+  it('writes an addressed tab draft without mirroring it into the active tab', async () => {
+    await useStore.getState().openRepo(A)
+    await useStore.getState().openRepo(B)
+    useStore.getState().updateTab(A, { commitMessage: 'alpha only' })
+    expect(useStore.getState().commitMessage).toBe('')
+    expect(useStore.getState().tabs.find((tab) => tab.id === A)?.commitMessage).toBe('alpha only')
+    expect(useStore.getState().tabs.find((tab) => tab.id === B)?.commitMessage).toBe('')
   })
 })
 

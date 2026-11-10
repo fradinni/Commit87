@@ -362,7 +362,10 @@ then `git switch -c pr-N <ref>` with the integration token used for the fetch.
 - **Theme**: dark and light palettes driven by CSS variables; `system` follows
   `prefers-color-scheme`.
 - **Accessibility**: native buttons, `aria-label` on icon buttons, focus-visible outlines,
-  `role="status"` for toasts, `aria-modal` dialogs closed with Escape.
+  `role="status"` for toasts, and a listbox of changed-file rows with roving tab focus,
+  Arrow/Home/End navigation and Enter/Space selection whose row actions are visible on focus.
+  Modals move focus inside, trap Tab/Shift+Tab, close on Escape only for the top-most dialog
+  and restore the previous focus.
 
 ## Updates
 

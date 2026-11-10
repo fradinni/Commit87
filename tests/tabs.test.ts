@@ -199,4 +199,17 @@ describe('active tab patch mirroring', () => {
     const next = applyRepoTabPatch(tabs, 'b', { status: null })
     expect(next?.[1].status).toBeNull()
   })
+
+  it('mirrors commit and conflict drafts with the repository tab', () => {
+    const conflictDrafts = {
+      '/repo\u0000src/app.ts\u0000abc': { output: 'ours\n', eol: '\n' as const, updatedAt: 1 }
+    }
+    const patch = { commitMessage: 'wip: draft', commitAmend: true, commitSignoff: true, conflictDrafts }
+    expect(pickRepoTabPatch(patch)).toEqual(patch)
+
+    const next = applyRepoTabPatch(tabs, 'a', patch)
+    expect(next?.[0]).toMatchObject(patch)
+    expect(next?.[1]).toEqual(tabs[1])
+    expect(tabs[0]).not.toMatchObject(patch)
+  })
 })

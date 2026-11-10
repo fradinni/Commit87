@@ -58,6 +58,25 @@ export interface ConsoleLine {
   at: number
 }
 
+/** An unsaved conflict resolution tied to one repository, file and baseline. */
+export interface ConflictDraft {
+  output: string
+  eol: '\n' | '\r\n'
+  updatedAt: number
+}
+
+/**
+ * Draft keys include the baseline SHA-256 so a draft can never be applied to
+ * bytes it was not derived from. NUL separators cannot appear in a path.
+ */
+export function conflictDraftKey(repoPath: string, file: string, sha: string): string {
+  return `${draftPrefix(repoPath, file)}${sha || 'no-sha'}`
+}
+
+function draftPrefix(repoPath: string, file: string): string {
+  return `${repoPath}\u0000${file}\u0000`
+}
+
 interface TaskState {
   taskId: string
   title: string
@@ -86,6 +105,10 @@ export interface RepoTab {
   graphQuery: string
   graphBranch: string
   consoleLines: ConsoleLine[]
+  commitMessage: string
+  commitAmend: boolean
+  commitSignoff: boolean
+  conflictDrafts: Record<string, ConflictDraft>
 }
 
 /** Fields a repository tab owns; every one of them has a flat mirror for the active tab. */
@@ -120,6 +143,10 @@ interface StoreState {
   selectionAnchor: string | null
   graphQuery: string
   graphBranch: string
+  commitMessage: string
+  commitAmend: boolean
+  commitSignoff: boolean
+  conflictDrafts: Record<string, ConflictDraft>
   repoLoading: boolean
   loading: Record<string, boolean>
   toasts: Toast[]
@@ -167,6 +194,10 @@ interface StoreState {
   selectCommits: (shas: string[], active: string | null, anchor?: string | null) => void
   setGraphQuery: (query: string) => void
   setGraphBranch: (branch: string) => void
+  setCommitDraft: (patch: { message?: string; amend?: boolean; signoff?: boolean }) => void
+  clearCommitDraft: () => void
+  saveConflictDraft: (key: string, draft: ConflictDraft) => void
+  clearConflictDrafts: (repoPath: string, file: string) => void
   notify: (message: string, kind?: Toast['kind']) => void
   notifyError: (error: unknown) => void
   dismissToast: (id: string) => void
@@ -211,7 +242,11 @@ const emptyRepoSlice: RepoSlice = {
   selectionAnchor: null,
   graphQuery: '',
   graphBranch: '',
-  consoleLines: []
+  consoleLines: [],
+  commitMessage: '',
+  commitAmend: false,
+  commitSignoff: false,
+  conflictDrafts: {}
 }
 
 let toastSeq = 0
@@ -273,7 +308,11 @@ function tabToStore(tab: RepoTab): Partial<StoreState> {
     selectionAnchor: tab.selectionAnchor,
     graphQuery: tab.graphQuery,
     graphBranch: tab.graphBranch,
-    consoleLines: tab.consoleLines
+    consoleLines: tab.consoleLines,
+    commitMessage: tab.commitMessage,
+    commitAmend: tab.commitAmend,
+    commitSignoff: tab.commitSignoff,
+    conflictDrafts: tab.conflictDrafts
   }
 }
 
@@ -450,7 +489,11 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
         selectionAnchor: commits[0]?.sha ?? null,
         graphQuery: '',
         graphBranch: '',
-        consoleLines: []
+        consoleLines: [],
+        commitMessage: '',
+        commitAmend: false,
+        commitSignoff: false,
+        conflictDrafts: {}
       }
       // Two concurrent opens of the same folder must still produce one tab.
       const duplicate = get().tabs.find((item) => item.id === id)
@@ -710,6 +753,25 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
   },
   setGraphBranch(branch) {
     set({ graphBranch: branch })
+  },
+  setCommitDraft(patch) {
+    set({
+      ...(patch.message !== undefined ? { commitMessage: patch.message } : {}),
+      ...(patch.amend !== undefined ? { commitAmend: patch.amend } : {}),
+      ...(patch.signoff !== undefined ? { commitSignoff: patch.signoff } : {})
+    })
+  },
+  clearCommitDraft() {
+    set({ commitMessage: '', commitAmend: false, commitSignoff: false })
+  },
+  saveConflictDraft(key, draft) {
+    set({ conflictDrafts: { ...get().conflictDrafts, [key]: draft } })
+  },
+  clearConflictDrafts(repoPath, file) {
+    const current = get().conflictDrafts
+    const prefix = draftPrefix(repoPath, file)
+    const next = Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(prefix)))
+    if (Object.keys(next).length !== Object.keys(current).length) set({ conflictDrafts: next })
   },
 
   notify(message, kind = 'info') {

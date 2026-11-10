@@ -405,6 +405,8 @@ export interface FileContent {
   truncated: boolean
   size: number
   from: 'worktree' | 'head'
+  /** SHA-256 of the returned bytes, absent when truncated or binary. */
+  sha256?: string
 }
 
 export interface BlameLine {
@@ -612,6 +614,8 @@ export interface ResolveConflictInput {
   repoPath: string
   file: string
   content: string
+  /** Hash of the content the editor loaded; the save is rejected if it no longer matches. */
+  expectedSha256?: string
 }
 
 export interface LogInput {

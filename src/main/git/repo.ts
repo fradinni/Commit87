@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type {
@@ -691,7 +692,12 @@ const MAX_RESOLVED_BYTES = 5 * 1024 * 1024
  * parent chain). This keeps the staging action narrow; ordinary file edits
  * remain in the user's external editor.
  */
-export async function resolveConflict(repoPath: string, file: string, content: string): Promise<void> {
+export async function resolveConflict(
+  repoPath: string,
+  file: string,
+  content: string,
+  expectedSha256?: string
+): Promise<void> {
   if (content.includes('\0')) throw new Error('Resolved content contains a NUL byte')
   if (Buffer.byteLength(content, 'utf8') > MAX_RESOLVED_BYTES) {
     throw new Error('Resolved file is too large to save from the app')
@@ -728,6 +734,11 @@ export async function resolveConflict(repoPath: string, file: string, content: s
     if (decodeText(current).binary) {
       throw new Error('This file is not UTF-8 text; resolve it outside the app')
     }
+    if (expectedSha256 && sha256(current) !== expectedSha256) {
+      throw new Error('The file changed on disk since it was loaded; reload it before saving')
+    }
+  } else if (expectedSha256) {
+    throw new Error('The file changed or was removed on disk since it was loaded; reload it before saving')
   }
 
   await fs.writeFile(target, content, 'utf8')
@@ -764,14 +775,23 @@ export async function readFileContent(
     size = buffer.length
   }
   const decoded = decodeText(buffer)
+  const truncated = size > MAX_FILE_BYTES
   return {
     path: file,
     content: decoded.content,
     binary: decoded.binary,
-    truncated: size > MAX_FILE_BYTES,
+    truncated,
     size,
-    from
+    from,
+    // Identity of the exact bytes the editor received, so a later save can
+    // reject a file that changed underneath it. Omitted when the read was
+    // truncated or the content is not text.
+    sha256: truncated || decoded.binary ? undefined : sha256(buffer)
   }
+}
+
+function sha256(buffer: Buffer): string {
+  return createHash('sha256').update(buffer).digest('hex')
 }
 
 /**

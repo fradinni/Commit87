@@ -299,10 +299,15 @@ export class Router {
         const content = data.content
         if (typeof content !== 'string') throw new Error('Resolved content must be text')
         if (content.length > 10 * 1024 * 1024) throw new Error('Resolved content is too large')
+        const expected = data.expectedSha256
+        if (expected !== undefined && (typeof expected !== 'string' || !/^[a-f0-9]{64}$/.test(expected))) {
+          throw new Error('Expected content hash must be a SHA-256 hex digest')
+        }
         await repoOps.resolveConflict(
           requireString(data.repoPath, 'Repository path'),
           requireString(data.file, 'File'),
-          content
+          content,
+          expected
         )
         return undefined
       }

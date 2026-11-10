@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronDown,
   ChevronRight,
@@ -19,7 +19,8 @@ import {
 import type { BlameLine, DiffResult, DirEntry, FileContent, StatusFile } from '@shared/types'
 import { activeIdentity, useStore } from '../store'
 import { call, errorMessage } from '../lib/ipc'
-import { actionPaths, actionPathsFor, stagePaths, stagePathsFor } from '../lib/files'
+import { actionPaths, actionPathsFor, fileFacets, stagePaths, stagePathsFor, type FileFacet } from '../lib/files'
+import { createRequestGuard } from '../lib/request'
 import { formatRelativeTime, languageFromPath } from '../lib/format'
 import { Badge, Button, ConfirmDialog, EmptyState, Field, IconButton, LoadingBlock, Select, TextArea } from '../components/ui'
 import { DiffView } from '../components/DiffView'
@@ -32,6 +33,19 @@ const CodeView = lazy(() => import('../components/CodeView').then((module) => ({
 
 type FilesTab = 'changes' | 'browse'
 
+/** Which side of a path the reviewer picked; the facet key also carries it. */
+interface FacetSelection {
+  path: string
+  side: FileFacet['side']
+}
+
+type ChangeGroup = {
+  key: string
+  label: string
+  tone: 'green' | 'blue' | 'amber' | 'red'
+  facets: FileFacet[]
+}
+
 export function FilesView() {
   const repo = useStore((state) => state.currentRepo)
   const repoPath = repo?.path ?? ''
@@ -41,15 +55,17 @@ export function FilesView() {
   const notifyError = useStore((state) => state.notifyError)
   const refreshAll = useStore((state) => state.refreshAll)
   const refreshStatus = useStore((state) => state.refreshStatus)
+  const commitMessage = useStore((state) => state.commitMessage)
+  const commitAmend = useStore((state) => state.commitAmend)
+  const commitSignoff = useStore((state) => state.commitSignoff)
+  const setCommitDraft = useStore((state) => state.setCommitDraft)
+  const clearCommitDraft = useStore((state) => state.clearCommitDraft)
 
   const [tab, setTab] = useState<FilesTab>('changes')
-  const [selectedFile, setSelectedFile] = useState<string | null>(null)
+  const [selected, setSelected] = useState<FacetSelection | null>(null)
   const [diff, setDiff] = useState<DiffResult | null>(null)
   const [diffLoading, setDiffLoading] = useState(false)
   const [contentError, setContentError] = useState<string | null>(null)
-  const [message, setMessage] = useState('')
-  const [amend, setAmend] = useState(false)
-  const [signoff, setSignoff] = useState(false)
   const [committing, setCommitting] = useState(false)
   const [discardTarget, setDiscardTarget] = useState<StatusFile[] | null>(null)
   const [identityId, setIdentityId] = useState<string | undefined>(repoDefaults.identityId)
@@ -64,18 +80,54 @@ export function FilesView() {
   const [treeLoading, setTreeLoading] = useState(false)
   const [browseFile, setBrowseFile] = useState<string | null>(null)
 
+  // Each editable surface keeps its own identity guard: a late response (or a
+  // late `finally`) must never populate the editor for a newer selection.
+  const previewGuard = useRef(createRequestGuard())
+  const browseGuard = useRef(createRequestGuard())
+  const blameGuard = useRef(createRequestGuard())
+  const treeGuards = useRef(new Map<string, ReturnType<typeof createRequestGuard>>())
+  const rowRefs = useRef(new Map<string, HTMLDivElement>())
+
   useEffect(() => {
     setIdentityId(repoDefaults.identityId)
   }, [repoDefaults.identityId, repo?.path])
 
-  const selectedStatus = useMemo(
-    () => status?.files.find((file) => file.path === selectedFile) ?? null,
-    [selectedFile, status]
-  )
+  const facets = useMemo(() => (status ? status.files.flatMap(fileFacets) : []), [status])
 
-  const loadDiff = useCallback(
-    async (file: StatusFile) => {
+  const selectedFacet = useMemo(() => {
+    if (!selected) return null
+    return (
+      facets.find((facet) => facet.path === selected.path && facet.side === selected.side) ??
+      facets.find((facet) => facet.path === selected.path) ??
+      null
+    )
+  }, [facets, selected])
+
+  const groups = useMemo<ChangeGroup[]>(
+    () =>
+      [
+        { key: 'staged', label: 'Staged', tone: 'green' as const, facets: facets.filter((facet) => facet.stage === 'staged') },
+        { key: 'unstaged', label: 'Changes', tone: 'blue' as const, facets: facets.filter((facet) => facet.stage === 'unstaged') },
+        { key: 'untracked', label: 'Untracked', tone: 'amber' as const, facets: facets.filter((facet) => facet.stage === 'untracked') },
+        { key: 'conflicted', label: 'Conflicts', tone: 'red' as const, facets: facets.filter((facet) => facet.stage === 'conflicted') }
+      ].filter((group) => group.facets.length > 0),
+    [facets]
+  )
+  const visibleFacets = useMemo(() => groups.flatMap((group) => group.facets), [groups])
+  const stagedFacets = useMemo(() => groups.find((group) => group.key === 'staged')?.facets ?? [], [groups])
+
+  // A path that is both staged and modified is shown twice; label each row so
+  // the reviewer knows which recorded version is on screen.
+  const splitPaths = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const facet of facets) counts.set(facet.path, (counts.get(facet.path) ?? 0) + 1)
+    return new Set([...counts].filter(([, count]) => count > 1).map(([path]) => path))
+  }, [facets])
+
+  const loadPreview = useCallback(
+    async (facet: FileFacet) => {
       if (!repoPath) return
+      const token = previewGuard.current.begin(`${repoPath}|${facet.side}|${facet.path}`)
       setDiffLoading(true)
       setDiff(null)
       setFileContent(null)
@@ -84,49 +136,62 @@ export function FilesView() {
         // Git emits a combined diff (diff --cc) for unmerged paths, which the
         // unified-diff view cannot render. Show the working-tree file with its
         // conflict markers instead so both sides are visible.
-        if (file.stage === 'untracked' || file.stage === 'conflicted') {
-          const content = await call('git.fileContent', { path: repoPath, file: file.path, from: 'worktree' })
+        if (facet.stage === 'untracked' || facet.stage === 'conflicted') {
+          const content = await call('git.fileContent', { path: repoPath, file: facet.path, from: 'worktree' })
+          if (!previewGuard.current.isCurrent(token)) return
           setFileContent(content)
           return
         }
         const result = await call('git.diff', {
           repoPath,
-          path: file.path,
-          staged: file.stage === 'staged'
+          path: facet.path,
+          staged: facet.side === 'index'
         })
+        if (!previewGuard.current.isCurrent(token)) return
         setDiff(result)
       } catch (error) {
-        if (file.stage === 'conflicted') setContentError(errorMessage(error))
+        if (!previewGuard.current.isCurrent(token)) return
+        if (facet.stage === 'conflicted') setContentError(errorMessage(error))
         notifyError(error)
       } finally {
-        setDiffLoading(false)
+        if (previewGuard.current.isCurrent(token)) setDiffLoading(false)
       }
     },
     [notifyError, repoPath]
   )
 
-  const selectedStage = selectedStatus?.stage
   useEffect(() => {
-    if (!selectedFile) return
-    const file = useStore.getState().status?.files.find((item) => item.path === selectedFile)
-    if (file) void loadDiff(file)
-    else {
+    if (!selectedFacet) {
+      previewGuard.current.invalidate()
       setDiff(null)
       setFileContent(null)
+      setContentError(null)
+      setDiffLoading(false)
+      return
     }
-  }, [loadDiff, selectedFile, selectedStage])
+    void loadPreview(selectedFacet)
+  }, [loadPreview, repoPath, selectedFacet])
 
   const loadTree = useCallback(
     async (dir = '') => {
       if (!repoPath) return
+      const key = `${repoPath}|${dir}`
+      let guard = treeGuards.current.get(key)
+      if (!guard) {
+        guard = createRequestGuard()
+        treeGuards.current.set(key, guard)
+      }
+      const token = guard.begin(key)
       setTreeLoading(true)
       try {
         const entries = await call('git.fileTree', { path: repoPath, dir })
+        if (!guard.isCurrent(token)) return
         setTree((current) => ({ ...current, [dir]: entries }))
       } catch (error) {
+        if (!guard.isCurrent(token)) return
         notifyError(error)
       } finally {
-        setTreeLoading(false)
+        if (guard.isCurrent(token)) setTreeLoading(false)
       }
     },
     [notifyError, repoPath]
@@ -134,19 +199,47 @@ export function FilesView() {
 
   useEffect(() => {
     if (!repoPath) return
+    previewGuard.current.invalidate()
+    browseGuard.current.invalidate()
+    blameGuard.current.invalidate()
+    for (const guard of treeGuards.current.values()) guard.invalidate()
+    treeGuards.current.clear()
     setTree({})
     setExpanded(new Set())
     setBrowseFile(null)
     setFileContent(null)
     setBlame(null)
-    setSelectedFile(null)
+    setSelected(null)
     setDiff(null)
+    setContentError(null)
+    setDiffLoading(false)
+    setContentLoading(false)
+    setBlameLoading(false)
+    setTreeLoading(false)
     if (tab === 'browse') void loadTree('')
   }, [repoPath, tab, loadTree])
+
+  useEffect(() => () => {
+    previewGuard.current.invalidate()
+    browseGuard.current.invalidate()
+    blameGuard.current.invalidate()
+    for (const guard of treeGuards.current.values()) guard.invalidate()
+    treeGuards.current.clear()
+  }, [])
+
+  // A staged/discarded path may disappear from the status entirely.
+  useEffect(() => {
+    if (!selected) return
+    if (facets.some((facet) => facet.path === selected.path)) return
+    setSelected(null)
+  }, [facets, selected])
 
   const loadFile = useCallback(
     async (file: string) => {
       if (!repoPath) return
+      // A blame request for the previous file must not arrive after this one.
+      blameGuard.current.invalidate()
+      const token = browseGuard.current.begin(`${repoPath}|${browseFrom}|${file}`)
       setBrowseFile(file)
       setBlame(null)
       setContentLoading(true)
@@ -157,11 +250,13 @@ export function FilesView() {
           from: browseFrom,
           commit: browseFrom === 'head' ? 'HEAD' : undefined
         })
+        if (!browseGuard.current.isCurrent(token)) return
         setFileContent(content)
       } catch (error) {
+        if (!browseGuard.current.isCurrent(token)) return
         notifyError(error)
       } finally {
-        setContentLoading(false)
+        if (browseGuard.current.isCurrent(token)) setContentLoading(false)
       }
     },
     [browseFrom, notifyError, repoPath]
@@ -173,25 +268,22 @@ export function FilesView() {
 
   const loadBlame = async (): Promise<void> => {
     if (!repo || !browseFile) return
+    const token = blameGuard.current.begin(`${repo.path}|${browseFile}`)
     setBlameLoading(true)
     try {
       const lines = await call('git.blame', { path: repo.path, file: browseFile })
+      if (!blameGuard.current.isCurrent(token)) return
       setBlame(lines)
     } catch (error) {
+      if (!blameGuard.current.isCurrent(token)) return
       notifyError(error)
     } finally {
-      setBlameLoading(false)
+      if (blameGuard.current.isCurrent(token)) setBlameLoading(false)
     }
   }
 
   if (!repo || !status) return null
 
-  const groups: Array<{ key: string; label: string; files: StatusFile[]; tone: 'green' | 'blue' | 'amber' | 'red' }> = [
-    { key: 'staged', label: 'Staged', files: status.files.filter((file) => file.stage === 'staged'), tone: 'green' as const },
-    { key: 'unstaged', label: 'Changes', files: status.files.filter((file) => file.stage === 'unstaged'), tone: 'blue' as const },
-    { key: 'untracked', label: 'Untracked', files: status.files.filter((file) => file.stage === 'untracked'), tone: 'amber' as const },
-    { key: 'conflicted', label: 'Conflicts', files: status.files.filter((file) => file.stage === 'conflicted'), tone: 'red' as const }
-  ].filter((group) => group.files.length > 0)
   const stageFiles = async (files: string[]): Promise<void> => {
     try {
       await call('git.stage', { path: repo.path, files })
@@ -220,7 +312,8 @@ export function FilesView() {
         includeUntracked: discardTarget.some((file) => file.stage === 'untracked')
       })
       setDiscardTarget(null)
-      setSelectedFile(null)
+      previewGuard.current.invalidate()
+      setSelected(null)
       setDiff(null)
       await refreshAll(repo.path)
       notify('Changes discarded', 'success')
@@ -230,7 +323,7 @@ export function FilesView() {
   }
 
   const commit = async (): Promise<void> => {
-    if (!message.trim()) {
+    if (!commitMessage.trim()) {
       notify('Write a commit message first', 'info')
       return
     }
@@ -238,14 +331,14 @@ export function FilesView() {
     try {
       await call('git.commit', {
         repoPath: repo.path,
-        message,
-        amend,
-        signoff,
+        message: commitMessage,
+        amend: commitAmend,
+        signoff: commitSignoff,
         identityId: identity?.id
       })
-      setMessage('')
-      setAmend(false)
-      setSelectedFile(null)
+      clearCommitDraft()
+      previewGuard.current.invalidate()
+      setSelected(null)
       setDiff(null)
       setFileContent(null)
       await refreshAll(repo.path)
@@ -257,9 +350,43 @@ export function FilesView() {
     }
   }
 
-  const selectFile = (file: StatusFile): void => {
-    setSelectedFile(file.path)
+  const selectFacet = (facet: FileFacet): void => {
+    // Invalidate before the next render so a response that lands between the
+    // click and the effect cannot populate the editor for the new target, and
+    // never render the previous selection's bytes under the new row.
+    previewGuard.current.invalidate()
+    setSelected({ path: facet.path, side: facet.side })
+    setDiff(null)
     setFileContent(null)
+    setContentError(null)
+  }
+
+  const focusFacet = (facet: FileFacet): void => {
+    selectFacet(facet)
+    rowRefs.current.get(facet.key)?.focus()
+  }
+
+  const onListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    const target = event.target as HTMLElement
+    const row = target.closest<HTMLElement>('[role="option"]')
+    if (!row) return
+    // Nested action buttons keep their own keyboard behavior.
+    if (target !== row && target.closest('button, a, input, select, textarea')) return
+    const index = visibleFacets.findIndex((facet) => facet.key === row.dataset.facetKey)
+    if (index < 0) return
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      selectFacet(visibleFacets[index])
+      return
+    }
+    let next = index
+    if (event.key === 'ArrowDown') next = Math.min(index + 1, visibleFacets.length - 1)
+    else if (event.key === 'ArrowUp') next = Math.max(index - 1, 0)
+    else if (event.key === 'Home') next = 0
+    else if (event.key === 'End') next = visibleFacets.length - 1
+    else return
+    event.preventDefault()
+    focusFacet(visibleFacets[next])
   }
 
   const saveIdentity = async (value: string | undefined): Promise<void> => {
@@ -318,6 +445,9 @@ export function FilesView() {
 
   const discardRename = discardTarget?.length === 1 && discardTarget[0]?.rename ? discardTarget[0] : null
   const discardPaths = discardTarget ? actionPathsFor(discardTarget) : []
+  const stagedCount = stagedFacets.length
+  const firstFacetKey = visibleFacets[0]?.key
+  const activeFacetKey = selectedFacet?.key
 
   return (
     <div className="view files-view">
@@ -326,7 +456,7 @@ export function FilesView() {
           <div className="segmented">
             <button className={tab === 'changes' ? 'is-active' : ''} onClick={() => setTab('changes')}>
               <ListTree size={14} /> Changes
-              {status.files.length ? <span className="seg-count">{status.files.length}</span> : null}
+              {facets.length ? <span className="seg-count">{facets.length}</span> : null}
             </button>
             <button className={tab === 'browse' ? 'is-active' : ''} onClick={() => setTab('browse')}>
               <FolderOpen size={14} /> Browse code
@@ -349,8 +479,8 @@ export function FilesView() {
                 size="sm"
                 variant="ghost"
                 icon={<Minus size={13} />}
-                onClick={() => void unstageFiles(actionPathsFor(status.files.filter((file) => file.stage === 'staged')))}
-                disabled={!status.stagedCount}
+                onClick={() => void unstageFiles(actionPathsFor(stagedFacets.map((facet) => facet.file)))}
+                disabled={!stagedCount}
               >
                 Unstage all
               </Button>
@@ -378,61 +508,71 @@ export function FilesView() {
       {tab === 'changes' ? (
         <div className="files-layout">
           <aside className="staging-panel">
-            <div className="staging-scroll">
+            <div className="staging-scroll" role="listbox" aria-label="Changed files" onKeyDown={onListKeyDown}>
               {groups.length === 0 ? (
                 <EmptyState icon={<GitCommitHorizontal size={20} />} title="Working tree clean" description="No staged, modified or untracked files." />
               ) : (
                 groups.map((group) => (
-                  <section className="change-group" key={group.key}>
+                  <section className="change-group" key={group.key} role="group" aria-label={group.label}>
                     <header className="change-group-head">
                       <span>
                         <Badge tone={group.tone}>{group.label}</Badge>
-                        <span className="change-count">{group.files.length}</span>
+                        <span className="change-count">{group.facets.length}</span>
                       </span>
                       <span className="change-group-actions">
                         {group.key === 'staged' ? (
-                          <IconButton label="Unstage all" onClick={() => void unstageFiles(actionPathsFor(group.files))}>
+                          <IconButton label="Unstage all" onClick={() => void unstageFiles(actionPathsFor(group.facets.map((facet) => facet.file)))}>
                             <Minus size={13} />
                           </IconButton>
                         ) : (
-                          <IconButton label="Stage all" onClick={() => void stageFiles(stagePathsFor(group.files))}>
+                          <IconButton label="Stage all" onClick={() => void stageFiles(stagePathsFor(group.facets.map((facet) => facet.file)))}>
                             <Plus size={13} />
                           </IconButton>
                         )}
                       </span>
                     </header>
-                    {group.files.map((file) => (
+                    {group.facets.map((facet) => (
                       <div
-                        key={`${group.key}-${file.path}`}
-                        className={`change-row ${selectedFile === file.path ? 'is-active' : ''}`}
-                        onClick={() => selectFile(file)}
+                        key={facet.key}
+                        role="option"
+                        aria-selected={activeFacetKey === facet.key}
+                        aria-label={`${facet.label}: ${facet.path}${facet.side === 'index' ? ' (staged)' : ''}`}
+                        tabIndex={activeFacetKey === facet.key || (!selectedFacet && firstFacetKey === facet.key) ? 0 : -1}
+                        data-facet-key={facet.key}
+                        ref={(element) => {
+                          if (element) rowRefs.current.set(facet.key, element)
+                          else rowRefs.current.delete(facet.key)
+                        }}
+                        className={`change-row ${activeFacetKey === facet.key ? 'is-active' : ''}`}
+                        onClick={() => selectFacet(facet)}
                       >
-                        <span className={`change-status change-${file.index === '.' ? file.worktree : file.index}`}>
-                          {file.label === 'Modified' ? 'M' : file.label === 'Added' ? 'A' : file.label === 'Deleted' ? 'D' : file.label === 'Renamed' ? 'R' : file.label === 'Untracked' ? 'U' : file.label === 'Conflicted' ? '!' : '•'}
+                        <span className={`change-status change-${facet.code}`}>{facet.code}</span>
+                        <span className="change-path" title={facet.path}>
+                          {facet.path}
                         </span>
-                        <span className="change-path" title={file.path}>
-                          {file.path}
-                        </span>
+                        {splitPaths.has(facet.path) ? (
+                          <span className="change-side">{facet.side === 'index' ? 'staged' : 'worktree'}</span>
+                        ) : null}
                         <span className="change-actions" onClick={(event) => event.stopPropagation()}>
-                          {file.stage === 'staged' ? (
+                          {facet.side === 'index' ? (
                             <>
-                              <IconButton label="Unstage" onClick={() => void unstageFiles(actionPaths(file))}>
+                              <IconButton label="Unstage" onClick={() => void unstageFiles(actionPaths(facet.file))}>
                                 <Minus size={12} />
                               </IconButton>
-                              {file.index !== '.' && file.worktree !== '.' ? (
-                                <IconButton label="Stage remaining changes" onClick={() => void stageFiles(stagePaths(file))}>
-                                  <Plus size={12} />
-                                </IconButton>
-                              ) : null}
+                              <IconButton label="Discard changes" danger onClick={() => setDiscardTarget([facet.file])}>
+                                <Undo2 size={12} />
+                              </IconButton>
                             </>
                           ) : (
-                            <IconButton label="Stage" onClick={() => void stageFiles(stagePaths(file))}>
-                              <Plus size={12} />
-                            </IconButton>
+                            <>
+                              <IconButton label="Stage" onClick={() => void stageFiles(stagePaths(facet.file))}>
+                                <Plus size={12} />
+                              </IconButton>
+                              <IconButton label="Discard changes" danger onClick={() => setDiscardTarget([facet.file])}>
+                                <Undo2 size={12} />
+                              </IconButton>
+                            </>
                           )}
-                          <IconButton label="Discard changes" danger onClick={() => setDiscardTarget([file])}>
-                            <Undo2 size={12} />
-                          </IconButton>
                         </span>
                       </div>
                     ))}
@@ -444,14 +584,14 @@ export function FilesView() {
             <div className="commit-box">
               <div className="commit-box-head">
                 <span>Commit</span>
-                <Badge tone={status.stagedCount ? 'green' : 'neutral'}>{status.stagedCount} staged</Badge>
+                <Badge tone={stagedCount ? 'green' : 'neutral'}>{stagedCount} staged</Badge>
               </div>
               <Field label="Author identity">
                 <IdentitySelect value={identity?.id} onChange={(value) => void saveIdentity(value)} />
               </Field>
               <TextArea
-                value={message}
-                onChange={(event) => setMessage(event.target.value)}
+                value={commitMessage}
+                onChange={(event) => setCommitDraft({ message: event.target.value })}
                 placeholder={`Commit message${status.branch ? ` for ${status.branch}` : ''}…`}
                 rows={4}
                 onKeyDown={(event) => {
@@ -463,11 +603,11 @@ export function FilesView() {
               />
               <div className="commit-options">
                 <label className="checkbox-row">
-                  <input type="checkbox" checked={amend} onChange={(event) => setAmend(event.target.checked)} />
+                  <input type="checkbox" checked={commitAmend} onChange={(event) => setCommitDraft({ amend: event.target.checked })} />
                   Amend last commit
                 </label>
                 <label className="checkbox-row">
-                  <input type="checkbox" checked={signoff} onChange={(event) => setSignoff(event.target.checked)} />
+                  <input type="checkbox" checked={commitSignoff} onChange={(event) => setCommitDraft({ signoff: event.target.checked })} />
                   Sign off
                 </label>
               </div>
@@ -476,10 +616,10 @@ export function FilesView() {
                 className="commit-submit"
                 icon={<GitCommitHorizontal size={15} />}
                 loading={committing}
-                disabled={(!status.stagedCount && !amend) || !message.trim()}
+                disabled={(!stagedCount && !commitAmend) || !commitMessage.trim()}
                 onClick={() => void commit()}
               >
-                Commit{status.stagedCount ? ` ${status.stagedCount} file${status.stagedCount === 1 ? '' : 's'}` : ''}
+                Commit{stagedCount ? ` ${stagedCount} file${stagedCount === 1 ? '' : 's'}` : ''}
               </Button>
               <p className="commit-hint">
                 {identity ? `${identity.name} <${identity.email}>` : 'No identity configured'} · {window.commit87.platform === 'darwin' ? '⌘' : 'Ctrl'}+Enter
@@ -488,17 +628,17 @@ export function FilesView() {
           </aside>
 
           <main className="diff-pane">
-            {!selectedFile ? (
+            {!selectedFacet ? (
               <EmptyState
                 icon={<FileWarning size={22} />}
                 title="Select a file to review changes"
                 description="Stage files individually or all at once, then write a commit on the left."
               />
-            ) : selectedStatus?.stage === 'untracked' ? (
+            ) : selectedFacet.stage === 'untracked' ? (
               <div className="untracked-pane">
                 <div className="untracked-banner">
                   <FilePlus2 size={14} /> Untracked file — stage it to include it in the next commit.
-                  <Button size="sm" variant="ghost" icon={<Plus size={12} />} onClick={() => void stageFiles(stagePaths(selectedStatus))}>
+                  <Button size="sm" variant="ghost" icon={<Plus size={12} />} onClick={() => void stageFiles(stagePaths(selectedFacet.file))}>
                     Stage file
                   </Button>
                 </div>
@@ -506,16 +646,17 @@ export function FilesView() {
                   <CodeView content={fileContent} loading={diffLoading || contentLoading} />
                 </Suspense>
               </div>
-            ) : selectedStatus?.stage === 'conflicted' ? (
+            ) : selectedFacet.stage === 'conflicted' ? (
               <ConflictView
+                key={selectedFacet.key}
                 repoPath={repo.path}
-                file={selectedStatus}
+                file={selectedFacet.file}
                 content={fileContent}
                 loading={diffLoading}
                 error={contentError}
-                onReload={() => void loadDiff(selectedStatus)}
+                onReload={() => void loadPreview(selectedFacet)}
                 onOpen={() =>
-                  void call('app.openPath', { path: `${repo.path}/${selectedStatus.path}` }).then((result) => {
+                  void call('app.openPath', { path: `${repo.path}/${selectedFacet.path}` }).then((result) => {
                     if (!result.ok) notifyError(result.error || 'Could not open file')
                   })
                 }
@@ -524,7 +665,7 @@ export function FilesView() {
               <DiffView
                 patch={diff?.patch ?? ''}
                 loading={diffLoading}
-                emptyLabel={selectedStatus?.stage === 'staged' ? 'No staged changes' : 'No working tree changes'}
+                emptyLabel={selectedFacet.side === 'index' ? 'No staged changes' : 'No working tree changes'}
               />
             )}
           </main>

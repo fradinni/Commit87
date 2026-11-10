@@ -23,7 +23,9 @@ import {
   getWorktrees,
   getWorktreeStatuses,
   mergeBranch,
+  readFileContent,
   removeWorktree,
+  resolveConflict,
   resolveRepo,
   stageFiles,
   stashApply,
@@ -384,5 +386,39 @@ describe('exact Git targets', () => {
     await checkoutBranch({ repoPath: dir, branch: 'other', force: true })
     expect((await resolveRepo(dir)).currentBranch).toBe('other')
     expect(await fs.readFile(path.join(dir, 'file.txt'), 'utf8')).toBe('other\n')
+  })
+
+  it('only resolves a conflict against the baseline that was loaded', async () => {
+    const dir = await initRepo('conflict-baseline-case')
+    await writeIn(dir, 'file.txt', 'base\n')
+    await commitAll(dir, 'Base')
+    await runGit(['switch', '-c', 'other'], { cwd: dir })
+    await writeIn(dir, 'file.txt', 'theirs\n')
+    await commitAll(dir, 'Theirs')
+    await runGit(['switch', 'main'], { cwd: dir })
+    await writeIn(dir, 'file.txt', 'ours\n')
+    await commitAll(dir, 'Ours')
+    await expect(runGit(['merge', 'other'], { cwd: dir })).rejects.toThrow()
+
+    const loaded = await readFileContent(dir, 'file.txt', 'worktree')
+    expect(loaded.sha256).toMatch(/^[a-f0-9]{64}$/)
+    // The unchanged baseline is accepted.
+    await resolveConflict(dir, 'file.txt', 'resolved\n', loaded.sha256)
+    expect((await getStatus(dir)).files.find((file) => file.path === 'file.txt')?.stage).toBe('staged')
+
+    // Start the same conflict again, load it, then change the bytes behind the app.
+    await runGit(['merge', '--abort'], { cwd: dir })
+    await expect(runGit(['merge', 'other'], { cwd: dir })).rejects.toThrow()
+    const stale = await readFileContent(dir, 'file.txt', 'worktree')
+    const changed = '<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> other\nedited externally\n'
+    await writeIn(dir, 'file.txt', changed)
+
+    await expect(resolveConflict(dir, 'file.txt', 'resolved again\n', stale.sha256)).rejects.toThrow(/changed/)
+    expect(await fs.readFile(path.join(dir, 'file.txt'), 'utf8')).toBe(changed)
+
+    // A fresh read of the current bytes is accepted.
+    const fresh = await readFileContent(dir, 'file.txt', 'worktree')
+    await resolveConflict(dir, 'file.txt', 'resolved again\n', fresh.sha256)
+    expect((await getStatus(dir)).files.find((file) => file.path === 'file.txt')?.stage).toBe('staged')
   })
 })

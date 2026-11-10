@@ -174,7 +174,11 @@ export const REPO_TAB_KEYS = [
   'selectionAnchor',
   'graphQuery',
   'graphBranch',
-  'consoleLines'
+  'consoleLines',
+  'commitMessage',
+  'commitAmend',
+  'commitSignoff',
+  'conflictDrafts'
 ] as const
 
 export type RepoTabKey = (typeof REPO_TAB_KEYS)[number]
