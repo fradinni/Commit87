@@ -10,6 +10,27 @@
  */
 const { existsSync } = require('node:fs')
 const { resolve } = require('node:path')
+const { version } = require('./package.json')
+
+// The update channel follows the package version, so a beta package can never
+// publish `latest*` metadata even if a workflow step forgets to say so. The
+// release workflow resolves the same value with scripts/sync-version.mjs and
+// passes it in; an explicit value has to agree or the build stops here.
+const isPrerelease = version.includes('-')
+if (isPrerelease && !/^\d+\.\d+\.\d+-beta\.\d+$/.test(version)) {
+  throw new Error(
+    `Unsupported prerelease version ${version}. Only "-beta.N" versions are published: ` +
+      'stable clients follow latest* and beta clients follow beta*.'
+  )
+}
+const releaseChannel = isPrerelease ? 'beta' : 'latest'
+const channelOverride = process.env.COMMIT87_RELEASE_CHANNEL?.trim()
+if (channelOverride && channelOverride !== releaseChannel) {
+  throw new Error(
+    `COMMIT87_RELEASE_CHANNEL="${channelOverride}" contradicts package version ${version}, ` +
+      `which publishes on the "${releaseChannel}" channel.`
+  )
+}
 
 // electron-builder packages whatever is already in `out/`; it does not build the
 // app. Fail early with a clear message instead of producing a broken ASAR that
@@ -194,12 +215,13 @@ module.exports = {
       provider: 'github',
       owner: 'fradinni',
       repo: 'Commit87',
-      // Pre-release tags (v1.2.0-beta.1) publish beta.yml and are marked as a
-      // GitHub pre-release, so /releases/latest keeps pointing at the last
-      // stable release. Stable tags stay drafts until a maintainer publishes.
-      releaseType: process.env.COMMIT87_RELEASE_CHANNEL === 'beta' ? 'prerelease' : 'draft',
-      // The release workflow sets COMMIT87_RELEASE_CHANNEL from the tag.
-      channel: process.env.COMMIT87_RELEASE_CHANNEL === 'beta' ? 'beta' : 'latest'
+      // Pre-release versions publish beta/beta-linux/beta-mac metadata and are
+      // marked as a GitHub pre-release, so /releases/latest keeps pointing at
+      // the last stable release. Stable versions write latest* and stay drafts
+      // until a maintainer promotes them, keeping unreviewed builds out of every
+      // update feed. Both values follow the version, never a branch.
+      releaseType: isPrerelease ? 'prerelease' : 'draft',
+      channel: releaseChannel
     }
   ]
 }

@@ -6,6 +6,7 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Pull-request runs are read-only and receive no signing or release secrets.
 permissions:
   contents: read
 
@@ -14,8 +15,10 @@ jobs:
     name: Typecheck, test and build
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
@@ -25,7 +28,7 @@ jobs:
       - run: npm test
       - run: npm run build
       - name: Upload renderer bundle
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: built-app
           path: out
@@ -39,8 +42,10 @@ jobs:
     # and cross-packages it on the x64 host; there are no native addons here.
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
@@ -49,7 +54,7 @@ jobs:
         # GitHub releases on every cold run. Keeping the cache makes repeat builds
         # independent of that network path; the lockfile hash refreshes the cache
         # for a dependency change while restore-keys keeps the previous entries.
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cache/electron-builder
@@ -64,10 +69,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y fakeroot rpm libarchive-tools
       - name: Build AppImage, deb, rpm, pacman and tar.gz for x64 and arm64
         # The wrapper retries transient download failures (5xx, resets) with backoff.
+        # `--publish never` needs no repository token, so this job gets no secret.
         run: node scripts/build-packages.mts --config electron-builder.config.cjs --linux --x64 --arm64 --publish never
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: linux-x64-arm64
           path: |
@@ -84,13 +88,15 @@ jobs:
     # Both architectures share latest.yml, so build them in one invocation.
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
       - name: Cache Electron and packaging toolsets
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/AppData/Local/electron-builder/Cache
@@ -100,15 +106,16 @@ jobs:
       - run: npm ci
       - run: npm run build
       - name: Build NSIS, portable and zip for x64 and arm64
+        # No signing certificate is configured here, so this is an unsigned
+        # development build; a release build is signed in release.yml.
         run: node scripts/build-packages.mts --config electron-builder.config.cjs --win --x64 --arm64 --publish never
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-x64-arm64
           path: |
             dist/*.exe
             dist/*.zip
+            dist/*.blockmap
           retention-days: 14
 
   package-macos:
@@ -120,13 +127,15 @@ jobs:
     # Apple Silicon runner: arm64 natively, x64 cross-packaged.
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
       - name: Cache Electron and packaging toolsets
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/Library/Caches/electron-builder
@@ -136,14 +145,16 @@ jobs:
       - run: npm ci
       - run: npm run build
       - name: Build dmg and zip for x64 and arm64
+        # Development builds are unsigned (ad-hoc only): CI has no certificate,
+        # and the release workflow owns the signed, notarized path.
         run: node scripts/build-packages.mts --config electron-builder.config.cjs --mac --x64 --arm64 --publish never
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       # Unsigned macOS builds are only usable if the fuse-patched binaries were
       # re-signed (electronFuses.resetAdHocDarwinSignature). Fail here instead of
-      # shipping artifacts that macOS rejects as damaged.
-      - name: Verify macOS code signature
+      # shipping artifacts that macOS rejects as damaged. This proves the build
+      # launches; it does not prove a publisher identity or notarization.
+      - name: Verify macOS ad-hoc signature validity
         shell: bash
         run: |
           set -euo pipefail
@@ -160,7 +171,7 @@ jobs:
               exit 1
             }
           done
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: macos-x64-arm64
           path: |

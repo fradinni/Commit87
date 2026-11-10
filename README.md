@@ -167,13 +167,19 @@ against an allow-list, and blocks `-c`, `--git-dir`, alias definitions, `--exec`
 
 ## Install
 
-Prebuilt packages are produced by CI for every target and architecture:
+Prebuilt Linux, Windows and macOS packages are built by CI for every target and architecture
+listed below; Snap and Flatpak are built from source locally (see the note under Linux):
 
 | Platform | Formats |
 | --- | --- |
 | Linux | AppImage, `.deb` (Debian/Ubuntu/Mint), `.rpm` (Fedora/RHEL/openSUSE), `pacman` (Arch/Manjaro), `tar.gz` |
 | Windows | NSIS installer, portable `.exe`, `.zip` (x64 and arm64) |
 | macOS | `.dmg` and `.zip` (Apple Silicon arm64 and Intel x64) |
+
+Every release attaches `SHA256SUMS.txt`, a `BUILD-INFO.txt` with the source commit and
+workflow run, and a `SIGNING-STATUS.txt` stating whether those artifacts are signed and
+notarized. Linux packages are unsigned; Windows and macOS builds are unsigned unless the
+maintainer configured the signing secrets, in which case that file says so.
 
 ### Linux
 
@@ -199,11 +205,12 @@ the host binaries.
 
 ### Windows and macOS
 
-Download the installer (`.exe` for x64/arm64, `.dmg` for Intel or Apple Silicon) from the release
-page. Portable builds need no installation: the Windows portable `.exe` and the macOS
-`.zip` run in place. macOS builds are signed and notarized when the release secrets are
-configured; otherwise they are ad-hoc signed, which macOS accepts but Gatekeeper blocks with
-a prompt (System Settings > Privacy & Security > Open Anyway to launch).
+Download the installer (`.exe` for x64/arm64, `.dmg` for Intel or Apple Silicon) from the
+release page. Portable builds need no installation: the Windows portable `.exe` and the
+macOS `.zip` run in place. When the release was built without the signing secrets,
+`SIGNING-STATUS.txt` says so: the Windows installer is unsigned and shows a SmartScreen
+warning, and the macOS app is ad-hoc signed only, so Gatekeeper blocks the first launch until
+you allow it in System Settings > Privacy & Security > Open Anyway.
 
 > macOS packages are built on `macos-15` (Apple Silicon). Both architectures are
 > produced there: arm64 natively and Intel x64 cross-packaged, so no Intel runner is
@@ -214,12 +221,25 @@ a prompt (System Settings > Privacy & Security > Open Anyway to launch).
 Requirements: Node.js 24+ and Git 2.30+.
 
 ```bash
-npm install
+npm ci               # or npm install
 npm run dev          # electron-vite dev server with HMR
 npm run typecheck    # strict TypeScript for main, preload and renderer
 npm test             # unit and integration tests against real git
 npm run build        # production bundles in out/
 npm run pack:dir     # unpacked app in dist/linux-unpacked
+```
+
+`npm run dev` and `npm run start` provision the Electron runtime themselves before
+electron-vite starts. The `electron` package no longer downloads its binary during dependency
+installation, and electron-vite needs `node_modules/electron/path.txt`, so a fresh `npm ci`
+would otherwise stop with `Electron uninstall`. The check runs before every launch, is
+idempotent, and downloads nothing once the runtime matches the lockfile. To diagnose or
+force a repair:
+
+```bash
+npm run ensure:electron -- --check   # report only, never downloads
+rm -rf node_modules/electron/dist node_modules/electron/path.txt
+npm run ensure:electron              # download the matching runtime once
 ```
 
 Package the app:
@@ -234,7 +254,10 @@ npm run dist:snap         # Snap (needs snapcraft)
 python3 scripts/package-linux.py deb rpm pacman   # no-fpm fallback packager
 ```
 
-Do not use `--publish always` for a dry run; pass `--publish never` as CI does.
+Local package builds are not published. Pass `--publish never` for a dry run (CI does); the
+release workflow builds every target that way, verifies the assembled artifacts, and only
+then uploads them to a draft release. Keep `dist/` artifacts out of the release feed unless
+they came from that workflow.
 
 Linux packaging with `electron-builder` also needs `fakeroot`, `rpm` and `bsdtar`
 (`libarchive-tools`); see [docs/packaging.md](docs/packaging.md#linux-packaging-details).
