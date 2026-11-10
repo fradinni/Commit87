@@ -40,7 +40,7 @@
 
 ### Why a custom protocol instead of `file://`
 
-Electron 41 disables extra `file://` privileges by default. Serving the renderer from
+Electron disables extra `file://` privileges by default. Serving the renderer from
 `commit87://app` lets us keep `grantFileProtocolExtraPrivileges: false` **and**
 `onlyLoadAppFromAsar: true`, while ES modules, `fetch()` for bundled assets and the strict
 CSP all work. The handler:
@@ -64,6 +64,7 @@ Channels are grouped:
 | `repo.*` | recent list, open/info/clone/init, repo defaults |
 | `git.*` | reads (`status`, `log`, `diff`, `blame` …), writes, and streaming tasks |
 | `provider.*` | forge APIs and pull request checkout |
+| `tasks.*` | the running/recent task snapshot used to reconcile after a renderer reload |
 | `update.*` | update status, check, download and install |
 | `window.*` | minimize/maximize/close for the custom title bar |
 
@@ -450,12 +451,14 @@ output or crash dumps. Task output is additionally redacted before leaving the m
 `safeStorage.encryptString` (OS keychain / DPAPI / libsecret) is used when available.
 Otherwise the token is stored in `secrets.json` with mode `0600`, and Settings shows an
 explicit warning. Each token is stored with the authority fingerprint it was issued for
-(`version: 2`, `tokens: { <accountId>: { value, fingerprint } }`). Loading a version 1 file
-wraps each token with its account's backfilled authority and drops tokens with no account;
-`getToken` refuses a token whose fingerprint no longer matches. Changing an integration's
-provider, base URL host, port or path, or clone host clears the stored token unless a
-replacement is supplied; label, username and identity edits keep it. Config lives in
-`app.getPath('userData')`:
+(`version: 2`, `tokens: { <accountId>: { value, fingerprint } }`). On load, each version 2
+entry keeps its recorded fingerprint and a token with no account is dropped. Tokens from a
+version 1 file are dropped: they carried no authority and could survive endpoint edits, so
+re-binding them to today's server would hand a credential to a destination it was never
+issued for. The user enters those tokens once more after the upgrade. `getToken` refuses a
+token whose fingerprint no longer matches. Changing an integration's provider, base URL
+host, port or path, or clone host clears the stored token unless a replacement is supplied;
+label, username and identity edits keep it. Config lives in `app.getPath('userData')`:
 
 - Linux: `~/.config/Commit87/{config.json,secrets.json}`
 - macOS: `~/Library/Application Support/Commit87/…`
@@ -741,3 +744,14 @@ workflow instead of publishing a channel file no client requests.
 `scripts/build-snap.sh` and `scripts/package-linux.py` cover the formats that need extra
 tooling or lack a working `fpm` on the build host. See
 [packaging.md](packaging.md).
+
+## Operational documentation
+
+- [Getting started](getting-started.md) — system Git discovery, identity versus
+  authentication, token scopes and repository grants.
+- [Recovery](recovery.md) — what discard, submodule removal, interrupted operations,
+  updates and the profile/store leave behind, and what has no undo. The failure handling
+  above describes the same outcomes in implementation terms.
+- [Remediation status](remediation-2026-11-10.md) — how the 2026-11-10 assessment's
+  findings map to this design, the evidence for each, and the claims that remain
+  unverified on a Linux validation host.

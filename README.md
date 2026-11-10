@@ -15,7 +15,7 @@
 [![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-5ba8ff)](https://github.com/fradinni/Commit87/releases)
 [![Vitest](https://img.shields.io/badge/tests-Vitest-6E9F18?logo=vitest&logoColor=white)](https://github.com/fradinni/Commit87/actions/workflows/ci.yml)
 
-[![Electron](https://img.shields.io/badge/Electron-41-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
+[![Electron](https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev/)
 [![Node.js](https://img.shields.io/badge/Node.js-24-5FA04E?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![Git](https://img.shields.io/badge/Git-2.30%2B-F05032?logo=git&logoColor=white)](https://git-scm.com/)
@@ -52,7 +52,7 @@ trust.**
 | Repository tabs | Keep several repositories open at once, each with its own view, selection, status and console; drag to reorder, middle-click to close |
 | Commit graph | Lane layout, refs and tags, search, branch filter, load more, commit details, Ctrl/Cmd and Shift multi-select, right-click actions |
 | History actions | Branch here, tag here, detached checkout and reset for one commit; cherry-pick and revert for one commit or a selection |
-| Staging | Staged and worktree sides of each file, per-file stage and unstage, discard (no app-level undo), keyboard-navigable rows, drafts kept per repository |
+| Staging | Staged and worktree sides of each file, per-file stage and unstage, discard (no app-level undo — see [recovery](docs/recovery.md)), keyboard-navigable rows, drafts kept per repository |
 | Commits | Amend, sign-off, `--allow-empty`, identity override per commit, Ctrl/Cmd+Enter |
 | Code browsing | Worktree and `HEAD` file tree, syntax highlighting, blame, open in OS editor |
 | Diffs | Unified diffs with per-file stats, binary detection, rename detection |
@@ -97,7 +97,10 @@ cherry-pick and revert because Git needs an explicit parent.
   or in the default parent set in Settings, and every dialog accepts a one-off folder
 - Submodules: initialize, update to the recorded commit or the tracked branch, sync URLs,
   add with an optional branch, reset local work, remove (with an explicit force option) and
-  open the nested repository; local changes and out-of-sync checkouts are flagged
+  open the nested repository; local changes and out-of-sync checkouts are flagged. Removal
+  moves the module clone aside under the Git directory instead of deleting it, so
+  unpublished commits, other refs and stashes remain recoverable; the path is shown after
+  removal, and re-adding the same submodule at the same path works
 - Tags: annotated or lightweight, push to a remote, delete locally and remotely
 - Stashes: push (with untracked), apply, pop, drop
 
@@ -141,8 +144,9 @@ cherry-pick and revert because Git needs an explicit parent.
   (installed from the release zip)
 - Stable and beta channels; prerelease tags publish `beta.yml` and never reach stable
   installs
-- Automatic check after launch with background download, or a manual check that waits for
-  an explicit Download action
+- Automatic check after launch with background download, on by default, or a manual check
+  that waits for an explicit Download action. **Settings → Updates** turns the automatic
+  check off, and there is no telemetry in either path
 - Downloads are installed only by the **Restart & install** action, so quitting the app
   never swaps the binary without confirmation
 - Progress, release notes and failures stay in Settings → Updates without exposing the
@@ -185,31 +189,32 @@ listed below; Snap and Flatpak are built from source locally (see the note under
 | macOS | `.dmg` and `.zip` (Apple Silicon arm64 and Intel x64) |
 
 Every release attaches `SHA256SUMS.txt`, a `BUILD-INFO.txt` with the source commit and
-workflow run, and a `SIGNING-STATUS.txt` stating whether those artifacts are signed and
-notarized. Linux packages are unsigned; Windows and macOS builds are unsigned unless the
-maintainer configured the signing secrets, in which case that file says so.
+workflow run, and a `SIGNING-STATUS.txt` stating what the build actually did. Linux packages
+are unsigned. Windows builds are unsigned unless the release configured a certificate.
+macOS builds are ad-hoc signed when no Developer ID is configured and signed/notarized when
+it is; the status file records which case applied.
 
 ### Linux
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./Commit87-0.1.0-amd64.deb
+sudo apt install ./Commit87-0.2.0-beta.5-amd64.deb
 
 # Fedora / RHEL
-sudo dnf install ./Commit87-0.1.0-x86_64.rpm
+sudo dnf install ./Commit87-0.2.0-beta.5-x86_64.rpm
 
 # Arch
-sudo pacman -U Commit87-0.1.0-linux-x64.pkg.tar.xz
+sudo pacman -U Commit87-0.2.0-beta.5-linux-x64.pkg.tar.xz
 
 # Any distro, no install
-chmod +x Commit87-0.1.0-linux-x86_64.AppImage
-./Commit87-0.1.0-linux-x86_64.AppImage
+chmod +x Commit87-0.2.0-beta.5-linux-x86_64.AppImage
+./Commit87-0.2.0-beta.5-linux-x86_64.AppImage
 ```
 
-Every Linux package depends on the system `git`. Snap and Flatpak bundles are built from
-source (`npm run dist:snap`, `npm run dist:flatpak`) rather than attached to GitHub
-releases; they include Git, OpenSSH and CA certificates because their sandbox cannot use
-the host binaries.
+Substitute the version you downloaded. Every Linux package depends on the system `git`.
+Snap and Flatpak bundles are built from source (`npm run dist:snap`,
+`npm run dist:flatpak`) rather than attached to GitHub releases; they include Git, OpenSSH
+and CA certificates because their sandbox cannot use the host binaries.
 
 ### Windows and macOS
 
@@ -234,7 +239,7 @@ npm run dev          # electron-vite dev server with HMR
 npm run typecheck    # strict TypeScript for main, preload and renderer
 npm test             # unit and integration tests against real git
 npm run build        # production bundles in out/
-npm run pack:dir     # unpacked app in dist/linux-unpacked
+npm run pack:dir     # unpacked app in dist/linux-unpacked (or dist/linux-arm64-unpacked)
 ```
 
 `npm run dev` and `npm run start` provision the Electron runtime themselves before
@@ -269,6 +274,20 @@ they came from that workflow.
 
 Linux packaging with `electron-builder` also needs `fakeroot`, `rpm` and `bsdtar`
 (`libarchive-tools`); see [docs/packaging.md](docs/packaging.md#linux-packaging-details).
+
+## Guides and reference
+
+- [Getting started](docs/getting-started.md) — system Git discovery, identity versus
+  authentication, token scopes, native pickers and repository grants.
+- [Recovery](docs/recovery.md) — what discard, submodule removal, interrupted operations,
+  updates and the app profile leave behind, and what has no undo.
+- [Architecture](docs/architecture.md) — processes, IPC contract, Git execution,
+  providers and updates.
+- [Packaging](docs/packaging.md) and [Testing](docs/testing.md) — platform tiers, release
+  workflow, suites and the update demo.
+- [Readiness remediation status](docs/remediation-2026-11-10.md) — how the 2026-11-10
+  assessment findings were addressed, with evidence, plus what was not exercised on the
+  validation host and which product decisions remain open.
 
 ## Architecture
 
@@ -325,6 +344,8 @@ See [docs/architecture.md](docs/architecture.md) for the full design and data fl
 - IPC accepts only the known channel table and only from the main window's webContents
 - Git console: git-only bounded grammar, no shell, no global overrides or config writes
 - Path traversal is rejected for every file, worktree and repository argument
+- No telemetry or analytics; the only background network call is the update check
+  (on by default for in-place update formats, switchable in Settings → Updates)
 - Electron fuses disable `runAsNode`, `NODE_OPTIONS`, CLI inspect and extra `file://`
   privileges, and enable ASAR integrity validation
 
@@ -333,7 +354,7 @@ Report vulnerabilities via [SECURITY.md](SECURITY.md).
 ## Project layout
 
 ```
-docs/                architecture, packaging, testing, screenshots
+docs/                architecture, guides, recovery, packaging, testing, screenshots
 build/               icons, installer and entitlement resources
 scripts/             icon generation, version sync, Flatpak/Snap/deb/rpm/pacman helpers
 flatpak/ snap/       native manifests

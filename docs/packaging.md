@@ -34,7 +34,7 @@ are never produced.
 
 | Tier | Meaning | Formats |
 | --- | --- | --- |
-| **Supported** | Built and packaged by CI on the matching native runner; the default download for that platform. The app itself was launched only on Linux during this validation (see "Verification performed"). | Linux AppImage, `.deb`, `.rpm`, pacman and `tar.gz` from `electron-builder` (x64 and arm64); Windows NSIS/portable/zip; macOS `.dmg`/`.zip` |
+| **Supported** | Built and packaged by CI; Linux x64 and arm64 are packaged on the x64 runner (arm64 cross-packaged), Windows and macOS on their native runners. The app itself was launched only on Linux during this validation (see "Verification performed"). | Linux AppImage, `.deb`, `.rpm`, pacman and `tar.gz` from `electron-builder` (x64 and arm64); Windows NSIS/portable/zip; macOS `.dmg`/`.zip` |
 | **Buildable** | Recipe is checked in and builds on a host with the tools, but this validation did not exercise it. | `scripts/package-linux.py` `.deb` and `.rpm` fallback (`ar`/`rpmbuild`) |
 | **Experimental** | Optional format; its recipe is statically validated only, so packaging metadata may still change and no native build or install is claimed. | Flatpak (`scripts/build-flatpak.sh`), Snap (`scripts/build-snap.sh`), the pacman `.pkg.tar.zst` fallback |
 
@@ -309,7 +309,7 @@ in-app splash cannot cover that phase. Everything after it is optimised:
 Measure a build with the opt-in trace:
 
 ```bash
-COMMIT87_STARTUP_TRACE=1 ./dist/Commit87-0.1.0-linux-x86_64.AppImage
+COMMIT87_STARTUP_TRACE=1 ./dist/Commit87-0.2.0-beta.5-linux-x86_64.AppImage
 # [commit87:startup] main process loaded … +0ms
 # [commit87:startup] app ready … +249ms
 # [commit87:startup] main window ready … +1290ms
@@ -454,7 +454,8 @@ describe the same build.
 
 ## Verification performed for this repository
 
-Built and inspected on Fedora 44 x86_64:
+Artifacts below were built and inspected from an earlier `0.1.0` tree on Fedora 44 x86_64;
+they record what was exercised then, not a claim about the current version.
 
 | Artifact | Result |
 | --- | --- |
