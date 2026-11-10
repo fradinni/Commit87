@@ -37,8 +37,11 @@ Trust boundaries:
 - Path traversal rejected for repository files, worktrees and remote names
 - Git spawned with `shell: false`; console accepts git-only, allow-listed subcommands and
   blocks config writes, aliases, `--exec` and `submodule foreach`
-- Tokens passed via environment to an ephemeral credential helper, never in `argv`, and
-  redacted from all streamed output
+- Tokens passed via environment to an ephemeral credential helper scoped to the exact
+  destination origin, never in `argv`, and redacted from all streamed output
+- Tokens are only released to a host that exactly matches the integration's configured
+  authority (provider-name heuristics and sole/pinned accounts cannot bypass it), and changing
+  the endpoint clears the token unless a replacement is saved
 - Tokens encrypted with `safeStorage` when available; otherwise stored `0600` with an
   explicit warning in Settings
 - No telemetry, no analytics, no automatic network calls except forge API requests the

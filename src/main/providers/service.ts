@@ -10,9 +10,9 @@ import type {
   PullRequest,
   Release
 } from '@shared/types'
-import { runGit, tryRunGit } from '../git/runner'
+import { buildAuthArgs, runGit, tryRunGit } from '../git/runner'
 import { resolveRepo } from '../git/repo'
-import { parseRemoteUrl, providerFromHost, webUrlFor } from './remote'
+import { accountMatchesDestination, destinationFromUrl, parseRemoteUrl, providerFromHost, webUrlFor } from './remote'
 import { createProviderClient } from './index'
 import type { ProviderClient } from './types'
 import { AppStore } from '../store'
@@ -53,9 +53,12 @@ export class ProviderService {
     const repo = await resolveRepo(repoPath)
     for (const remote of repo.remotes) {
       const parsed = parseRemoteUrl(remote.fetchUrl)
-      if (!parsed) continue
+      const destination = destinationFromUrl(remote.fetchUrl)
+      if (!parsed || !destination) continue
+      // The provider name is a suggestion for the UI; only the destination
+      // match may release an account id.
       const provider = remote.provider ?? providerFromHost(parsed.host, this.store.listIntegrations())
-      const account = this.store.resolveAccount(repo.path, provider, parsed.host)
+      const account = this.store.authorizeAccount(repo.path, provider, destination)
       if (provider || account) {
         return {
           provider,
@@ -139,14 +142,45 @@ export class ProviderService {
     const { account, token, client } = await this.client(accountId)
     if (!Number.isInteger(number) || number < 1) throw new Error('Invalid pull request number')
 
-    let remote = repo.remotes.find((item) => {
-      const parsed = parseRemoteUrl(item.fetchUrl)
-      return parsed && parsed.owner.toLowerCase() === owner.toLowerCase() && parsed.repo.toLowerCase() === repoName.toLowerCase()
+    // Pick a remote whose destination the account is actually authorized for.
+    // The old fallback to `repo.remotes[0]` could fetch with credentials that
+    // belong to a different server.
+    const candidates = repo.remotes.map((remote) => {
+      const destination = destinationFromUrl(remote.fetchUrl) ?? destinationFromUrl(remote.pushUrl)
+      const parsed = parseRemoteUrl(remote.fetchUrl)
+      return {
+        remote,
+        destination,
+        matchesRepo: Boolean(
+          parsed && parsed.owner.toLowerCase() === owner.toLowerCase() && parsed.repo.toLowerCase() === repoName.toLowerCase()
+        ),
+        authorized: Boolean(destination && accountMatchesDestination(account, destination))
+      }
     })
-    if (!remote) remote = repo.remotes[0]
-    if (!remote) throw new Error('This repository has no remotes')
+    const exact = candidates.find((item) => item.matchesRepo)
+    let chosen: (typeof candidates)[number]
+    if (exact) {
+      if (!exact.authorized) {
+        throw new Error(
+          `The "${account.label}" account is not authorized for ${exact.destination?.host ?? 'that remote'}. Choose a matching account before checking out.`
+        )
+      }
+      chosen = exact
+    } else {
+      const authorized = candidates.filter((item) => item.authorized)
+      if (!authorized.length) {
+        throw new Error(`No remote points at ${account.authority?.host ?? account.label}; add one before checking out.`)
+      }
+      if (authorized.length > 1) {
+        throw new Error(
+          `Several remotes point at ${account.authority?.host ?? account.label}. Remove one before checking out.`
+        )
+      }
+      chosen = authorized[0]
+    }
+    const remote = chosen.remote
 
-    let provider = account.provider
+    const provider = account.provider
     let refspec: string
     let startRef: string
     if (provider === 'github') {
@@ -161,12 +195,12 @@ export class ProviderService {
       if (!pull?.sourceBranch) throw new Error(`Could not find pull request #${number}`)
       refspec = `+refs/heads/${pull.sourceBranch}:refs/remotes/${remote.name}/${pull.sourceBranch}`
       startRef = `refs/remotes/${remote.name}/${pull.sourceBranch}`
-      provider = account.provider
     }
-    void provider
     void identityId
 
-    const auth = buildRemoteAuth(account, token)
+    const auth = chosen.destination?.origin
+      ? buildAuthArgs(account, token, chosen.destination.origin)
+      : { args: [], env: {} }
     await runGit([...auth.args, 'fetch', remote.name, refspec], {
       cwd: repo.path,
       env: auth.env,
@@ -180,17 +214,5 @@ export class ProviderService {
     }
     await runGit(['switch', '-c', branch, startRef], { cwd: repo.path })
     return { branch }
-  }
-}
-
-function buildRemoteAuth(account: IntegrationAccount, token: string): { args: string[]; env: NodeJS.ProcessEnv } {
-  const username = account.username?.trim() || (account.provider === 'github' ? 'x-access-token' : account.provider === 'gitlab' ? 'oauth2' : 'commit87')
-  const helper =
-    '!f() { if test "$1" = get; then ' +
-    'printf "username=%s\\npassword=%s\\n" "$COMMIT87_USERNAME" "$COMMIT87_TOKEN"; ' +
-    'fi; }; f'
-  return {
-    args: ['-c', 'credential.helper=', '-c', `credential.helper=${helper}`],
-    env: { COMMIT87_USERNAME: username, COMMIT87_TOKEN: token }
   }
 }

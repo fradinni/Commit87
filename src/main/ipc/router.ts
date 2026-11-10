@@ -13,7 +13,14 @@ import { buildAuthArgs, buildIdentityEnv, detectGit, runGit } from '../git/runne
 import * as repoOps from '../git/repo'
 import * as rebaseOps from '../git/rebase'
 import { parseRebaseTodoItems } from '../git/rebase-plan'
-import { normalizeBaseUrl, accountMatchesHost, detectProviderFromUrl, providerFromHost } from '../providers/remote'
+import {
+  accountMatchesDestination,
+  detectProviderFromUrl,
+  destinationFromUrl,
+  normalizeBaseUrl,
+  providerFromHost,
+  type GitDestination
+} from '../providers/remote'
 import { ProviderService } from '../providers/service'
 import type { UpdateService } from '../updates'
 
@@ -192,6 +199,7 @@ export class Router {
           label: asOptionalString(data.label, 'Label') ?? PROVIDERS[provider].name,
           username: asOptionalString(data.username, 'Username') ?? '',
           baseUrl,
+          cloneHost: asOptionalString(data.cloneHost, 'Clone host'),
           identityId: asOptionalString(data.identityId, 'Identity id'),
           token: asOptionalString(data.token, 'Token')
         })
@@ -224,10 +232,21 @@ export class Router {
       case 'repo.setDefaults': {
         const repoPath = requireString(data.path, 'Repository path')
         const defaults = (data.defaults ?? {}) as RepoDefaults
+        const integrationByProvider = defaults.integrationByProvider ?? {}
+        for (const [key, accountId] of Object.entries(integrationByProvider)) {
+          if (!accountId) continue
+          const provider = key as ProviderId
+          if (!PROVIDERS[provider]) throw new Error(`Unknown provider "${key}"`)
+          const account = this.store.integrationById(accountId)
+          if (!account) throw new Error('Integration account not found')
+          if (account.provider !== provider) {
+            throw new Error(`"${account.label}" is not a ${PROVIDERS[provider].name} account`)
+          }
+        }
         return this.store.setRepoDefaults(repoPath, {
           identityId: defaults.identityId || undefined,
           defaultRemote: defaults.defaultRemote || undefined,
-          integrationByProvider: defaults.integrationByProvider ?? {}
+          integrationByProvider
         })
       }
       case 'repo.clone':
@@ -401,11 +420,17 @@ export class Router {
         const name = requireString(data.name, 'Branch name')
         const remote = asOptionalString(data.remote, 'Remote')
         if (remote) {
-          const ctx = await this.repoAuth(repoPath, asOptionalString(data.identityId, 'Identity id'), asOptionalString(data.accountId, 'Account id'), remote)
+          const ctx = await this.remoteAuth(repoPath, {
+            direction: 'push',
+            remoteName: remote,
+            identityId: asOptionalString(data.identityId, 'Identity id'),
+            accountId: asOptionalString(data.accountId, 'Account id')
+          })
           await repoOps.deleteRemoteBranch(repoPath, name, remote, {
             identity: ctx.identity,
             account: ctx.account,
-            token: ctx.token
+            token: ctx.token,
+            authOrigin: ctx.destination?.origin
           })
         } else {
           await repoOps.deleteBranch(repoPath, name, Boolean(data.force))
@@ -508,34 +533,60 @@ export class Router {
       case 'git.tagCreate': {
         const repoPath = requireString(data.repoPath, 'Repository path')
         const remote = asOptionalString(data.remote, 'Remote')
-        const ctx = await this.repoAuth(repoPath, asOptionalString(data.identityId, 'Identity id'), undefined, remote)
+        const push = Boolean(data.push)
+        const authRemote = remote || (push ? 'origin' : undefined)
+        const ctx = authRemote
+          ? await this.remoteAuth(repoPath, {
+              direction: 'push',
+              remoteName: authRemote,
+              identityId: asOptionalString(data.identityId, 'Identity id')
+            })
+          : null
         await repoOps.createTag(
           {
             repoPath,
             name: requireString(data.name, 'Tag name'),
             message: asOptionalString(data.message, 'Message'),
             commit: asOptionalString(data.commit, 'Commit'),
-            push: Boolean(data.push),
+            push,
             remote,
             identityId: asOptionalString(data.identityId, 'Identity id')
           },
-          { identity: ctx.identity, account: ctx.account, token: ctx.token }
+          {
+            identity: ctx ? ctx.identity : this.store.resolveIdentity(asOptionalString(data.identityId, 'Identity id')),
+            account: ctx?.account,
+            token: ctx?.token ?? null,
+            authOrigin: ctx?.destination?.origin
+          }
         )
         return undefined
       }
       case 'git.tagPush': {
         const repoPath = requireString(data.path, 'Repository path')
         const remote = requireString(data.remote, 'Remote')
-        const ctx = await this.repoAuth(repoPath, asOptionalString(data.identityId, 'Identity id'), asOptionalString(data.accountId, 'Account id'), remote)
-        const { args, env } = await this.remoteContext(ctx, remote)
-        await runGit([...args, 'push', remote, requireString(data.name, 'Tag name')], { cwd: ctx.repo.path, env })
+        const ctx = await this.remoteAuth(repoPath, {
+          direction: 'push',
+          remoteName: remote,
+          identityId: asOptionalString(data.identityId, 'Identity id'),
+          accountId: asOptionalString(data.accountId, 'Account id')
+        })
+        await runGit([...ctx.args, 'push', remote, requireString(data.name, 'Tag name')], { cwd: ctx.repo.path, env: ctx.env })
         return undefined
       }
       case 'git.tagDelete': {
         const repoPath = requireString(data.path, 'Repository path')
         const remote = asOptionalString(data.remote, 'Remote')
-        const ctx = remote ? await this.repoAuth(repoPath, undefined, undefined, remote) : null
-        await repoOps.deleteTag(repoPath, requireString(data.name, 'Tag name'), remote, ctx ? { identity: ctx.identity, account: ctx.account, token: ctx.token } : undefined)
+        if (remote) {
+          const ctx = await this.remoteAuth(repoPath, { direction: 'push', remoteName: remote })
+          await repoOps.deleteTag(repoPath, requireString(data.name, 'Tag name'), remote, {
+            identity: ctx.identity,
+            account: ctx.account,
+            token: ctx.token,
+            authOrigin: ctx.destination?.origin
+          })
+        } else {
+          await repoOps.deleteTag(repoPath, requireString(data.name, 'Tag name'))
+        }
         return undefined
       }
       case 'git.worktreeAdd': {
@@ -607,7 +658,7 @@ export class Router {
         const url = requireString(data.url, 'Submodule URL')
         // Credentials follow the *submodule* URL, never the parent remote.
         const auth = await this.submoduleAuth(repoPath, url, asOptionalString(data.accountId, 'Account id'))
-        const token = auth.account ? await this.store.getToken(auth.account.id) : null
+        const token = auth.account && auth.origin ? await this.store.getToken(auth.account.id) : null
         const identity = this.store.resolveIdentity(this.store.getRepoDefaults(repoPath).identityId)
         await repoOps.addSubmodule(
           {
@@ -651,24 +702,26 @@ export class Router {
           requireString(data.submodulePath, 'Submodule path'),
           Boolean(data.force)
         )
-      case 'git.remoteAdd':
-        await repoOps.addRemote(
-          requireString(data.path, 'Repository path'),
-          requireString(data.name, 'Remote name'),
-          requireString(data.url, 'Remote URL')
-        )
+      case 'git.remoteAdd': {
+        const repoPath = requireString(data.path, 'Repository path')
+        const url = validateRemoteUrl(requireString(data.url, 'Remote URL'))
+        await repoOps.addRemote(repoPath, requireString(data.name, 'Remote name'), url)
+        await this.reconcileRepoDefaults(repoPath)
         return undefined
-      case 'git.remoteRemove':
-        await repoOps.removeRemote(requireString(data.path, 'Repository path'), requireString(data.name, 'Remote name'))
+      }
+      case 'git.remoteRemove': {
+        const repoPath = requireString(data.path, 'Repository path')
+        await repoOps.removeRemote(repoPath, requireString(data.name, 'Remote name'))
+        await this.reconcileRepoDefaults(repoPath)
         return undefined
-      case 'git.remoteSetUrl':
-        await repoOps.setRemoteUrl(
-          requireString(data.path, 'Repository path'),
-          requireString(data.name, 'Remote name'),
-          requireString(data.url, 'Remote URL'),
-          Boolean(data.push)
-        )
+      }
+      case 'git.remoteSetUrl': {
+        const repoPath = requireString(data.path, 'Repository path')
+        const url = validateRemoteUrl(requireString(data.url, 'Remote URL'))
+        await repoOps.setRemoteUrl(repoPath, requireString(data.name, 'Remote name'), url, Boolean(data.push))
+        await this.reconcileRepoDefaults(repoPath)
         return undefined
+      }
 
       // ---------------------------------------------------------------------
       // Tasks
@@ -824,12 +877,16 @@ export class Router {
     if (!/^(https?:\/\/|ssh:\/\/|git@|git:\/\/)/.test(url) && !path.isAbsolute(url)) {
       throw new Error('Enter a valid Git URL (https://, ssh:// or git@host:owner/repo)')
     }
+    const destination = destinationFromUrl(url)
     const detected = detectProviderFromUrl(url)
     const provider = detected?.provider ?? (detected?.host ? providerFromHost(detected.host, this.store.listIntegrations()) : undefined)
-    let account = input.accountId ? this.store.integrationById(input.accountId) : undefined
-    if (!account && detected?.host) account = this.store.resolveAccount(parent, provider, detected.host)
-    const token = account ? await this.store.getToken(account.id) : null
-    const auth = buildAuthArgs(account ?? null, token)
+    // Authorization happens before the helper is built: an explicit account
+    // must match the clone destination, and an automatic one only matches.
+    const account = this.store.authorizeAccount(parent, provider, destination, input.accountId)
+    const origin = destination?.origin
+    const token = account && origin ? await this.store.getToken(account.id) : null
+    const auth = account && origin ? buildAuthArgs(account, token, origin) : { args: [], env: {} }
+    const authorized = account && origin ? account : undefined
 
     const repoName = (input.name?.trim() || detected?.repo || path.basename(url).replace(/\.git$/, '')).replace(/[\\/:*?"<>|]/g, '-')
     if (!repoName) throw new Error('Could not determine a folder name; provide one explicitly')
@@ -863,11 +920,11 @@ export class Router {
           if (input.identityId) {
             await this.store.setRepoDefaults(info.path, {
               identityId: input.identityId,
-              integrationByProvider: account ? { [account.provider]: account.id } : {}
+              integrationByProvider: authorized ? { [authorized.provider]: authorized.id } : {}
             })
-          } else if (account) {
+          } else if (authorized) {
             await this.store.setRepoDefaults(info.path, {
-              integrationByProvider: { [account.provider]: account.id }
+              integrationByProvider: { [authorized.provider]: authorized.id }
             })
           }
         } catch {
@@ -881,10 +938,13 @@ export class Router {
     const data = raw as Record<string, unknown>
     const repoPath = requireString(data.repoPath, 'Repository path')
     const remoteName = asOptionalString(data.remote, 'Remote')
-    const ctx = await this.repoAuth(repoPath, undefined, asOptionalString(data.accountId, 'Account id'), remoteName)
-    const { args, env } = await this.remoteContext(ctx, remoteName)
-    const remote = remoteName || this.defaultRemote(ctx.repo)
-    const fetchArgs = [...args, 'fetch', '--progress']
+    const ctx = await this.remoteAuth(repoPath, {
+      direction: 'fetch',
+      remoteName,
+      accountId: asOptionalString(data.accountId, 'Account id')
+    })
+    const remote = ctx.remote
+    const fetchArgs = [...ctx.args, 'fetch', '--progress']
     if (data.prune) fetchArgs.push('--prune')
     if (remote) fetchArgs.push(remote)
     else fetchArgs.push('--all')
@@ -894,7 +954,7 @@ export class Router {
       args: fetchArgs,
       cwd: ctx.repo.path,
       repoPath: ctx.repo.path,
-      env,
+      env: ctx.env,
       secrets: [ctx.token]
     })
   }
@@ -903,11 +963,15 @@ export class Router {
     const data = raw as Record<string, unknown>
     const repoPath = requireString(data.repoPath, 'Repository path')
     const remoteName = asOptionalString(data.remote, 'Remote')
-    const ctx = await this.repoAuth(repoPath, asOptionalString(data.identityId, 'Identity id'), asOptionalString(data.accountId, 'Account id'), remoteName)
-    const { args, env } = await this.remoteContext(ctx, remoteName)
-    const pullArgs = [...args, 'pull', '--progress']
+    const ctx = await this.remoteAuth(repoPath, {
+      direction: 'fetch',
+      remoteName,
+      identityId: asOptionalString(data.identityId, 'Identity id'),
+      accountId: asOptionalString(data.accountId, 'Account id')
+    })
+    const pullArgs = [...ctx.args, 'pull', '--progress']
     if (data.rebase) pullArgs.push('--rebase')
-    const remote = remoteName || this.defaultRemote(ctx.repo)
+    const remote = ctx.remote
     if (remote) pullArgs.push(remote)
     const branch = asOptionalString(data.branch, 'Branch')
     if (branch) pullArgs.push(branch)
@@ -917,7 +981,7 @@ export class Router {
       args: pullArgs,
       cwd: ctx.repo.path,
       repoPath: ctx.repo.path,
-      env,
+      env: ctx.env,
       secrets: [ctx.token]
     })
   }
@@ -926,13 +990,17 @@ export class Router {
     const data = raw as Record<string, unknown>
     const repoPath = requireString(data.repoPath, 'Repository path')
     const remoteName = asOptionalString(data.remote, 'Remote')
-    const ctx = await this.repoAuth(repoPath, asOptionalString(data.identityId, 'Identity id'), asOptionalString(data.accountId, 'Account id'), remoteName)
-    const { args, env } = await this.remoteContext(ctx, remoteName)
-    const remote = remoteName || this.defaultRemote(ctx.repo)
+    const ctx = await this.remoteAuth(repoPath, {
+      direction: 'push',
+      remoteName,
+      identityId: asOptionalString(data.identityId, 'Identity id'),
+      accountId: asOptionalString(data.accountId, 'Account id')
+    })
+    const remote = ctx.remote
     if (!remote) throw new Error('This repository has no remote configured')
     const branch = asOptionalString(data.branch, 'Branch') || ctx.repo.currentBranch
     if (!branch) throw new Error('Cannot push from a detached HEAD; check out a branch first')
-    const pushArgs = [...args, 'push', '--progress']
+    const pushArgs = [...ctx.args, 'push', '--progress']
     if (data.setUpstream) pushArgs.push('--set-upstream')
     if (data.force === 'with-lease') pushArgs.push('--force-with-lease')
     else if (data.force === 'force') pushArgs.push('--force')
@@ -943,7 +1011,7 @@ export class Router {
       args: pushArgs,
       cwd: ctx.repo.path,
       repoPath: ctx.repo.path,
-      env,
+      env: ctx.env,
       secrets: [ctx.token]
     })
   }
@@ -953,17 +1021,32 @@ export class Router {
     const repoPath = requireString(data.repoPath, 'Repository path')
     const command = requireString(data.command, 'Command')
     const rest = validateConsoleCommand(command)
-    const ctx = await this.repoAuth(repoPath, asOptionalString(data.identityId, 'Identity id'), asOptionalString(data.accountId, 'Account id'))
-    const ident = buildIdentityEnv(ctx.identity)
-    const auth = buildAuthArgs(ctx.account ?? null, ctx.token)
+    const identityId = asOptionalString(data.identityId, 'Identity id')
+    const accountId = asOptionalString(data.accountId, 'Account id')
+    // A console command can fetch or push, so both destinations are checked
+    // separately and each helper is scoped to its own origin.
+    // Separate variable prefixes keep each scoped helper to its own secret.
+    const fetchCtx = await this.remoteAuth(repoPath, {
+      direction: 'fetch',
+      identityId,
+      accountId,
+      envPrefix: 'COMMIT87_FETCH'
+    })
+    const pushCtx = await this.remoteAuth(repoPath, {
+      direction: 'push',
+      identityId,
+      accountId,
+      envPrefix: 'COMMIT87_PUSH'
+    })
+    const secrets = [fetchCtx.token, pushCtx.token].filter((token): token is string => Boolean(token))
     return this.tasks.start({
       kind: 'console',
       title: `git ${rest.join(' ')}`,
-      args: [...ident.args, ...auth.args, ...rest],
-      cwd: ctx.repo.path,
-      repoPath: ctx.repo.path,
-      env: { ...ident.env, ...auth.env },
-      secrets: [ctx.token]
+      args: [...fetchCtx.identityArgs, ...fetchCtx.authArgs, ...pushCtx.authArgs, ...rest],
+      cwd: fetchCtx.repo.path,
+      repoPath: fetchCtx.repo.path,
+      env: { ...fetchCtx.identityEnv, ...fetchCtx.authEnv, ...pushCtx.authEnv },
+      secrets
     })
   }
 
@@ -977,39 +1060,22 @@ export class Router {
   ): Promise<{ account?: IntegrationAccount; origin?: string }> {
     const target = await this.submoduleTarget(repoPath, url)
     if (explicitId) {
-      const explicit = this.store.integrationById(explicitId)
-      if (!explicit) throw new Error('Unknown integration account')
-      if (!target?.host) throw new Error('An integration account needs a submodule URL with a host')
-      if (!accountMatchesHost(explicit, target.host)) {
-        throw new Error(`Integration account does not match the submodule host ${target.host}`)
-      }
-      return { account: explicit, origin: target.origin }
+      if (!target) throw new Error('An integration account needs a submodule URL with a host')
+      const explicit = this.store.authorizeAccount(repoPath, target.provider, target.destination, explicitId)
+      return { account: explicit, origin: target.destination.origin }
     }
-    if (!target?.host) return {}
-    const host = target.host
-
-    const preferred = target.provider
-      ? this.store.getRepoDefaults(repoPath).integrationByProvider[target.provider]
-      : undefined
-    const candidates = this.store
-      .listIntegrations()
-      .filter(
-        (account) =>
-          (!target.provider || account.provider === target.provider) && accountMatchesHost(account, host)
-      )
-    return {
-      account: candidates.find((account) => account.id === preferred) ?? candidates[0],
-      origin: target.origin
-    }
+    if (!target) return {}
+    const account = this.store.authorizeAccount(repoPath, target.provider, target.destination)
+    return { account, origin: target.destination.origin }
   }
 
-  /** Resolve the host a submodule URL will contact, including relative URLs. */
+  /** Resolve the destination a submodule URL will contact, including relative URLs. */
   private async submoduleTarget(
     repoPath: string,
     url: string
-  ): Promise<{ host: string; provider?: ProviderId; origin?: string } | null> {
-    const direct = detectProviderFromUrl(url)
-    if (direct?.host) return { host: direct.host, provider: direct.provider, origin: this.originOf(url) }
+  ): Promise<{ destination: GitDestination; provider?: ProviderId } | null> {
+    const direct = destinationFromUrl(url)
+    if (direct) return { destination: direct, provider: direct.provider }
     if (!/^\.{1,2}\//.test(url.trim())) return null
 
     const repo = await repoOps.resolveRepo(repoPath)
@@ -1031,52 +1097,116 @@ export class Router {
       (defaults.defaultRemote ? repo.remotes.find((item) => item.name === defaults.defaultRemote) : undefined)
     if (!remote) return null
 
-    const detected = detectProviderFromUrl(remote.fetchUrl) ?? detectProviderFromUrl(remote.pushUrl)
-    if (!detected?.host) return null
-    return { host: detected.host, provider: detected.provider, origin: this.originOf(remote.fetchUrl) }
+    const destination = destinationFromUrl(remote.fetchUrl) ?? destinationFromUrl(remote.pushUrl)
+    if (!destination) return null
+    return { destination, provider: destination.provider ?? remote.provider }
   }
 
-  private originOf(url: string): string | undefined {
-    const raw = url.trim()
-    if (!/^https?:\/\//i.test(raw)) return undefined
-    try {
-      const parsed = new URL(raw)
-      return `${parsed.protocol}//${parsed.host.toLowerCase()}`
-    } catch {
-      return undefined
-    }
-  }
-
-  private async repoAuth(repoPath: string, identityId?: string, accountId?: string, remoteName?: string) {
+  private async repoAuth(repoPath: string, identityId?: string) {
     const repo = await repoOps.resolveRepo(repoPath)
-    const identity = this.store.resolveIdentity(identityId)
-    let account = accountId ? this.store.integrationById(accountId) : undefined
-    if (!account) {
-      const preferred = remoteName || this.defaultRemote(repo)
-      const remote = (preferred ? repo.remotes.find((item) => item.name === preferred) : undefined) ?? repo.remotes[0]
-      if (remote) {
-        const parsed = detectProviderFromUrl(remote.fetchUrl)
-        const provider = remote.provider ?? parsed?.provider ?? providerFromHost(parsed?.host, this.store.listIntegrations())
-        account = this.store.resolveAccount(repo.path, provider, parsed?.host)
-      }
+    return { repo, identity: this.store.resolveIdentity(identityId) }
+  }
+
+  private async remoteAuth(
+    repoPath: string,
+    options: {
+      direction: 'fetch' | 'push'
+      remoteName?: string
+      identityId?: string
+      accountId?: string
+      envPrefix?: string
     }
-    const token = account ? await this.store.getToken(account.id) : null
-    return { repo, identity, account, token }
+  ): Promise<RemoteAuth> {
+    const repo = await repoOps.resolveRepo(repoPath)
+    const identity = this.store.resolveIdentity(options.identityId)
+    const remote = this.selectRemote(repo, options.remoteName)
+    const url = options.direction === 'push' ? remote?.pushUrl || remote?.fetchUrl : remote?.fetchUrl
+    const destination = url ? destinationFromUrl(url) : null
+    const provider = remote?.provider ?? destination?.provider
+    // The renderer's detected account is a preference, not a grant: automatic
+    // fetch/push/console flows must not fail when it belongs to another remote.
+    const account = this.store.authorizeAccount(repo.path, provider, destination, options.accountId, 'prefer')
+    // ssh/git remotes use keys; a forge token is only installed for an exact
+    // https origin that the account was authorized for.
+    const origin = destination?.origin
+    const token = account && origin ? await this.store.getToken(account.id) : null
+    const auth = account && origin ? buildAuthArgs(account, token, origin, options.envPrefix) : { args: [], env: {} }
+    const ident = buildIdentityEnv(identity)
+    return {
+      repo,
+      identity,
+      account: account && origin ? account : undefined,
+      token,
+      destination,
+      remote: remote?.name,
+      identityArgs: ident.args,
+      identityEnv: ident.env,
+      authArgs: auth.args,
+      authEnv: auth.env,
+      args: [...ident.args, ...auth.args],
+      env: { ...ident.env, ...auth.env }
+    }
+  }
+
+  private selectRemote(repo: RepoInfo, remoteName?: string) {
+    if (remoteName) {
+      const named = repo.remotes.find((item) => item.name === remoteName)
+      if (!named) throw new Error(`Unknown remote "${remoteName}"`)
+      return named
+    }
+    const preferred = this.defaultRemote(repo)
+    return preferred ? repo.remotes.find((item) => item.name === preferred) : undefined
   }
 
   private defaultRemote(repo: RepoInfo): string | undefined {
     return this.store.getRepoDefaults(repo.path).defaultRemote || repo.remotes[0]?.name
   }
 
-  private async remoteContext(
-    ctx: { repo: RepoInfo; identity?: GitIdentity | null; account?: IntegrationAccount | null; token: string | null },
-    remoteName?: string
-  ): Promise<{ args: string[]; env: NodeJS.ProcessEnv }> {
-    void remoteName
-    const ident = buildIdentityEnv(ctx.identity)
-    const auth = buildAuthArgs(ctx.account ?? null, ctx.token)
-    return { args: [...ident.args, ...auth.args], env: { ...ident.env, ...auth.env } }
+  /**
+   * Drop pinned provider→account mappings whose account no longer matches any
+   * remote destination. Called after a remote URL changes so a stale pin
+   * cannot keep releasing a token for the previous host.
+   */
+  private async reconcileRepoDefaults(repoPath: string): Promise<void> {
+    const repo = await repoOps.resolveRepo(repoPath)
+    const defaults = this.store.getRepoDefaults(repo.path)
+    const integrationByProvider = { ...defaults.integrationByProvider }
+    let changed = false
+    for (const [key, accountId] of Object.entries(integrationByProvider)) {
+      if (!accountId) continue
+      const provider = key as ProviderId
+      const account = this.store.integrationById(accountId)
+      const matched =
+        account &&
+        repo.remotes.some((remote) => {
+          const destination = destinationFromUrl(remote.fetchUrl) ?? destinationFromUrl(remote.pushUrl)
+          return destination ? accountMatchesDestination(account, destination) : false
+        })
+      if (!matched) {
+        delete integrationByProvider[provider]
+        changed = true
+      }
+    }
+    if (changed) {
+      await this.store.setRepoDefaults(repo.path, { ...defaults, integrationByProvider })
+    }
   }
+}
+
+/** One authorized remote operation: identity, destination and scoped helper. */
+interface RemoteAuth {
+  repo: RepoInfo
+  identity?: GitIdentity
+  account?: IntegrationAccount
+  token: string | null
+  destination: GitDestination | null
+  remote?: string
+  identityArgs: string[]
+  identityEnv: NodeJS.ProcessEnv
+  authArgs: string[]
+  authEnv: NodeJS.ProcessEnv
+  args: string[]
+  env: NodeJS.ProcessEnv
 }
 
 // ---------------------------------------------------------------------------
@@ -1120,3 +1250,30 @@ async function isGitRepo(target: string): Promise<boolean> {
     return false
   }
 }
+
+/**
+ * Reject remote URLs that would be read as options or reach a transport we do
+ * not support. Local paths and `file://` URLs stay valid; credentials are never
+ * released for them.
+ */
+function validateRemoteUrl(raw: string): string {
+  const url = raw.trim()
+  if (!url) throw new Error('Remote URL is required')
+  if (url.startsWith('-')) throw new Error('Remote URL must not start with "-"')
+  if (/[\u0000-\u001f\s]/.test(url)) throw new Error('Remote URL must not contain whitespace or control characters')
+  if (/^[A-Za-z]:[\\/]/.test(url)) return url
+  if (SCHEME_RE.test(url)) {
+    const scheme = url.slice(0, url.indexOf(':')).toLowerCase()
+    if (scheme === 'file') return url
+    if (scheme !== 'https' && scheme !== 'http' && scheme !== 'ssh' && scheme !== 'git' && scheme !== 'git+ssh') {
+      throw new Error(`Unsupported remote scheme "${scheme}"`)
+    }
+    if (!destinationFromUrl(url)) throw new Error('Enter a valid Git URL (https://, ssh:// or git@host:owner/repo)')
+    return url
+  }
+  if (path.isAbsolute(url) || !url.includes(':')) return url
+  if (!destinationFromUrl(url)) throw new Error('Enter a valid Git URL (https://, ssh:// or git@host:owner/repo)')
+  return url
+}
+
+const SCHEME_RE = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//

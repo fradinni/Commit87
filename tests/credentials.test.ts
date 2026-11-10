@@ -38,7 +38,7 @@ describe('git identity environment', () => {
   })
 
   it('passes credentials through the environment and never in argv', () => {
-    const { args, env } = buildAuthArgs(account, 'super-secret-token')
+    const { args, env } = buildAuthArgs(account, 'super-secret-token', 'https://github.com')
     expect(args).toContain('credential.helper=')
     expect(args.join(' ')).not.toContain('super-secret-token')
     expect(env.COMMIT87_TOKEN).toBe('super-secret-token')
@@ -46,12 +46,43 @@ describe('git identity environment', () => {
     expect(args.join(' ')).toContain('COMMIT87_USERNAME')
   })
 
-  it('scopes a credential helper to an exact origin', () => {
+  it('always scopes the credential helper to one exact origin', () => {
     const { args, env } = buildAuthArgs(account, 'scoped-token', 'https://github.com')
     expect(args).toContain('credential.helper=')
     expect(args.join(' ')).toContain('credential.https://github.com.helper=')
+    // No unscoped helper may be installed alongside the scoped one.
+    expect(args.join(' ')).not.toMatch(/credential\.helper=!f/)
     expect(args.join(' ')).not.toContain('scoped-token')
     expect(env.COMMIT87_TOKEN).toBe('scoped-token')
+  })
+
+  it('refuses to install a helper without an exact origin', () => {
+    expect(() => buildAuthArgs(account, 'scoped-token', undefined)).toThrow(/exact origin/)
+  })
+
+  it('installs nothing when the account or token is missing', () => {
+    expect(buildAuthArgs(null, 'tok', 'https://github.com')).toEqual({ args: [], env: {} })
+    expect(buildAuthArgs(account, null, 'https://github.com')).toEqual({ args: [], env: {} })
+  })
+
+  it('gives each destination its own secret variables', () => {
+    // A console command authorizes fetch and push separately. If both helpers
+    // read the same environment names, one scoped helper can print the other
+    // destination's token.
+    const fetch = buildAuthArgs(account, 'fetch-token', 'https://one.example', 'COMMIT87_FETCH')
+    const push = buildAuthArgs(account, 'push-token', 'https://two.example', 'COMMIT87_PUSH')
+    const fetchHelper = fetch.args.join(' ')
+    const pushHelper = push.args.join(' ')
+    expect(fetch.env.COMMIT87_FETCH_TOKEN).toBe('fetch-token')
+    expect(push.env.COMMIT87_PUSH_TOKEN).toBe('push-token')
+    expect(fetch.env.COMMIT87_TOKEN).toBeUndefined()
+    expect(push.env.COMMIT87_TOKEN).toBeUndefined()
+    expect(fetchHelper).toContain('$COMMIT87_FETCH_TOKEN')
+    expect(fetchHelper).not.toContain('COMMIT87_PUSH_TOKEN')
+    expect(pushHelper).toContain('$COMMIT87_PUSH_TOKEN')
+    expect(pushHelper).not.toContain('COMMIT87_FETCH_TOKEN')
+    expect(fetchHelper).not.toContain('fetch-token')
+    expect(pushHelper).not.toContain('push-token')
   })
 
   it('redacts secrets from task output', () => {

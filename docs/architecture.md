@@ -216,30 +216,52 @@ sets `user.signingkey` and `commit.gpgsign` when configured, and points
 
 ### Forge accounts
 
-An integration is `{ provider, label, username, baseUrl, identityId? }` plus a token in the
-secret store. Account resolution for a repository:
+An integration is `{ provider, label, username, baseUrl, authority, identityId? }` plus a token
+in the secret store. `authority` is derived from the provider and base URL (normalized host,
+explicit non-default port, optional `cloneHost`, and a fingerprint) and binds the token to that
+server.
 
-1. `repoDefaults[repository].integrationByProvider[provider]`
-2. an account whose API host matches the remote host
-3. the only account for that provider, if exactly one exists
-4. otherwise no account (the UI asks you to connect one)
+Every authenticated operation follows one authorization path before a credential helper is
+built:
 
-For HTTPS Git operations the token is injected through an ephemeral credential helper:
+1. resolve the effective destination — the fetch URL for fetch/pull/clone, the push URL for
+   push; the console checks both;
+2. reject plain `http` destinations except loopback addresses;
+3. match accounts whose authority equals the destination: exact lowercase host equality, the
+   same explicit non-default port, plus the documented `api.github.com`↔`github.com` and
+   `api.bitbucket.org`↔`bitbucket.org` mappings. API paths (`/api/v3`, `/api/v4`, `/2.0`) do
+   not change the host, and ssh remotes receive no forge token;
+4. prefer the repository's pinned account for the provider suggested by the hostname, but only
+   if it passes the same destination match.
+
+There is no sole-account fallback and no pinned-account shortcut, and provider-name heuristics
+never authorize a token. An explicit `accountId` must match the destination or the operation
+fails with an actionable error. No match means the operation runs anonymously: public
+operations still work, private ones fail because `GIT_TERMINAL_PROMPT=0`.
+
+For HTTPS Git operations the token is injected through an ephemeral credential helper scoped to
+the exact destination origin:
 
 ```
 -c credential.helper=
--c credential.helper=!f() { if test "$1" = get; then printf "username=%s\npassword=%s\n" "$COMMIT87_USERNAME" "$COMMIT87_TOKEN"; fi; }; f
+-c credential.<scheme://host[:port]>.helper=!f() { if test "$1" = get; then printf "username=%s\npassword=%s\n" "$COMMIT87_USERNAME" "$COMMIT87_TOKEN"; fi; }; f
 ```
 
-with `COMMIT87_USERNAME` / `COMMIT87_TOKEN` in the child environment. Tokens never enter
-`argv`, so they do not appear in `ps`, shell history, task output or crash dumps. Task
-output is additionally redacted before leaving the main process.
+There is deliberately no unscoped form. `COMMIT87_USERNAME` / `COMMIT87_TOKEN` travel in the
+child environment; tokens never enter `argv`, so they do not appear in `ps`, shell history, task
+output or crash dumps. Task output is additionally redacted before leaving the main process.
 
 ### Secret storage
 
 `safeStorage.encryptString` (OS keychain / DPAPI / libsecret) is used when available.
 Otherwise the token is stored in `secrets.json` with mode `0600`, and Settings shows an
-explicit warning. Config lives in `app.getPath('userData')`:
+explicit warning. Each token is stored with the authority fingerprint it was issued for
+(`version: 2`, `tokens: { <accountId>: { value, fingerprint } }`). Loading a version 1 file
+wraps each token with its account's backfilled authority and drops tokens with no account;
+`getToken` refuses a token whose fingerprint no longer matches. Changing an integration's
+provider, base URL host, port or path, or clone host clears the stored token unless a
+replacement is supplied; label, username and identity edits keep it. Config lives in
+`app.getPath('userData')`:
 
 - Linux: `~/.config/Commit87/{config.json,secrets.json}`
 - macOS: `~/Library/Application Support/Commit87/…`
@@ -285,7 +307,9 @@ Pull request checkout fetches the forge ref into a local branch:
 | GitLab | `+refs/merge-requests/N/head:refs/remotes/<remote>/mr/N` |
 | Bitbucket / Gitea | `+refs/heads/<source>:refs/remotes/<remote>/<source>` |
 
-then `git switch -c pr-N <ref>` with the integration token used for the fetch.
+then `git switch -c pr-N <ref>`. Checkout picks a remote whose destination the selected account
+is authorized for (an exact owner/repository match first) and never falls back to an unrelated
+remote; the fetch uses the same origin-scoped helper as other operations.
 
 ## UI
 
@@ -334,11 +358,19 @@ then `git switch -c pr-N <ref>` with the integration token used for the fetch.
 - **Interactive rebase**: a modal planner over `onto..HEAD` where commits can be reordered,
   reworded, squashed, fixed up or dropped; it validates the plan in the renderer and again
   in the main process before replaying it.
+- **Staging view**: every changed path is listed once per changed side, so a partially staged
+  file appears as a staged row (unstage, discard) and a worktree row (stage, discard). Loads
+  are bound to repository, file, side and a request generation, so a late response can never
+  fill the editor for another file. Commit messages and conflict resolutions persist per
+  repository (and per file and content baseline), survive navigation, and are cleared once
+  the commit is made or the conflict is staged.
 - **Conflict resolver**: unmerged files are split into ours/theirs/base regions. Each block
   can keep a side, keep both, use the base or be removed, while a live editable output pane
-  holds the final file. Saving writes the path (never a symlink or a path outside the repo)
-  and stages it through `git.resolveConflict`. Non-UTF-8, symlinked and oversized paths are
-  read-only here and must be resolved in an external editor.
+  holds the final file. Saving writes the path (never a symlink or a path outside the repo),
+  sends the SHA-256 of the bytes it loaded, and is rejected with the bytes preserved when the
+  file changed underneath it; the write is then staged through `git.resolveConflict`.
+  Non-UTF-8, symlinked and oversized paths are read-only here and must be resolved in an
+  external editor.
 - **Submodules**: cards show the checked-out commit (or the recorded gitlink when
   uninitialized), `.gitmodules` URL, tracked branch and status
   flag (`up to date`, `not initialized`, `out of sync`, `conflict`) plus uncommitted work

@@ -62,12 +62,31 @@ export interface GitIdentity {
   createdAt: number
 }
 
+/**
+ * The server an integration's token belongs to. A token is only released to a
+ * Git destination whose host (and explicit port) matches this authority; the
+ * fingerprint binds the stored secret to the endpoint it was issued for.
+ */
+export interface IntegrationAuthority {
+  provider: ProviderId
+  /** Normalized base URL host, lowercase with default ports removed. */
+  host: string
+  /** Explicit non-default port of the base URL, when it has one. */
+  port?: number
+  /** Optional separate Git host (for example a clone host behind an API domain). */
+  cloneHost?: string
+  /** Stable digest of the provider, host, explicit port, clone host and base URL path. */
+  fingerprint: string
+}
+
 export interface IntegrationAccount {
   id: string
   provider: ProviderId
   label: string
   username: string
   baseUrl: string
+  /** Server this account's token is bound to. Derived from provider and baseUrl. */
+  authority?: IntegrationAuthority
   identityId?: string
   hasToken: boolean
   createdAt: number
@@ -79,6 +98,8 @@ export interface IntegrationInput {
   label: string
   username: string
   baseUrl: string
+  /** Optional Git host when it differs from the base URL host. */
+  cloneHost?: string
   identityId?: string
   token?: string
 }

@@ -227,32 +227,41 @@ const PROVIDER_USERNAME: Record<ProviderId, string> = {
   gitea: 'commit87'
 }
 
+/**
+ * Build the ephemeral credential helper for an authorized HTTPS destination.
+ * The helper is always scoped to one exact URL origin: a redirect or a
+ * mistaken host selection cannot offer the token to a different server, and
+ * there is deliberately no unscoped form.
+ */
 export function buildAuthArgs(
   account: IntegrationAccount | null,
   token: string | null,
-  origin?: string
+  origin: string | undefined,
+  envPrefix = 'COMMIT87'
 ): { args: string[]; env: NodeJS.ProcessEnv } {
   if (!account || !token) return { args: [], env: {} }
+  if (!origin) {
+    throw new Error('Refusing to install a credential helper without an exact origin')
+  }
   const username = account.username?.trim() || PROVIDER_USERNAME[account.provider]
+  // Each helper reads its own variables, so a command that authorizes fetch and
+  // push separately (the console) can never let one scoped helper print the
+  // other destination's token.
+  const userVar = `${envPrefix}_USERNAME`
+  const tokenVar = `${envPrefix}_TOKEN`
   const helper =
     '!f() { if test "$1" = get; then ' +
-    'printf "username=%s\\npassword=%s\\n" "$COMMIT87_USERNAME" "$COMMIT87_TOKEN"; ' +
+    `printf "username=%s\\npassword=%s\\n" "$${userVar}" "$${tokenVar}"; ` +
     'fi; }; f'
-  const env = {
-    COMMIT87_USERNAME: username,
-    COMMIT87_TOKEN: token
+  const env: NodeJS.ProcessEnv = {
+    [userVar]: username,
+    [tokenVar]: token
   }
-  if (origin) {
-    // Clear ambient helpers, then scope the app helper to the exact URL origin
-    // so a redirect or a mistaken host selection cannot offer this token to a
-    // different server.
-    return {
-      args: ['-c', 'credential.helper=', '-c', `credential.${origin}.helper=${helper}`],
-      env
-    }
-  }
+  // Clear ambient helpers, then scope the app helper to the exact URL origin
+  // so a redirect or a mistaken host selection cannot offer this token to a
+  // different server.
   return {
-    args: ['-c', 'credential.helper=', '-c', `credential.helper=${helper}`],
+    args: ['-c', 'credential.helper=', '-c', `credential.${origin}.helper=${helper}`],
     env
   }
 }
