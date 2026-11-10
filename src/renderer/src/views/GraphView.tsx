@@ -26,7 +26,7 @@ import {
   X
 } from 'lucide-react'
 import type { Commit, DiffResult } from '@shared/types'
-import { activeIdentity, useStore } from '../store'
+import { operationNotice, selectedIdentityId, useStore } from '../store'
 import { call } from '../lib/ipc'
 import { buildGraph, classifyRefs, GRAPH_PADDING, LANE_GAP } from '../lib/graph'
 import type { ClassifiedRef } from '../lib/graph'
@@ -87,7 +87,7 @@ export function GraphView() {
   const notify = useStore((state) => state.notify)
   const notifyError = useStore((state) => state.notifyError)
   const currentBranch = useStore((state) => state.status?.branch ?? state.currentRepo?.currentBranch ?? null)
-  const headSha = useStore((state) => state.status?.headSha ?? null)
+  const headSha = useStore((state) => state.status?.headSha ?? state.currentRepo?.headSha ?? null)
   const [query, setQuery] = [useStore((state) => state.graphQuery), useStore((state) => state.setGraphQuery)]
   const [branch, setBranch] = [useStore((state) => state.graphBranch), useStore((state) => state.setGraphBranch)]
   const [loading, setLoading] = useState(false)
@@ -316,7 +316,7 @@ export function GraphView() {
         name: formName.trim(),
         message: formMessage.trim() || undefined,
         commit: tagTarget.sha,
-        identityId: activeIdentity()?.id
+        identityId: selectedIdentityId()
       })
       await useStore.getState().refreshTags(repo.path)
       notify(`Tag ${formName.trim()} created`, 'success')
@@ -347,25 +347,22 @@ export function GraphView() {
 
   const runHistoryAction = async (action: 'cherry-pick' | 'revert', shas: string[]): Promise<void> => {
     if (!shas.length) return
+    const label = action === 'cherry-pick' ? 'Cherry-pick' : 'Revert'
     const result =
       action === 'cherry-pick'
-        ? await call('git.cherryPick', { path: repo.path, shas, identityId: activeIdentity()?.id })
-        : await call('git.revert', { path: repo.path, shas, identityId: activeIdentity()?.id })
+        ? await call('git.cherryPick', { path: repo.path, shas, identityId: selectedIdentityId() })
+        : await call('git.revert', { path: repo.path, shas, identityId: selectedIdentityId() })
     // A conflict or a hook stop leaves the repository mid-operation; refresh so
-    // the status bar offers Continue, Skip and Abort, and report it as an error.
+    // the status bar offers Continue, Skip and Abort, and report the outcome
+    // truthfully instead of calling a conflict a completed action.
     await useStore.getState().refreshAll(repo.path)
-    const output = result.output.trim()
-    if (result.exitCode !== 0) {
-      notify(output || `${action === 'cherry-pick' ? 'Cherry-pick' : 'Revert'} did not finish`, 'error')
+    const fallback = shas.length > 1 ? `${label}ed ${shas.length} commits` : `${label}ed`
+    const notice = operationNotice(result, fallback, label)
+    if (result.status !== 'ok') {
+      notify(notice.message, notice.kind)
       return
     }
-    const fallback =
-      shas.length > 1
-        ? `${action === 'cherry-pick' ? 'Cherry-picked' : 'Reverted'} ${shas.length} commits`
-        : action === 'cherry-pick'
-          ? 'Cherry-picked'
-          : 'Reverted'
-    notify(output || fallback, 'success')
+    notify(fallback, notice.kind)
   }
 
   const confirmHistory = (action: 'cherry-pick' | 'revert'): void => {

@@ -23,7 +23,7 @@ import {
   Waypoints,
   X
 } from 'lucide-react'
-import { activeIdentity, useStore, type ViewId } from '../store'
+import { selectedIdentityId, useStore, type ViewId } from '../store'
 import { call } from '../lib/ipc'
 
 export type PaletteAction = 'open' | 'clone' | 'init' | 'new-branch' | 'new-tag' | 'new-worktree' | 'new-submodule' | 'push'
@@ -164,7 +164,7 @@ export function CommandPalette({ action }: { action: (action: PaletteAction) => 
           group: 'Git',
           icon: <RefreshCw size={15} />,
           run: async () => {
-            await call('git.pull', { repoPath: repo.path, identityId: activeIdentity()?.id, accountId: detection.accountId })
+            await call('git.pull', { repoPath: repo.path, identityId: selectedIdentityId(), accountId: detection.accountId })
           }
         },
         {

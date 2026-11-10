@@ -13,7 +13,7 @@ import {
   Square,
   X
 } from 'lucide-react'
-import { useStore, activeIdentity } from '../store'
+import { selectedIdentityId, useStore } from '../store'
 import { repoPathKey } from '../lib/tabs'
 import { call } from '../lib/ipc'
 import { Badge, IconButton, Spinner } from './ui'
@@ -67,14 +67,13 @@ export function TitleBar({ onPalette, onPush }: { onPalette: () => void; onPush:
 
   const startSync = async (kind: 'fetch' | 'pull'): Promise<void> => {
     if (!repo) return
-    const identity = activeIdentity()
     try {
       if (kind === 'fetch') {
         await call('git.fetch', { repoPath: repo.path, prune: true, accountId: detection.accountId })
       } else if (kind === 'pull') {
         await call('git.pull', {
           repoPath: repo.path,
-          identityId: identity?.id,
+          identityId: selectedIdentityId(),
           accountId: detection.accountId
         })
       }

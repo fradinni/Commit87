@@ -4,7 +4,9 @@ import type {
   AppConfig,
   AppInfo,
   Commit,
+  DiscardResult,
   GitIdentity,
+  GitOperationResult,
   IntegrationAccount,
   ProviderDetection,
   PullRequest,
@@ -49,6 +51,60 @@ export interface Toast {
   id: string
   kind: 'info' | 'success' | 'error'
   message: string
+}
+
+/** Git output can be arbitrarily large; notices are one short line. */
+export function clipOutput(output: string, limit = 700): string {
+  const text = output.replace(/\s+$/, '')
+  return text.length > limit ? `${text.slice(0, limit)}…` : text
+}
+
+export interface OperationNotice {
+  kind: Toast['kind']
+  message: string
+}
+
+/**
+ * Turn a main-process operation result into the only message a view may show.
+ * A conflict/pause is never announced as success: it points at the state bar so
+ * Continue, Skip or Abort remain the next step. A failure keeps Git's own text.
+ */
+export function operationNotice(
+  result: Pick<GitOperationResult, 'status' | 'output' | 'conflictFiles' | 'inProgress'>,
+  successMessage: string,
+  label = 'The operation'
+): OperationNotice {
+  const output = clipOutput(result.output)
+  if (result.status === 'ok') return { kind: 'success', message: successMessage }
+  if (result.status === 'conflict' || result.inProgress) {
+    const count = result.conflictFiles.length
+    if (count > 0) {
+      return {
+        kind: 'info',
+        message: `${label} paused: ${count} conflicted file${count === 1 ? ' needs' : 's need'} attention. Continue or abort from the status bar.`
+      }
+    }
+    // A pause without conflicts (an empty cherry-pick, a hook stop) cannot be
+    // continued; Skip or Abort is the way out.
+    return {
+      kind: 'info',
+      message: `${label} paused: the repository needs another step. Continue, skip or abort from the status bar.`
+    }
+  }
+  return { kind: 'error', message: output || `${label} failed` }
+}
+
+/** Discard is truthful too: a failed tracked restore is reported, not swallowed. */
+export function discardNotice(result: DiscardResult): OperationNotice {
+  const output = clipOutput(result.output)
+  if (result.status === 'ok') return { kind: 'success', message: 'Changes discarded' }
+  const failed = result.failed.length
+    ? `${result.failed.length} path${result.failed.length === 1 ? '' : 's'}`
+    : 'Some paths'
+  return {
+    kind: 'error',
+    message: output || `${failed} could not be discarded`
+  }
 }
 
 export interface ConsoleLine {
@@ -461,11 +517,13 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
       const [defaults, detection, status, branches, tags, worktrees, stashes, submodules] = await Promise.all([
         call('repo.getDefaults', { path: repo.path }),
         call('provider.detect', { path: repo.path }),
-        call('git.status', { path: repo.path }),
+        // A bare repository has no working tree: never run `git status` there,
+        // and never present an invented clean tree either.
+        repo.isBare ? Promise.resolve(null) : call('git.status', { path: repo.path }),
         call('git.branches', { path: repo.path }),
         call('git.tags', { path: repo.path }),
         call('git.worktrees', { path: repo.path }),
-        call('git.stashes', { path: repo.path }),
+        repo.isBare ? Promise.resolve([]) : call('git.stashes', { path: repo.path }),
         call('git.submodules', { path: repo.path })
       ])
       const limit = get().config?.maxCommits ?? 500
@@ -608,12 +666,14 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
     try {
       const [info, status, detection, branches, tags, worktrees, stashes, submodules] = await Promise.all([
         call('repo.info', { path: repoPath }),
-        call('git.status', { path: repoPath }),
+        // A bare repository has no working tree; refreshing its collections must
+        // not run a worktree-only command or fabricate a clean status.
+        tab.currentRepo.isBare ? Promise.resolve(null) : call('git.status', { path: repoPath }),
         call('provider.detect', { path: repoPath }),
         call('git.branches', { path: repoPath }),
         call('git.tags', { path: repoPath }),
         call('git.worktrees', { path: repoPath }),
-        call('git.stashes', { path: repoPath }),
+        tab.currentRepo.isBare ? Promise.resolve([]) : call('git.stashes', { path: repoPath }),
         call('git.submodules', { path: repoPath })
       ])
       // A deleted or renamed branch must not block the rest of the refresh.
@@ -655,10 +715,11 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
   async refreshRepo(repoPath) {
     const target = repoPath ?? get().currentRepo?.path
     if (!target) return
+    const bare = tabForPath(get().tabs, target)?.currentRepo.isBare ?? false
     try {
       const [info, status, detection] = await Promise.all([
         call('repo.info', { path: target }),
-        call('git.status', { path: target }),
+        bare ? Promise.resolve(null) : call('git.status', { path: target }),
         call('provider.detect', { path: target })
       ])
       get().updateTab(target, { currentRepo: info, status, detection })
@@ -670,6 +731,8 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
   async refreshStatus(repoPath) {
     const target = repoPath ?? get().currentRepo?.path
     if (!target) return
+    const bare = tabForPath(get().tabs, target)?.currentRepo.isBare ?? false
+    if (bare) return
     try {
       const [status, info] = await Promise.all([
         call('git.status', { path: target }),
@@ -928,6 +991,17 @@ export function activeIdentity(): GitIdentity | undefined {
     state.config?.identities.find((identity) => identity.isDefault) ??
     state.config?.identities[0]
   )
+}
+
+/**
+ * The identity the user picked for this repository, or undefined when none was
+ * picked. Operations send this, never `activeIdentity()`: the application
+ * default is resolved in main *after* the repository-local `user.name`/
+ * `user.email`, so sending it here would turn a fallback into an override and
+ * make an interrupted operation continue as the wrong person.
+ */
+export function selectedIdentityId(): string | undefined {
+  return useStore.getState().repoDefaults.identityId
 }
 
 export type { TaskEvent }

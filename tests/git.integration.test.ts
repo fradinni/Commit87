@@ -7,6 +7,7 @@ import { normalizePath } from '../src/main/git/parsers'
 import { runGit } from '../src/main/git/runner'
 import { actionPaths, stagePaths } from '../src/renderer/src/lib/files'
 import {
+  abortOperation,
   addWorktree,
   checkoutBranch,
   commitChanges,
@@ -163,6 +164,24 @@ describe('git repository service', () => {
     const branches = await getBranches(repoPath)
     expect(branches.some((branch) => branch.shortName === 'feature' && branch.type === 'branch')).toBe(true)
     expect(branches.find((branch) => branch.isCurrent)?.shortName).toBe('main')
+  })
+
+  it('reports a squash-merge conflict from the unmerged index', async () => {
+    const dir = await initRepo('squash-conflict')
+    await writeIn(dir, 'file.txt', 'base\n')
+    await commitAll(dir, 'Base')
+    await runGit(['switch', '-c', 'side'], { cwd: dir })
+    await writeIn(dir, 'file.txt', 'side\n')
+    await commitAll(dir, 'Side')
+    await runGit(['switch', 'main'], { cwd: dir })
+    await writeIn(dir, 'file.txt', 'main\n')
+    await commitAll(dir, 'Main')
+
+    // A squash merge leaves no MERGE_HEAD, so the unmerged index is the only
+    // evidence and the result must still be a conflict, not a failure.
+    const result = await mergeBranch({ repoPath: dir, branch: 'side', squash: true }, { identity })
+    expect(result.status).toBe('conflict')
+    expect(result.conflictFiles).toContain('file.txt')
   })
 
   it('creates annotated tags and deletes them', async () => {
@@ -420,5 +439,144 @@ describe('exact Git targets', () => {
     const fresh = await readFileContent(dir, 'file.txt', 'worktree')
     await resolveConflict(dir, 'file.txt', 'resolved again\n', fresh.sha256)
     expect((await getStatus(dir)).files.find((file) => file.path === 'file.txt')?.stage).toBe('staged')
+  })
+})
+
+describe('truthful operation outcomes', () => {
+  it('reports an ff-only refusal as failed, never as success', async () => {
+    const dir = await initRepo('outcome-ff-only')
+    await writeIn(dir, 'base.txt', 'base\n')
+    await commitAll(dir, 'Base')
+    await runGit(['switch', '-c', 'side'], { cwd: dir })
+    await writeIn(dir, 'side.txt', 'side\n')
+    await commitAll(dir, 'Side')
+    await runGit(['switch', 'main'], { cwd: dir })
+    await writeIn(dir, 'main.txt', 'main\n')
+    await commitAll(dir, 'Main')
+
+    const result = await mergeBranch({ repoPath: dir, branch: 'side', ffOnly: true }, { identity })
+    expect(result.status).toBe('failed')
+    expect(result.inProgress).toBe(false)
+    expect(result.state).toBe('clean')
+    expect(result.exitCode).not.toBe(0)
+    expect(result.exitCode).not.toBeNull()
+    expect(result.conflictFiles).toEqual([])
+    expect(result.output).toMatch(/fast-forward|not possible/i)
+    expect((await getStatus(dir)).clean).toBe(true)
+  })
+
+  it('reports a conflict with its files and keeps the state actionable', async () => {
+    const dir = await initRepo('outcome-conflict')
+    await writeIn(dir, 'shared.txt', 'base\n')
+    await commitAll(dir, 'Base')
+    await runGit(['switch', '-c', 'side'], { cwd: dir })
+    await writeIn(dir, 'shared.txt', 'side\n')
+    await commitAll(dir, 'Side')
+    await runGit(['switch', 'main'], { cwd: dir })
+    await writeIn(dir, 'shared.txt', 'main\n')
+    await commitAll(dir, 'Main')
+
+    const result = await mergeBranch({ repoPath: dir, branch: 'side' }, { identity })
+    expect(result.status).toBe('conflict')
+    expect(result.inProgress).toBe(true)
+    expect(result.state).toBe('merging')
+    expect(result.exitCode).not.toBe(0)
+    expect(result.conflictFiles).toEqual(['shared.txt'])
+    expect((await resolveRepo(dir)).state).toBe('merging')
+
+    await abortOperation(dir)
+    expect((await resolveRepo(dir)).state).toBe('clean')
+    expect((await getStatus(dir)).clean).toBe(true)
+  })
+
+  it('reports a merge refused by a hook as a failure instead of success', async () => {
+    const dir = await initRepo('outcome-hook')
+    await writeIn(dir, 'base.txt', 'base\n')
+    await commitAll(dir, 'Base')
+    await runGit(['switch', '-c', 'side'], { cwd: dir })
+    await writeIn(dir, 'side.txt', 'side\n')
+    await commitAll(dir, 'Side')
+    await runGit(['switch', 'main'], { cwd: dir })
+    await writeIn(dir, 'main.txt', 'main\n')
+    await commitAll(dir, 'Main')
+
+    const info = await resolveRepo(dir)
+    const hook = path.join(info.gitDir, 'hooks', 'pre-merge-commit')
+    await fs.writeFile(hook, '#!/bin/sh\necho "refused by test hook" >&2\nexit 1\n', { mode: 0o755 })
+    try {
+      const result = await mergeBranch({ repoPath: dir, branch: 'side', noFf: true }, { identity })
+      expect(result.status).not.toBe('ok')
+      expect(result.inProgress).toBe(result.state !== 'clean')
+      expect(result.exitCode).not.toBe(0)
+      expect(result.output).toContain('refused by test hook')
+    } finally {
+      await fs.rm(hook, { force: true })
+      if ((await resolveRepo(dir)).state !== 'clean') await abortOperation(dir)
+    }
+  })
+
+  it('still discards untracked-only selections', async () => {
+    const dir = await initRepo('outcome-untracked-discard')
+    await writeIn(dir, 'tracked.txt', 'original\n')
+    await commitAll(dir, 'Tracked')
+    await writeIn(dir, 'tracked.txt', 'modified\n')
+    await writeIn(dir, 'scratch.txt', 'scratch\n')
+
+    const result = await discardFiles(dir, ['tracked.txt', 'scratch.txt'], true)
+    expect(result.status).toBe('ok')
+    expect(result.restored).toEqual(['tracked.txt'])
+    expect(result.cleaned).toEqual(['scratch.txt'])
+    expect(result.failed).toEqual([])
+    expect(await fs.readFile(path.join(dir, 'tracked.txt'), 'utf8')).toBe('original\n')
+    await expect(fs.access(path.join(dir, 'scratch.txt'))).rejects.toThrow()
+    expect((await getStatus(dir)).clean).toBe(true)
+  })
+
+  it('surfaces a failed tracked restore instead of swallowing it', async () => {
+    // No commit exists, so restoring a staged path from HEAD must fail.
+    const dir = path.join(root, 'outcome-restore-failure')
+    await fs.mkdir(dir, { recursive: true })
+    await runGit(['init', '-b', 'main'], { cwd: dir })
+    await writeIn(dir, 'new.txt', 'new\n')
+    await runGit(['add', 'new.txt'], { cwd: dir })
+
+    const result = await discardFiles(dir, ['new.txt'], false)
+    expect(result.status).toBe('failed')
+    expect(result.failed).toEqual(['new.txt'])
+    expect(result.restored).toEqual([])
+    expect(result.output.length).toBeGreaterThan(0)
+    // The file is not silently deleted when its restore failed.
+    expect(await fs.readFile(path.join(dir, 'new.txt'), 'utf8')).toBe('new\n')
+  })
+})
+
+describe('bare repositories', () => {
+  it('opens a bare clone without running worktree-only commands', async () => {
+    const source = await initRepo('bare-source')
+    await writeIn(source, 'base.txt', 'base\n')
+    await commitAll(source, 'Base')
+    const barePath = path.join(root, 'bare-clone.git')
+    await runGit(['clone', '--bare', source, barePath], { cwd: root })
+
+    const info = await resolveRepo(barePath)
+    expect(info.isBare).toBe(true)
+    // Worktree facts stay empty instead of being fabricated as a clean tree.
+    expect(info.upstream).toBeNull()
+    expect(info.ahead).toBe(0)
+    expect(info.behind).toBe(0)
+    expect(info.state).toBe('clean')
+
+    const branches = await getBranches(barePath)
+    expect(branches.some((branch) => branch.shortName === 'main' && branch.type === 'branch')).toBe(true)
+    const log = await getLog({ repoPath: barePath, limit: 5 })
+    expect(log.map((commit) => commit.subject)).toContain('Base')
+    expect(await getStashes(barePath)).toEqual([])
+
+    await expect(getStatus(barePath)).rejects.toThrow(/bare repository/)
+    await expect(getDiff({ repoPath: barePath })).rejects.toThrow(/bare repository/)
+    await expect(stageFiles(barePath, ['base.txt'])).rejects.toThrow(/bare repository/)
+    // A commit diff is an object read and still works without a checkout.
+    const commitDiff = await getDiff({ repoPath: barePath, commit: log[0].sha })
+    expect(commitDiff.patch).toContain('base')
   })
 })

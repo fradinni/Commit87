@@ -14,6 +14,8 @@ import type {
   DiffInput,
   DiffResult,
   DirEntry,
+  DiscardResult,
+  GitOperationResult,
   FetchInput,
   FileContent,
   GitBinaryInfo,
@@ -119,23 +121,23 @@ export interface IpcMethods {
 
   'git.stage': { request: { path: string; files: string[] }; response: void }
   'git.unstage': { request: { path: string; files: string[] }; response: void }
-  'git.discard': { request: { path: string; files: string[]; includeUntracked: boolean }; response: void }
+  'git.discard': { request: { path: string; files: string[]; includeUntracked: boolean }; response: DiscardResult }
   'git.commit': { request: CommitInput; response: { sha: string } }
   'git.checkout': { request: CheckoutInput; response: void }
   'git.createBranch': { request: { path: string; name: string; startPoint?: string; checkout?: boolean; track?: boolean }; response: void }
   'git.renameBranch': { request: { path: string; from: string; to: string }; response: void }
   'git.deleteBranch': { request: { path: string; name: string; force?: boolean; remote?: string; identityId?: string; accountId?: string }; response: void }
   'git.setUpstream': { request: { path: string; branch: string; upstream: string }; response: void }
-  'git.merge': { request: MergeInput; response: { output: string } }
-  'git.rebase': { request: { path: string; onto: string; identityId?: string }; response: { output: string } }
+  'git.merge': { request: MergeInput; response: GitOperationResult }
+  'git.rebase': { request: { path: string; onto: string; identityId?: string }; response: GitOperationResult }
   'git.rebasePlan': { request: { repoPath: string; onto: string }; response: RebasePlan }
   'git.rebaseInteractive': { request: RebasePlanInput; response: RebaseResult }
-  'git.cherryPick': { request: { path: string; shas: string[]; identityId?: string }; response: { output: string; exitCode: number } }
-  'git.revert': { request: { path: string; shas: string[]; identityId?: string }; response: { output: string; exitCode: number } }
+  'git.cherryPick': { request: { path: string; shas: string[]; identityId?: string }; response: GitOperationResult }
+  'git.revert': { request: { path: string; shas: string[]; identityId?: string }; response: GitOperationResult }
   'git.reset': { request: ResetInput; response: void }
   'git.abortOperation': { request: { path: string }; response: void }
-  'git.continueOperation': { request: { path: string; identityId?: string }; response: { output: string } }
-  'git.skipOperation': { request: { path: string }; response: void }
+  'git.continueOperation': { request: { path: string; identityId?: string }; response: GitOperationResult }
+  'git.skipOperation': { request: { path: string; identityId?: string }; response: GitOperationResult }
 
   'git.tagCreate': { request: TagCreateInput; response: void }
   'git.tagPush': { request: { path: string; name: string; remote: string; identityId?: string; accountId?: string }; response: void }

@@ -129,7 +129,9 @@ cherry-pick and revert because Git needs an explicit parent.
 
 - Unlimited identities: label, name, email, optional SSH key and GPG key/signing
 - Default identity plus per-repository override and per-account binding
-- Every commit, merge, cherry-pick, revert, tag and stash records the selected identity
+- Every commit, merge, cherry-pick, revert, tag and stash uses one main-side precedence:
+  explicit pick, then the repository's default, then the identity Git resolves for that
+  repository (`includeIf` and global config included), then the application default
 - Pushes authenticate with the selected integration account through an ephemeral
   credential helper — tokens never appear in `argv` or in the process list
 

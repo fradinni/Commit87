@@ -35,8 +35,8 @@ import {
   Waypoints,
   X
 } from 'lucide-react'
-import type { RefInfo, StashInfo, TagInfo, WorktreeInfo, WorktreeStatus } from '@shared/types'
-import { activeIdentity, useStore } from '../store'
+import type { GitOperationResult, RefInfo, StashInfo, TagInfo, WorktreeInfo, WorktreeStatus } from '@shared/types'
+import { operationNotice, selectedIdentityId, useStore } from '../store'
 import { call } from '../lib/ipc'
 import { repoPathKey } from '../lib/tabs'
 import {
@@ -292,6 +292,26 @@ export function RefsPanel() {
     [notify, notifyError, repoPath]
   )
 
+  /** Merge and rebase report the real outcome; a conflict is not success. */
+  const runOutcome = useCallback(
+    async (task: () => Promise<GitOperationResult>, success: string, label: string): Promise<void> => {
+      if (!repoPath) return
+      setBusy(true)
+      try {
+        const result = await task()
+        await useStore.getState().refreshAll(repoPath)
+        setStatusNonce((value) => value + 1)
+        const notice = operationNotice(result, success, label)
+        notify(notice.message, notice.kind)
+      } catch (error) {
+        notifyError(error)
+      } finally {
+        setBusy(false)
+      }
+    },
+    [notify, notifyError, repoPath]
+  )
+
   const openWorktree = useCallback(
     async (worktree: WorktreeInfo): Promise<void> => {
       if (worktree.isCurrent) return
@@ -481,7 +501,7 @@ export function RefsPanel() {
         name: deleteTarget.shortName,
         force: forceDelete,
         remote: deleteRemote || undefined,
-        identityId: activeIdentity()?.id,
+        identityId: selectedIdentityId(),
         accountId: detection.accountId
       })
       setDeleteTarget(null)
@@ -495,7 +515,7 @@ export function RefsPanel() {
         path: repoPath,
         name: remoteDelete.name,
         remote: remoteDelete.remote,
-        identityId: activeIdentity()?.id,
+        identityId: selectedIdentityId(),
         accountId: detection.accountId
       })
       setRemoteDelete(null)
@@ -504,31 +524,33 @@ export function RefsPanel() {
 
   const doMerge = (): void => {
     if (!mergeTarget || !repoPath) return
-    void run(async () => {
+    const target = mergeTarget.shortName
+    void runOutcome(async () => {
       const result = await call('git.merge', {
         repoPath,
-        branch: mergeTarget.shortName,
+        branch: target,
         noFf: mergeMode === 'no-ff' || mergeMode === 'default',
         ffOnly: mergeMode === 'ff-only',
         squash: mergeMode === 'squash',
-        identityId: activeIdentity()?.id
+        identityId: selectedIdentityId()
       })
-      if (result.output.trim()) notify(result.output.trim().slice(0, 600), 'info')
       setMergeTarget(null)
-    }, `Merged ${mergeTarget.shortName}`)
+      return result
+    }, `Merged ${target}`, `Merge of ${target}`)
   }
 
   const doRebase = (): void => {
     if (!rebaseTarget || !repoPath) return
-    void run(async () => {
+    const target = rebaseTarget.shortName
+    void runOutcome(async () => {
       const result = await call('git.rebase', {
         path: repoPath,
-        onto: rebaseTarget.shortName,
-        identityId: activeIdentity()?.id
+        onto: target,
+        identityId: selectedIdentityId()
       })
-      if (result.output.trim()) notify(result.output.trim().slice(0, 600), 'info')
       setRebaseTarget(null)
-    }, `Rebased onto ${rebaseTarget.shortName}`)
+      return result
+    }, `Rebased onto ${target}`, `Rebase onto ${target}`)
   }
 
   const doRemoveWorktree = (): void => {
@@ -568,7 +590,7 @@ export function RefsPanel() {
         path: repoPath,
         name: tagPush.name,
         remote: tagPushRemote,
-        identityId: activeIdentity()?.id,
+        identityId: selectedIdentityId(),
         accountId: detection.accountId
       })
       setTagPush(null)
@@ -2007,8 +2029,8 @@ export function RefsPanel() {
           </Select>
         </Field>
         <p className="muted">
-          Merging into {repoStatus?.branch ?? 'the current branch'} with identity{' '}
-          {activeIdentity()?.email ?? '(none)'}.
+          Merging into {repoStatus?.branch ?? 'the current branch'}. The commit uses this repository's configured Git
+          identity.
         </p>
       </Modal>
 

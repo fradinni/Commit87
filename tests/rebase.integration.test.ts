@@ -22,7 +22,7 @@ import {
 import {
   cleanupRebaseSessionIfIdle,
   getRebasePlan,
-  rebaseEditorEnv,
+  rebaseEditorContext,
   rebaseInteractive
 } from '../src/main/git/rebase'
 
@@ -170,18 +170,26 @@ describe('interactive rebase bridge', () => {
     ])
     const items: RebaseTodoItem[] = [
       { sha: shaFor(plan.commits, 'Change shared line two'), action: 'pick' },
-      { sha: shaFor(plan.commits, 'Change shared line nine'), action: 'reword', message: 'Line nine reworded' },
+      { sha: shaFor(plan.commits, 'Change shared line nine'), action: 'reword', message: '#123 line nine reworded' },
       { sha: shaFor(plan.commits, 'Add other'), action: 'reword', message: 'Other reworded' }
     ]
 
     const started = await rebaseInteractive({ repoPath, onto: 'main', items }, { identity })
     expect(started.inProgress).toBe(true)
     expect(started.exitCode).not.toBe(0)
+    expect(started.status).toBe('conflict')
+    expect(started.state).toBe('rebasing')
+    expect(started.conflictFiles).toEqual(['shared.txt'])
     expect(started.output).toMatch(/CONFLICT/i)
     expect(await getOperationState(repoPath)).toBe('rebasing')
 
-    const editorEnv = await rebaseEditorEnv(repoPath)
-    expect(editorEnv.GIT_EDITOR).toBeTruthy()
+    const resume = await rebaseEditorContext(repoPath)
+    expect(resume.env.GIT_EDITOR).toBeTruthy()
+    // The chosen character is persisted so Continue reinstates it; `#` stays
+    // legal at the start of a reword subject and must not be stripped.
+    expect(resume.commentChar).toBeTruthy()
+    expect(resume.commentChar).not.toBe('#')
+    expect(resume.args).toContain(`core.commentChar=${resume.commentChar}`)
 
     // The Files view reads the unmerged working-tree file because `git diff`
     // returns a combined diff (diff --cc) for it.
@@ -199,8 +207,9 @@ describe('interactive rebase bridge', () => {
     const staged = await getStatus(repoPath)
     expect(staged.files.find((item) => item.path === 'shared.txt')?.stage).toBe('staged')
 
-    const continued = await continueOperation(repoPath, { identity }, editorEnv)
+    const continued = await continueOperation(repoPath, { identity }, resume)
     expect(continued.output).toBeTruthy()
+    expect(continued.status).toBe('ok')
     expect(await getOperationState(repoPath)).toBe('clean')
 
     await cleanupRebaseSessionIfIdle(repoPath)
@@ -209,7 +218,7 @@ describe('interactive rebase bridge', () => {
     const log = await getLog({ repoPath, limit: 10, branch: 'HEAD' })
     expect(log.slice(0, 4).map((item) => item.subject)).toEqual([
       'Other reworded',
-      'Line nine reworded',
+      '#123 line nine reworded',
       'Change shared line two',
       'Main changes line nine'
     ])
@@ -271,12 +280,73 @@ describe('interactive rebase bridge', () => {
         { identity }
       )
       expect(result.inProgress).toBe(false)
+      expect(result.status).toBe('failed')
       expect(result.exitCode).not.toBe(0)
       expect(result.output).toContain('refused by test hook')
       expect(await getOperationState(repoPath)).toBe('clean')
     } finally {
       await fs.rm(hook, { force: true })
     }
+  })
+
+  it('keeps a #-prefixed reword when a conflicting commit is skipped', async () => {
+    const baseFile = Array.from({ length: 6 }, (_, index) => `skip-${String(index + 1).padStart(2, '0')}`).join('\n') + '\n'
+    const changed = (from: string, to: string, file = baseFile): string => file.replace(from, to)
+
+    await checkoutBranch({ repoPath, branch: 'main' })
+    await write('skip-shared.txt', baseFile)
+    await commit('Add skip shared file')
+    await createBranch(repoPath, 'skip-conflict', 'main', true)
+    await write('skip-shared.txt', changed('skip-02', 'branch-two'))
+    await commit('Skip change line two')
+    await write('skip-shared.txt', changed('skip-05', 'branch-five', changed('skip-02', 'branch-two')))
+    await commit('Skip change line five')
+    await write('skip-other.txt', 'other\n')
+    await commit('Skip add other')
+
+    await checkoutBranch({ repoPath, branch: 'main' })
+    await write('skip-shared.txt', changed('skip-05', 'main-five'))
+    await commit('Skip main changes line five')
+    await checkoutBranch({ repoPath, branch: 'skip-conflict' })
+
+    const plan = await getRebasePlan(repoPath, 'main')
+    expect(plan.commits.map((item) => item.subject)).toEqual([
+      'Skip change line two',
+      'Skip change line five',
+      'Skip add other'
+    ])
+    const started = await rebaseInteractive(
+      {
+        repoPath,
+        onto: 'main',
+        items: [
+          { sha: shaFor(plan.commits, 'Skip change line two'), action: 'pick' },
+          { sha: shaFor(plan.commits, 'Skip change line five'), action: 'pick' },
+          { sha: shaFor(plan.commits, 'Skip add other'), action: 'reword', message: '#42 keep me' }
+        ]
+      },
+      { identity }
+    )
+    expect(started.status).toBe('conflict')
+    expect(await getOperationState(repoPath)).toBe('rebasing')
+
+    // Skip the conflicting commit; git then replays the later reword before the
+    // editor bridge reads its message, so the comment character must come back.
+    const resume = await rebaseEditorContext(repoPath)
+    expect(resume.commentChar).toBeTruthy()
+    expect(resume.commentChar).not.toBe('#')
+    const skipped = await skipOperation(repoPath, { identity }, resume)
+    expect(skipped.status).toBe('ok')
+    expect(await getOperationState(repoPath)).toBe('clean')
+    await cleanupRebaseSessionIfIdle(repoPath)
+
+    const log = await getLog({ repoPath, limit: 10, branch: 'HEAD' })
+    expect(log.slice(0, 3).map((item) => item.subject)).toEqual([
+      '#42 keep me',
+      'Skip change line two',
+      'Skip main changes line five'
+    ])
+    expect((await getStatus(repoPath)).clean).toBe(true)
   })
 
   it('skips an emptied reword without rewriting another commit', async () => {
@@ -303,8 +373,9 @@ describe('interactive rebase bridge', () => {
     )
     expect(started.inProgress).toBe(true)
 
-    const editorEnv = await rebaseEditorEnv(repoPath)
-    await skipOperation(repoPath, editorEnv)
+    const resume = await rebaseEditorContext(repoPath)
+    const skipped = await skipOperation(repoPath, { identity }, resume)
+    expect(skipped.status).toBe('ok')
     expect(await getOperationState(repoPath)).toBe('clean')
     await cleanupRebaseSessionIfIdle(repoPath)
     await expect(fs.access(await sessionDir(repoPath))).rejects.toThrow()

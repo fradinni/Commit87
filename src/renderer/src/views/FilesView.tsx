@@ -18,7 +18,7 @@ import {
   UserRound
 } from 'lucide-react'
 import type { BlameLine, DiffResult, DirEntry, FileContent, StatusFile } from '@shared/types'
-import { activeIdentity, useStore } from '../store'
+import { activeIdentity, discardNotice, useStore } from '../store'
 import { call, errorMessage } from '../lib/ipc'
 import { actionPaths, actionPathsFor, fileFacets, stagePaths, stagePathsFor, type FileFacet } from '../lib/files'
 import { createRequestGuard } from '../lib/request'
@@ -283,7 +283,19 @@ export function FilesView() {
     }
   }
 
-  if (!repo || !status) return null
+  if (!repo) return null
+  if (repo.isBare) {
+    return (
+      <div className="view files-view">
+        <EmptyState
+          icon={<GitCommitHorizontal size={20} />}
+          title="Bare repository"
+          description="There is no working tree to stage. Use the commit graph to inspect history, branches, tags and remotes."
+        />
+      </div>
+    )
+  }
+  if (!status) return null
 
   const stageFiles = async (files: string[]): Promise<void> => {
     try {
@@ -307,7 +319,7 @@ export function FilesView() {
   const doDiscard = async (): Promise<void> => {
     if (!discardTarget) return
     try {
-      await call('git.discard', {
+      const result = await call('git.discard', {
         path: repo.path,
         files: actionPathsFor(discardTarget),
         includeUntracked: discardTarget.some((file) => file.stage === 'untracked')
@@ -317,7 +329,9 @@ export function FilesView() {
       setSelected(null)
       setDiff(null)
       await refreshAll(repo.path)
-      notify('Changes discarded', 'success')
+      // A failed tracked restore is reported instead of announcing success.
+      const notice = discardNotice(result)
+      notify(notice.message, notice.kind)
     } catch (error) {
       notifyError(error)
     }
@@ -335,7 +349,10 @@ export function FilesView() {
         message: commitMessage,
         amend: commitAmend,
         signoff: commitSignoff,
-        identityId: identity?.id
+        // Send only the identity picked for this repository: when none is
+        // picked, main resolves the repository-local config before the
+        // application default, so a fallback is never turned into an override.
+        identityId
       })
       clearCommitDraft()
       previewGuard.current.invalidate()

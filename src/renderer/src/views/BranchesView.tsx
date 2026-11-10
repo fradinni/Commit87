@@ -15,8 +15,8 @@ import {
   Trash2,
   Waypoints
 } from 'lucide-react'
-import type { RefInfo } from '@shared/types'
-import { activeIdentity, useStore } from '../store'
+import type { GitOperationResult, RefInfo } from '@shared/types'
+import { operationNotice, selectedIdentityId, useStore } from '../store'
 import { call } from '../lib/ipc'
 import { formatRelativeTime } from '../lib/format'
 import { Badge, Button, ConfirmDialog, Field, IconButton, Modal, Select, TextInput } from '../components/ui'
@@ -65,6 +65,28 @@ export function BranchesView() {
       await task()
       await useStore.getState().refreshAll(repo.path)
       if (success) notify(success, 'success')
+    } catch (error) {
+      notifyError(error)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /**
+   * Merge and rebase return a real outcome: a conflict or refusal is refreshed
+   * and reported as such, never announced as success.
+   */
+  const runOutcome = async (
+    task: () => Promise<GitOperationResult>,
+    success: string,
+    label: string
+  ): Promise<void> => {
+    setBusy(true)
+    try {
+      const result = await task()
+      await useStore.getState().refreshAll(repo.path)
+      const notice = operationNotice(result, success, label)
+      notify(notice.message, notice.kind)
     } catch (error) {
       notifyError(error)
     } finally {
@@ -125,7 +147,7 @@ export function BranchesView() {
         name: del.shortName,
         force: forceDelete,
         remote: deleteRemote || undefined,
-        identityId: activeIdentity()?.id,
+        identityId: selectedIdentityId(),
         accountId: detection.accountId
       })
       setDel(null)
@@ -134,31 +156,33 @@ export function BranchesView() {
 
   const doMerge = (): void => {
     if (!merge) return
-    void run(async () => {
+    const target = merge.shortName
+    void runOutcome(async () => {
       const result = await call('git.merge', {
         repoPath: repo.path,
-        branch: merge.shortName,
+        branch: target,
         noFf: mergeMode === 'no-ff' || mergeMode === 'default',
         ffOnly: mergeMode === 'ff-only',
         squash: mergeMode === 'squash',
-        identityId: activeIdentity()?.id
+        identityId: selectedIdentityId()
       })
-      if (result.output.trim()) notify(result.output.trim().slice(0, 600), 'info')
       setMerge(null)
-    }, `Merged ${merge.shortName}`)
+      return result
+    }, `Merged ${target}`, `Merge of ${target}`)
   }
 
   const doRebase = (): void => {
     if (!confirmRebase) return
-    void run(async () => {
+    const target = confirmRebase.shortName
+    void runOutcome(async () => {
       const result = await call('git.rebase', {
         path: repo.path,
-        onto: confirmRebase.shortName,
-        identityId: activeIdentity()?.id
+        onto: target,
+        identityId: selectedIdentityId()
       })
-      if (result.output.trim()) notify(result.output.trim().slice(0, 600), 'info')
       setConfirmRebase(null)
-    }, `Rebased onto ${confirmRebase.shortName}`)
+      return result
+    }, `Rebased onto ${target}`, `Rebase onto ${target}`)
   }
 
   const addWorktree = (): void => {
@@ -373,7 +397,8 @@ export function BranchesView() {
           </Select>
         </Field>
         <p className="muted">
-          Merging into {status?.branch ?? 'the current branch'} with identity {activeIdentity()?.email ?? '(none)'}.
+          Merging into {status?.branch ?? 'the current branch'}. The commit uses this repository's configured Git
+          identity.
         </p>
       </Modal>
 

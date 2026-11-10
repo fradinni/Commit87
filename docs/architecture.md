@@ -207,12 +207,15 @@ LC_ALL=C                stable parsing
 ```
 
 `shell: false` everywhere. A 120 s default timeout and a 64 MiB output cap bound runaway
-commands. `GitError` keeps `argv`, `stderr` and the exit code for diagnostics.
+commands. `GitError` keeps `argv`, partial `stdout`/`stderr`, the exit code and the signal
+for diagnostics. A child that is terminated (timeout, output cap or another signal) keeps a
+`null` exit code and its signal instead of being reported as a successful `0`, so a
+truncated or killed command can never look like a completed operation.
 
 The interactive rebase planner is the one caller allowed to override those two editor
 variables, and only with app-controlled files. Git has no machine-readable todo interface,
-so `git/rebase.ts` prepares `todo`, `sequence-editor.sh`, `edit-message.sh` and
-`messages/<sha>.txt` under `<git-dir>/commit87/rebase`, then runs
+so `git/rebase.ts` prepares `todo`, `sequence-editor.sh`, `edit-message.sh`,
+`messages/<sha>.txt` and `context.json` under `<git-dir>/commit87/rebase`, then runs
 `git rebase --interactive` with deterministic rebase config. The sequence editor copies
 the prepared todo and the message editor replaces the message of a native `reword` action.
 It identifies the commit from the last line of git's own `rebase-merge/done` file, so a
@@ -220,8 +223,28 @@ skipped or emptied commit never invokes the editor and can never rewrite another
 The directory survives conflict stops (including an app restart) and is removed by
 Continue, Skip, Abort or the next planner run; it never enters the working tree. The
 bridge also selects a `core.commentChar` that no supplied message line starts with, so
-subjects such as `#123 fix login` are not mistaken for comments. Planner ranges are capped
-at 500 commits and ranges containing merge commits are rejected.
+subjects such as `#123 fix login` are not mistaken for comments. That character is written
+to `context.json` and passed back as `-c core.commentChar=…` by Continue and Skip (possibly
+in a later process after a restart), because git's message cleanup would otherwise strip a
+`#`-prefixed reword subject. A missing or foreign context file is ignored rather than
+failing the resume, and the directory is replaced when a new planner run starts while no
+rebase is pending. Planner ranges are capped at 500 commits and ranges containing merge
+commits are rejected.
+
+### Bare repositories
+
+`resolveRepo` reads `--is-bare-repository` first and, when true, never runs
+`--show-toplevel` or `status`. It returns the bare folder as `path`/`root`, the shared Git
+directory as `gitDir`/`commonDir`, and empty worktree facts (`upstream: null`,
+`ahead`/`behind: 0`) instead of inventing a clean tree. `RepoInfo.isBare` drives the UI:
+graph, branches, tags, stashes and remotes keep working, the tab loads and is remembered
+after `clone --bare`, and the status poller skips `git.status`. Status, diff, staging,
+discard, commit, checkout, merge/rebase and stash operations reject with
+`This is a bare repository; … needs a working tree`, and the app shows a bare-repository
+banner in place of an operation state, plus an explicit empty state in Files & staging,
+rather than a Git fatal or a fabricated clean tree. Commit and commit-range diffs are
+object reads and still work. Bare clones are opened as
+repositories, not given a separate worktree-style interface.
 
 ### Parsers
 
@@ -306,17 +329,35 @@ ordinary keys keep working.
 ### Identities
 
 An identity is `{ label, name, email, sshKeyPath?, gpgKeyId?, gpgSign?, isDefault }`.
-Resolution order at call time:
+Resolution happens in the main process (`git/identity.ts`) for every operation that can
+create or sign a commit, or contact a remote: commit and amend, tag, merge, rebase (plain
+and interactive), Continue/Skip, cherry-pick, revert, stash, push/fetch/pull, console,
+remote-branch deletion and submodule add/update. The renderer never compensates for a
+missing lookup. Order at call time:
 
 1. explicit `identityId` from the call (per-commit picker)
 2. `repoDefaults[repository].identityId`
-3. the identity marked default
-4. the first identity
+3. the identity Git resolves for this repository: `--local` first, then the effective
+   `user.name` / `user.email` (so `includeIf` and global configuration still apply)
+4. the identity marked default
+5. the first identity
+
+A repository identity wins over the application default because Git itself resolves it:
+name/email come from that identity (a missing field is filled from the selected identity),
+its SSH key is kept for authentication, and its signing settings are not forced onto the
+work. This is what makes Continue in repository B commit as B even when the application
+default is A.
 
 `buildIdentityEnv` exports `GIT_AUTHOR_NAME/EMAIL`, `GIT_COMMITTER_NAME/EMAIL`, passes
 inline `-c user.name` / `-c user.email` (so hooks and subprocesses see the same identity),
 sets `user.signingkey` and `commit.gpgsign` when configured, and points
-`GIT_SSH_COMMAND` at the identity's key with `IdentitiesOnly=yes`.
+`GIT_SSH_COMMAND` at the identity's key with `IdentitiesOnly=yes`. Those variables are only
+installed when an application identity is actually selected.
+
+The renderer sends `repoDefaults[repository].identityId` (the identity the user picked for
+that repository) and never `activeIdentity()`, which also falls back to the application
+default. Sending the fallback would turn it into an explicit override and make a commit or
+an interrupted operation run as the wrong person.
 
 ### Forge accounts
 
@@ -544,8 +585,8 @@ remote; every fetch uses the same origin-scoped helper as other operations.
   for any selection, copy all SHAs, cherry-pick, revert, select-all and clear. Cherry-pick
   replays selected commits oldest first and revert newest first; merge commits are disabled
   for both because Git requires a mainline parent. `git.cherryPick` and `git.revert` take a
-  validated list of SHAs and return the exit code so a conflict is reported as an error and
-  the status bar offers Continue/Skip/Abort.
+  validated list of SHAs and return a `GitOperationResult`; a conflict is reported as a
+  pause with its unmerged paths and the status bar offers Continue/Skip/Abort.
 - **Theme**: dark and light palettes driven by CSS variables; `system` follows
   `prefers-color-scheme`.
 - **Accessibility**: native buttons, `aria-label` on icon buttons, focus-visible outlines,
@@ -610,6 +651,17 @@ workflow instead of publishing a channel file no client requests.
 
 ## Failure handling
 
+- Mutating operations (merge, rebase, interactive rebase, Continue, Skip, cherry-pick,
+  revert) return `GitOperationResult { status, output, exitCode, signal, state,
+  inProgress, conflictFiles }`, built from the real child exit status plus
+  `getOperationState` and the unmerged paths afterwards. A resolved promise is never
+  treated as success: exit 0 with an operation still pending is a pause, and a non-zero
+  exit with a clean state is a failure. The renderer refreshes the originating repository
+  after every outcome and only shows success for `status: 'ok'`; conflicts stay
+  actionable through Continue/Skip/Abort.
+- Discard returns `DiscardResult`: untracked paths are cleaned with `git clean`, tracked
+  paths restored from HEAD, and a failed restore is reported per path instead of being
+  swallowed by the untracked cleanup.
 - Git errors are converted to human text (`GitError` strips `hint:` noise) and shown as
   toasts; the repository is refreshed afterwards so a partially applied operation is
   visible.
@@ -618,7 +670,7 @@ workflow instead of publishing a channel file no client requests.
 - Provider failures include status and a remediation hint; a missing token is reported
   before any network call.
 - Status polling every 5 s keeps the working tree indicator fresh without re-reading
-  history; it pauses while a task runs.
+  history; it pauses while a task runs and is skipped entirely for a bare repository.
 
 ## Packaging
 

@@ -784,11 +784,39 @@ export interface RebasePlanInput {
   identityId?: string
 }
 
-export interface RebaseResult {
+/**
+ * Truthful result of a mutating Git operation. It is built in the main process
+ * from the real child exit status, the repository state afterwards and the
+ * unmerged paths, so a resolved promise is never mistaken for success.
+ */
+export interface GitOperationResult {
+  status: 'ok' | 'conflict' | 'failed'
+  /** Combined stdout and stderr of the command. */
   output: string
-  exitCode: number
-  /** True when the repository is left in a rebasing state (conflict, edit or hook stop). */
+  /** Child exit code, or null when the process was signalled or timed out. */
+  exitCode: number | null
+  /** Termination signal when the child did not exit normally. */
+  signal: string | null
+  /** Operation state after the command (`clean` when nothing is pending). */
+  state: RepoState
+  /** True when the repository still has an operation to continue or abort. */
   inProgress: boolean
+  /** Unmerged paths reported by the index at the end of the command. */
+  conflictFiles: string[]
+}
+
+export type RebaseResult = GitOperationResult
+
+/**
+ * Outcome of discarding selected paths. A failed tracked restore is reported
+ * instead of being swallowed, while untracked-only discards stay successful.
+ */
+export interface DiscardResult {
+  status: 'ok' | 'partial' | 'failed'
+  restored: string[]
+  cleaned: string[]
+  failed: string[]
+  output: string
 }
 
 export interface ResetInput {

@@ -6,15 +6,26 @@ import type { GitIdentity, IntegrationAccount, ProviderId } from '@shared/types'
 
 export class GitError extends Error {
   readonly stderr: string
+  readonly stdout: string
   readonly code: number | null
+  readonly signal: NodeJS.Signals | null
   readonly args: string[]
 
-  constructor(message: string, args: string[], stderr: string, code: number | null) {
+  constructor(
+    message: string,
+    args: string[],
+    stderr: string,
+    code: number | null,
+    stdout = '',
+    signal: NodeJS.Signals | null = null
+  ) {
     super(message)
     this.name = 'GitError'
     this.args = args
     this.stderr = stderr
+    this.stdout = stdout
     this.code = code
+    this.signal = signal
   }
 }
 
@@ -36,7 +47,9 @@ export interface RunGitOptions {
 export interface GitResult {
   stdout: string
   stderr: string
-  exitCode: number
+  /** Exit code, or null when the child was terminated by a signal (including a timeout). */
+  exitCode: number | null
+  signal: NodeJS.Signals | null
 }
 
 const DEFAULT_TIMEOUT = 120_000
@@ -112,6 +125,7 @@ export async function runGit(args: string[], options: RunGitOptions): Promise<Gi
     let stdout = ''
     let stderr = ''
     let settled = false
+    let terminatedBy: NodeJS.Signals | null = null
     const child = spawn(binary, fullArgs, {
       cwd: options.cwd,
       env,
@@ -122,8 +136,18 @@ export async function runGit(args: string[], options: RunGitOptions): Promise<Gi
     const timer = setTimeout(() => {
       if (!settled) {
         settled = true
+        terminatedBy = 'SIGKILL'
         child.kill('SIGKILL')
-        reject(new GitError(`Git command timed out after ${options.timeoutMs ?? DEFAULT_TIMEOUT}ms`, fullArgs, stderr, null))
+        reject(
+          new GitError(
+            `Git command timed out after ${options.timeoutMs ?? DEFAULT_TIMEOUT}ms`,
+            fullArgs,
+            stderr,
+            null,
+            stdout,
+            terminatedBy
+          )
+        )
       }
     }, options.timeoutMs ?? DEFAULT_TIMEOUT)
 
@@ -132,6 +156,7 @@ export async function runGit(args: string[], options: RunGitOptions): Promise<Gi
     child.stdout?.on('data', (chunk: string) => {
       stdout += chunk
       if (stdout.length > (options.maxBuffer ?? MAX_BUFFER)) {
+        terminatedBy = 'SIGKILL'
         child.kill('SIGKILL')
       }
     })
@@ -149,23 +174,25 @@ export async function runGit(args: string[], options: RunGitOptions): Promise<Gi
             `Git executable not found ("${binary}"). Install Git or set the path in Settings.`,
             fullArgs,
             stderr,
-            null
+            null,
+            stdout
           )
         )
         return
       }
-      reject(new GitError(err.message, fullArgs, stderr, null))
+      reject(new GitError(err.message, fullArgs, stderr, null, stdout))
     })
 
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       clearTimeout(timer)
       if (settled) return
       settled = true
+      const termination = signal ?? terminatedBy
       if (code !== 0 && !options.allowFailure) {
-        reject(gitError(fullArgs, { stdout, stderr, exitCode: code ?? 0 }))
+        reject(gitError(fullArgs, { stdout, stderr, exitCode: code, signal: termination }))
         return
       }
-      resolve({ stdout, stderr, exitCode: code ?? 0 })
+      resolve({ stdout, stderr, exitCode: code, signal: termination })
     })
 
     if (options.input !== undefined) {
@@ -186,7 +213,14 @@ export async function tryRunGit(args: string[], options: RunGitOptions): Promise
 
 /** Build the error a failed command would have thrown, for `allowFailure` results. */
 export function gitError(args: string[], result: GitResult): GitError {
-  return new GitError(cleanGitMessage(result.stderr || result.stdout, args), args, result.stderr, result.exitCode)
+  return new GitError(
+    cleanGitMessage(result.stderr || result.stdout, args),
+    args,
+    result.stderr,
+    result.exitCode,
+    result.stdout,
+    result.signal
+  )
 }
 
 function cleanGitMessage(raw: string, args: string[]): string {
@@ -218,7 +252,16 @@ export interface IdentityEnvResult {
   args: string[]
 }
 
-export function buildIdentityEnv(identity?: GitIdentity | null): IdentityEnvResult {
+/**
+ * The identity fields Git operations may receive. A selected application
+ * identity satisfies this shape; for a repository-authored identity the
+ * resolver supplies that name/email, keeps the SSH key and omits the signing
+ * fields so Git decides whether the work is signed.
+ */
+export type IdentityEnvInput = Pick<GitIdentity, 'name' | 'email'> &
+  Partial<Pick<GitIdentity, 'sshKeyPath' | 'gpgKeyId' | 'gpgSign'>>
+
+export function buildIdentityEnv(identity?: IdentityEnvInput | null): IdentityEnvResult {
   const env: NodeJS.ProcessEnv = {}
   const args: string[] = []
   if (!identity) return { env, args }

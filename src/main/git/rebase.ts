@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { Commit, RebasePlan, RebasePlanInput, RebaseResult } from '@shared/types'
 import { buildIdentityEnv, runGit, shellQuote, tryRunGit } from './runner'
 import type { GitAuthContext } from './repo'
-import { getOperationState, getStatus, resolveRepo } from './repo'
+import { buildOperationResult, getOperationState, getStatus, resolveRepo } from './repo'
 import { parseLog } from './parsers'
 import {
   MAX_REBASE_COMMITS,
@@ -90,11 +90,11 @@ export async function rebaseInteractive(input: RebasePlanInput, ctx: GitAuthCont
 
   const identity = buildIdentityEnv(ctx.identity)
   try {
-    const session = await prepareSession(repo.gitDir, entries)
     const commentChar = chooseCommentChar([
       ...rewordMessages(entries).map((item) => item.message),
       ...commits.map((commit) => `${commit.subject}\n${commit.body}`)
     ])
+    const session = await prepareSession(repo.gitDir, entries, commentChar)
     const result = await runGit(
       [
         ...identity.args,
@@ -116,11 +116,7 @@ export async function rebaseInteractive(input: RebasePlanInput, ctx: GitAuthCont
         timeoutMs: 10 * 60_000
       }
     )
-    return {
-      output: `${result.stdout}${result.stderr}`.trim(),
-      exitCode: result.exitCode,
-      inProgress: (await getOperationState(repo.path)) === 'rebasing'
-    }
+    return buildOperationResult(repo.path, result)
   } finally {
     // Never delete the session while git may still need the scripts. Re-check
     // instead of trusting a flag, because runGit can also throw on timeout.
@@ -129,19 +125,33 @@ export async function rebaseInteractive(input: RebasePlanInput, ctx: GitAuthCont
 }
 
 /**
- * Environment for `rebase --continue` and `rebase --skip`: later rewords still
- * need the message editor after a conflict stop or an app restart.
+ * Environment and configuration for `rebase --continue` and `rebase --skip`:
+ * later rewords still need the message editor after a conflict stop or an app
+ * restart, and the persisted comment character must be reinstated so a reword
+ * message such as `#123 fix login` is not stripped by git's message cleanup.
  */
-export async function rebaseEditorEnv(repoPath: string): Promise<NodeJS.ProcessEnv> {
+export interface RebaseEditorContext {
+  env: NodeJS.ProcessEnv
+  args: string[]
+  commentChar: string | null
+}
+
+export async function rebaseEditorContext(repoPath: string): Promise<RebaseEditorContext> {
   const gitDir = await getGitDir(repoPath)
-  if (!gitDir) return {}
-  const script = path.join(sessionRoot(gitDir), 'edit-message.sh')
+  if (!gitDir) return { env: {}, args: [], commentChar: null }
+  const root = sessionRoot(gitDir)
+  const script = path.join(root, 'edit-message.sh')
   try {
     await fs.access(script)
   } catch {
-    return {}
+    return { env: {}, args: [], commentChar: null }
   }
-  return { GIT_EDITOR: quoteForGitShell(script) }
+  const commentChar = await readSessionCommentChar(root)
+  return {
+    env: { GIT_EDITOR: quoteForGitShell(script) },
+    args: commentChar ? ['-c', `core.commentChar=${commentChar}`] : [],
+    commentChar
+  }
 }
 
 export async function cleanupRebaseSession(repoPath: string): Promise<void> {
@@ -199,14 +209,19 @@ interface RebaseSession {
   messageEditor: string
 }
 
-async function prepareSession(gitDir: string, entries: RebaseTodoEntry[]): Promise<RebaseSession> {
+async function prepareSession(gitDir: string, entries: RebaseTodoEntry[], commentChar: string): Promise<RebaseSession> {
   const dir = sessionRoot(gitDir)
   if (/[\r\n\x00]/.test(dir)) throw new Error('The repository path contains unsupported characters')
+  // A session that is still needed keeps `rebase-merge`; starting a new planner
+  // run while a rebase is in progress is refused above, so anything found here
+  // is a stale or foreign directory from an earlier run and is replaced
+  // deliberately rather than merged with this plan's files.
   await fs.rm(dir, { recursive: true, force: true })
   const messagesDir = path.join(dir, 'messages')
   await fs.mkdir(messagesDir, { recursive: true })
 
   const todoPath = path.join(dir, 'todo')
+  const contextPath = path.join(dir, 'context.json')
   const sequenceEditorScript = path.join(dir, 'sequence-editor.sh')
   const messageEditorScript = path.join(dir, 'edit-message.sh')
   const donePath = path.join(gitDir, 'rebase-merge', 'done')
@@ -215,6 +230,10 @@ async function prepareSession(gitDir: string, entries: RebaseTodoEntry[]): Promi
     (line) => `${line.action} ${line.sha} ${sanitizeTodoSubject(line.subject)}`
   )
   await fs.writeFile(todoPath, `${todo.join('\n')}\n`, 'utf8')
+
+  // The chosen comment character is part of the session: Continue and Skip run
+  // in a later process (possibly after an app restart) and must reinstate it.
+  await fs.writeFile(contextPath, `${JSON.stringify({ commentChar, createdAt: Date.now() }, null, 2)}\n`, 'utf8')
 
   for (const reword of rewordMessages(entries)) {
     await fs.writeFile(path.join(messagesDir, `${reword.sha}.txt`), `${reword.message}\n`, 'utf8')
@@ -262,6 +281,23 @@ exit 0
 async function writeScript(file: string, content: string): Promise<void> {
   await fs.writeFile(file, content, { encoding: 'utf8', mode: 0o755 })
   await fs.chmod(file, 0o755)
+}
+
+/**
+ * Read the comment character persisted with the session. A missing or foreign
+ * context file is ignored instead of failing Continue: git then keeps its own
+ * configured character, which is the same behaviour as before the session.
+ */
+async function readSessionCommentChar(dir: string): Promise<string | null> {
+  try {
+    const raw = await fs.readFile(path.join(dir, 'context.json'), 'utf8')
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return null
+    const value = (parsed as { commentChar?: unknown }).commentChar
+    return typeof value === 'string' && value.length === 1 && !/[\s\x00-\x1f]/.test(value) ? value : null
+  } catch {
+    return null
+  }
 }
 
 async function getGitDir(repoPath: string): Promise<string | null> {

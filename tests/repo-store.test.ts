@@ -11,6 +11,7 @@ const calls: Call[] = []
 let failOn: { channel: string; path?: string } | null = null
 let delay: { channel: string; path: string; ms: number } | null = null
 const commonDirs: Record<string, string> = {}
+const barePaths = new Set<string>()
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 function payloadPath(payload: unknown): string | undefined {
@@ -27,7 +28,7 @@ function repoInfo(repoPath: string): RepoInfo {
     gitDir: `${repoPath}/.git`,
     commonDir: commonDirs[repoPath] ?? `${repoPath}/.git`,
     name: repoPath.split('/').pop() ?? repoPath,
-    isBare: false,
+    isBare: barePaths.has(repoPath),
     currentBranch: 'main',
     headSha: 'abc123',
     detached: false,
@@ -127,17 +128,21 @@ const bridge = {
 const globalScope = globalThis as { commit87?: Commit87Bridge }
 globalScope.commit87 = bridge
 
-const { useStore, conflictDraftKey } = await import('../src/renderer/src/store')
+const { useStore, conflictDraftKey, operationNotice, discardNotice, selectedIdentityId } = await import(
+  '../src/renderer/src/store'
+)
 
 const A = '/tmp/commit87-tabs/alpha'
 const B = '/tmp/commit87-tabs/beta'
 const WT = '/tmp/commit87-tabs/alpha-feature'
+const BARE = '/tmp/commit87-tabs/bare.git'
 
 function reset(): void {
   calls.length = 0
   failOn = null
   delay = null
   for (const key of Object.keys(commonDirs)) delete commonDirs[key]
+  barePaths.clear()
   useStore.getState().closeAllTabs()
   useStore.setState({ config, toasts: [], task: null, tasks: {}, consoleOpen: false, sidebarMode: 'navigate', sidebarOpen: true })
 }
@@ -152,6 +157,24 @@ describe('repository tabs', () => {
     expect(state.activeTabId).toBe(A)
     expect(state.currentRepo?.path).toBe(A)
     expect(state.status?.branch).toBe('main-alpha')
+  })
+
+  it('opens a bare repository without running git status or inventing a tree', async () => {
+    barePaths.add(BARE)
+    await useStore.getState().openRepo(BARE)
+    const state = useStore.getState()
+    expect(state.currentRepo?.isBare).toBe(true)
+    expect(state.status).toBeNull()
+    expect(calls.some((entry) => entry.channel === 'git.status')).toBe(false)
+
+    calls.length = 0
+    await useStore.getState().refreshAll(BARE)
+    expect(calls.some((entry) => entry.channel === 'git.status')).toBe(false)
+    expect(useStore.getState().status).toBeNull()
+
+    calls.length = 0
+    await useStore.getState().refreshStatus(BARE)
+    expect(calls.some((entry) => entry.channel === 'git.status')).toBe(false)
   })
 
   it('reuses the existing tab for the same path without reloading it', async () => {
@@ -559,6 +582,89 @@ describe('repository drafts', () => {
     expect(useStore.getState().commitMessage).toBe('')
     expect(useStore.getState().tabs.find((tab) => tab.id === A)?.commitMessage).toBe('alpha only')
     expect(useStore.getState().tabs.find((tab) => tab.id === B)?.commitMessage).toBe('')
+  })
+})
+
+describe('operation notices', () => {
+  it('never announces a conflict or failure as success', () => {
+    const ok = operationNotice(
+      { status: 'ok', output: '', conflictFiles: [], inProgress: false },
+      'Merged feature',
+      'Merge of feature'
+    )
+    expect(ok).toEqual({ kind: 'success', message: 'Merged feature' })
+
+    const conflict = operationNotice(
+      { status: 'conflict', output: 'CONFLICT', conflictFiles: ['src/app.ts'], inProgress: true },
+      'Merged feature',
+      'Merge of feature'
+    )
+    expect(conflict.kind).toBe('info')
+    expect(conflict.message).toContain('1 conflicted file')
+    expect(conflict.message).toContain('Continue')
+
+    const failed = operationNotice(
+      { status: 'failed', output: 'fatal: not possible to fast-forward', conflictFiles: [], inProgress: false },
+      'Merged feature',
+      'Merge of feature'
+    )
+    expect(failed.kind).toBe('error')
+    expect(failed.message).toBe('fatal: not possible to fast-forward')
+
+    const emptyFailure = operationNotice(
+      { status: 'failed', output: '  ', conflictFiles: [], inProgress: false },
+      'Merged feature',
+      'Merge of feature'
+    )
+    expect(emptyFailure.kind).toBe('error')
+    expect(emptyFailure.message).toBe('Merge of feature failed')
+  })
+
+  it('reports a failed discard with Git output instead of success', () => {
+    expect(
+      discardNotice({ status: 'ok', restored: ['a.txt'], cleaned: [], failed: [], output: '' })
+    ).toEqual({ kind: 'success', message: 'Changes discarded' })
+    const failed = discardNotice({
+      status: 'failed',
+      restored: [],
+      cleaned: [],
+      failed: ['a.txt'],
+      output: 'error: could not resolve HEAD'
+    })
+    expect(failed.kind).toBe('error')
+    expect(failed.message).toBe('error: could not resolve HEAD')
+  })
+})
+
+describe('identity selection', () => {
+  it('sends only a repository identity choice, never the application default', async () => {
+    const identities: AppConfig['identities'] = [
+      {
+        id: 'app-default',
+        label: 'Application',
+        name: 'App Default',
+        email: 'app@example.com',
+        isDefault: true,
+        createdAt: 0
+      }
+    ]
+    useStore.setState({ config: { ...config, identities } })
+    await useStore.getState().openRepo(A)
+    // The tab has no repository default: main must be free to prefer the
+    // repository-local user.name/user.email before the application default.
+    expect(selectedIdentityId()).toBeUndefined()
+
+    useStore.setState({
+      config: {
+        ...config,
+        identities,
+        repoDefaults: { [A]: { identityId: 'app-default', integrationByProvider: {} } }
+      }
+    })
+    useStore.getState().updateTab(A, {
+      repoDefaults: { identityId: 'app-default', integrationByProvider: {} }
+    })
+    expect(selectedIdentityId()).toBe('app-default')
   })
 })
 

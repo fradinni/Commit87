@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Archive, Download, History, Plus, RefreshCw, Trash2, Upload } from 'lucide-react'
 import type { StashInfo } from '@shared/types'
-import { activeIdentity, useStore } from '../store'
+import { selectedIdentityId, useStore } from '../store'
 import { call } from '../lib/ipc'
 import { formatRelativeTime } from '../lib/format'
 import { Badge, Button, ConfirmDialog, EmptyState, Field, IconButton, Modal, TextArea, Toggle } from '../components/ui'
@@ -41,7 +41,7 @@ export function StashesView() {
         path: repo.path,
         message: message.trim() || undefined,
         includeUntracked,
-        identityId: activeIdentity()?.id
+        identityId: selectedIdentityId()
       })
       setCreateOpen(false)
       setMessage('')

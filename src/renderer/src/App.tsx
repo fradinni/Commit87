@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { FolderGit2, Plus } from 'lucide-react'
-import { activeIdentity, useStore } from './store'
+import { selectedIdentityId, useStore } from './store'
 import { call, errorMessage } from './lib/ipc'
 import { repoPathKey } from './lib/tabs'
 import { Logo, TitleBar } from './components/TitleBar'
@@ -297,7 +297,7 @@ export function App() {
     if (!state.currentRepo) return
     setPushRemote(state.repoDefaults.defaultRemote ?? state.currentRepo.remotes[0]?.name ?? '')
     setPushBranch(state.status?.branch ?? state.currentRepo.currentBranch ?? '')
-    setPushIdentity(activeIdentity()?.id)
+    setPushIdentity(selectedIdentityId())
     setPushAccount(state.detection.accountId)
     setPushUpstream(!state.status?.upstream)
     setPushForce('none')

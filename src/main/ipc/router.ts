@@ -8,7 +8,6 @@ import type {
   CloneInput,
   ConsoleInput,
   FetchInput,
-  GitIdentity,
   InitInput,
   IntegrationAccount,
   ProviderId,
@@ -23,6 +22,8 @@ import { AppStore } from '../store'
 import { rememberRecentRepo } from '../recent'
 import { TaskManager, validateConsoleCommand } from '../tasks'
 import { buildAuthArgs, buildIdentityEnv, detectGit, runGit, validateGitExecutable } from '../git/runner'
+import type { IdentityEnvInput } from '../git/runner'
+import { resolveRepoIdentity } from '../git/identity'
 import * as repoOps from '../git/repo'
 import * as rebaseOps from '../git/rebase'
 import { parseRebaseTodoItems } from '../git/rebase-plan'
@@ -349,14 +350,13 @@ export class Router {
       },
       'git.discard': async (payload) => {
         const repo = await this.authorizedRepo(payload.path)
-        await repoOps.discardFiles(repo.path, payload.files, payload.includeUntracked)
-        return undefined
+        return repoOps.discardFiles(repo.path, payload.files, payload.includeUntracked)
       },
       'git.commit': async (payload) => {
         const repo = await this.authorizedRepo(payload.repoPath)
         return repoOps.commitChanges(
           { ...payload, repoPath: repo.path },
-          { identity: this.store.resolveIdentity(payload.identityId) }
+          { identity: await this.identityFor(repo.path, payload.identityId) }
         )
       },
       'git.checkout': async (payload) => {
@@ -409,13 +409,13 @@ export class Router {
         const repo = await this.authorizedRepo(payload.repoPath)
         return repoOps.mergeBranch(
           { ...payload, repoPath: repo.path },
-          { identity: this.store.resolveIdentity(payload.identityId) }
+          { identity: await this.identityFor(repo.path, payload.identityId) }
         )
       },
       'git.rebase': async (payload) => {
         const repo = await this.authorizedRepo(payload.path)
         return repoOps.rebaseBranch(repo.path, payload.onto, {
-          identity: this.store.resolveIdentity(payload.identityId)
+          identity: await this.identityFor(repo.path, payload.identityId)
         })
       },
       'git.rebasePlan': async (payload) =>
@@ -424,19 +424,19 @@ export class Router {
         const repo = await this.authorizedRepo(payload.repoPath)
         return rebaseOps.rebaseInteractive(
           { ...payload, repoPath: repo.path },
-          { identity: this.store.resolveIdentity(payload.identityId) }
+          { identity: await this.identityFor(repo.path, payload.identityId) }
         )
       },
       'git.cherryPick': async (payload) => {
         const repo = await this.authorizedRepo(payload.path)
         return repoOps.cherryPick(repo.path, payload.shas, {
-          identity: this.store.resolveIdentity(payload.identityId)
+          identity: await this.identityFor(repo.path, payload.identityId)
         })
       },
       'git.revert': async (payload) => {
         const repo = await this.authorizedRepo(payload.path)
         return repoOps.revertCommit(repo.path, payload.shas, {
-          identity: this.store.resolveIdentity(payload.identityId)
+          identity: await this.identityFor(repo.path, payload.identityId)
         })
       },
       'git.reset': async (payload) => {
@@ -452,21 +452,25 @@ export class Router {
       },
       'git.continueOperation': async (payload) => {
         const repo = await this.authorizedRepo(payload.path)
-        const editorEnv = await rebaseOps.rebaseEditorEnv(repo.path)
+        const resume = await rebaseOps.rebaseEditorContext(repo.path)
         const result = await repoOps.continueOperation(
           repo.path,
-          { identity: this.store.resolveIdentity(payload.identityId) },
-          editorEnv
+          { identity: await this.identityFor(repo.path, payload.identityId) },
+          { env: resume.env, args: resume.args }
         )
         await rebaseOps.cleanupRebaseSessionIfIdle(repo.path)
         return result
       },
       'git.skipOperation': async (payload) => {
         const repo = await this.authorizedRepo(payload.path)
-        const editorEnv = await rebaseOps.rebaseEditorEnv(repo.path)
-        await repoOps.skipOperation(repo.path, editorEnv)
+        const resume = await rebaseOps.rebaseEditorContext(repo.path)
+        const result = await repoOps.skipOperation(
+          repo.path,
+          { identity: await this.identityFor(repo.path, payload.identityId) },
+          { env: resume.env, args: resume.args }
+        )
         await rebaseOps.cleanupRebaseSessionIfIdle(repo.path)
-        return undefined
+        return result
       },
 
       'git.tagCreate': async (payload) => {
@@ -482,7 +486,7 @@ export class Router {
         await repoOps.createTag(
           { ...payload, repoPath: repo.path },
           {
-            identity: ctx ? ctx.identity : this.store.resolveIdentity(payload.identityId),
+            identity: ctx ? ctx.identity : await this.identityFor(repo.path, payload.identityId),
             account: ctx?.account,
             token: ctx?.token ?? null,
             authOrigin: ctx?.destination?.origin
@@ -542,7 +546,7 @@ export class Router {
       'git.stashPush': async (payload) => {
         const repo = await this.authorizedRepo(payload.path)
         await repoOps.stashPush(repo.path, payload.message, payload.includeUntracked ?? false, {
-          identity: this.store.resolveIdentity(payload.identityId)
+          identity: await this.identityFor(repo.path, payload.identityId)
         })
         return undefined
       },
@@ -566,7 +570,7 @@ export class Router {
         // Credentials follow the *submodule* URL, never the parent remote.
         const auth = await this.submoduleAuth(repo.path, payload.url, payload.accountId)
         const token = auth.account && auth.origin ? await this.store.getToken(auth.account.id) : null
-        const identity = this.store.resolveIdentity(this.store.getRepoDefaults(repo.path).identityId)
+        const identity = await this.identityFor(repo.path)
         await repoOps.addSubmodule({ ...payload, repoPath: repo.path }, {
           identity,
           account: auth.account,
@@ -577,7 +581,7 @@ export class Router {
       },
       'git.submoduleUpdate': async (payload) => {
         const repo = await this.authorizedRepo(payload.repoPath)
-        const identity = this.store.resolveIdentity(this.store.getRepoDefaults(repo.path).identityId)
+        const identity = await this.identityFor(repo.path)
         return repoOps.updateSubmodules({ ...payload, repoPath: repo.path }, identity)
       },
       'git.submoduleSync': async (payload) => {
@@ -988,6 +992,22 @@ export class Router {
   // -------------------------------------------------------------------------
   // Auth helpers
 
+  /**
+   * The single identity policy for every operation that can create or sign a
+   * commit, or contact a remote. Resolution lives here in main:
+   * explicit request > repository default > repository-local user.* > app
+   * default. The renderer never has to look up repository defaults itself.
+   */
+  private async identityFor(repoPath: string, explicitId?: string): Promise<IdentityEnvInput | null> {
+    const selection = await resolveRepoIdentity(repoPath, {
+      explicitId,
+      repoDefaultId: this.store.getRepoDefaults(repoPath).identityId,
+      applicationIdentity: this.store.defaultIdentity(),
+      identityById: (id) => this.store.identityById(id)
+    })
+    return selection.identity
+  }
+
   private async submoduleAuth(
     repoPath: string,
     url: string,
@@ -1048,7 +1068,7 @@ export class Router {
     }
   ): Promise<RemoteAuth> {
     const repo = await repoOps.resolveRepo(repoPath)
-    const identity = this.store.resolveIdentity(options.identityId)
+    const identity = await this.identityFor(repo.path, options.identityId)
     const remote = this.selectRemote(repo, options.remoteName)
     const url = options.direction === 'push' ? remote?.pushUrl || remote?.fetchUrl : remote?.fetchUrl
     const destination = url ? destinationFromUrl(url) : null
@@ -1126,7 +1146,7 @@ export class Router {
 /** One authorized remote operation: identity, destination and scoped helper. */
 interface RemoteAuth {
   repo: RepoInfo
-  identity?: GitIdentity
+  identity: IdentityEnvInput | null
   account?: IntegrationAccount
   token: string | null
   destination: GitDestination | null
@@ -1598,7 +1618,13 @@ const DECODERS: DecoderTable = {
       identityId: optStr(source.identityId, 'Identity id', { max: 240 })
     }
   },
-  'git.skipOperation': (value) => pathRequest(value),
+  'git.skipOperation': (value): { path: string; identityId?: string } => {
+    const source = objectPayload(value)
+    return {
+      path: repoPath(source.path),
+      identityId: optStr(source.identityId, 'Identity id', { max: 240 })
+    }
+  },
 
   'git.tagCreate': (value): IpcRequest<'git.tagCreate'> => {
     const source = objectPayload(value)

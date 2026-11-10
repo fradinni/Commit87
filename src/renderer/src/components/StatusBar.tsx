@@ -1,7 +1,49 @@
-import { AlertTriangle, GitBranch, GitCommitHorizontal, GitMerge, Play, RotateCcw, XCircle } from 'lucide-react'
-import { useStore } from '../store'
+import {
+  AlertTriangle,
+  GitBranch,
+  GitCommitHorizontal,
+  GitMerge,
+  Play,
+  RotateCcw,
+  SkipForward,
+  XCircle
+} from 'lucide-react'
+import { operationNotice, useStore } from '../store'
 import { call } from '../lib/ipc'
 import { Button, Spinner } from './ui'
+
+type OperationAction = 'continue' | 'skip' | 'abort'
+
+/** Continue, skip and abort share one truthful path: refresh, then report. */
+async function runOperation(repoPath: string, action: OperationAction): Promise<void> {
+  try {
+    if (action === 'abort') {
+      await call('git.abortOperation', { path: repoPath })
+      await useStore.getState().refreshAll(repoPath)
+      useStore.getState().notify('Operation aborted', 'success')
+      return
+    }
+    const result =
+      action === 'continue'
+        ? await call('git.continueOperation', { path: repoPath })
+        : await call('git.skipOperation', { path: repoPath })
+    // Refresh even when the operation paused or failed: a partial merge or
+    // rebase leaves real changes that the tabs must show.
+    await useStore.getState().refreshAll(repoPath)
+    const notice = operationNotice(
+      result,
+      action === 'continue' ? 'Operation continued' : 'Commit skipped',
+      action === 'continue' ? 'Continue' : 'Skip'
+    )
+    useStore.getState().notify(notice.message, notice.kind)
+  } catch (error) {
+    useStore.getState().notifyError(error)
+  }
+}
+
+function canSkip(state: string): boolean {
+  return state === 'rebasing' || state === 'cherry-picking' || state === 'reverting' || state === 'applying'
+}
 
 export function StatusBar() {
   const repo = useStore((state) => state.currentRepo)
@@ -9,24 +51,6 @@ export function StatusBar() {
   const appInfo = useStore((state) => state.appInfo)
   const task = useStore((state) => state.task)
   const refreshRepo = useStore((state) => state.refreshRepo)
-  const notify = useStore((state) => state.notify)
-  const notifyError = useStore((state) => state.notifyError)
-
-  const runOperation = async (action: 'continue' | 'abort'): Promise<void> => {
-    if (!repo) return
-    try {
-      if (action === 'continue') {
-        const result = await call('git.continueOperation', { path: repo.path })
-        if (result.output) notify(result.output, 'info')
-      } else {
-        await call('git.abortOperation', { path: repo.path })
-      }
-      await useStore.getState().refreshAll(repo.path)
-      notify(action === 'continue' ? 'Operation continued' : 'Operation aborted', 'success')
-    } catch (error) {
-      notifyError(error)
-    }
-  }
 
   if (!repo) {
     return (
@@ -47,21 +71,27 @@ export function StatusBar() {
     <footer className={`statusbar ${operation ? 'has-operation' : ''}`}>
       <span className="status-left">
         <GitBranch size={13} />
-        <span>{status?.branch ?? (repo.detached ? 'detached HEAD' : 'no branch')}</span>
-        {status?.upstream ? <span className="status-muted">→ {status.upstream}</span> : null}
-        {status?.ahead ? <span className="status-ahead">↑{status.ahead}</span> : null}
-        {status?.behind ? <span className="status-behind">↓{status.behind}</span> : null}
-        {status && !status.clean ? (
-          <span className="status-changes">
-            {status.stagedCount ? `${status.stagedCount} staged` : ''}
-            {status.stagedCount && status.unstagedCount ? ' · ' : ''}
-            {status.unstagedCount ? `${status.unstagedCount} modified` : ''}
-            {(status.stagedCount || status.unstagedCount) && status.untrackedCount ? ' · ' : ''}
-            {status.untrackedCount ? `${status.untrackedCount} untracked` : ''}
-            {status.conflictedCount ? ` · ${status.conflictedCount} conflicted` : ''}
-          </span>
+        <span>{status?.branch ?? repo.currentBranch ?? (repo.detached ? 'detached HEAD' : 'no branch')}</span>
+        {repo.isBare ? (
+          <span className="status-muted">bare repository · no working tree</span>
         ) : (
-          <span className="status-muted">clean</span>
+          <>
+            {status?.upstream ? <span className="status-muted">→ {status.upstream}</span> : null}
+            {status?.ahead ? <span className="status-ahead">↑{status.ahead}</span> : null}
+            {status?.behind ? <span className="status-behind">↓{status.behind}</span> : null}
+            {status && !status.clean ? (
+              <span className="status-changes">
+                {status.stagedCount ? `${status.stagedCount} staged` : ''}
+                {status.stagedCount && status.unstagedCount ? ' · ' : ''}
+                {status.unstagedCount ? `${status.unstagedCount} modified` : ''}
+                {(status.stagedCount || status.unstagedCount) && status.untrackedCount ? ' · ' : ''}
+                {status.untrackedCount ? `${status.untrackedCount} untracked` : ''}
+                {status.conflictedCount ? ` · ${status.conflictedCount} conflicted` : ''}
+              </span>
+            ) : (
+              <span className="status-muted">clean</span>
+            )}
+          </>
         )}
       </span>
 
@@ -69,10 +99,32 @@ export function StatusBar() {
         <div className="operation-banner">
           <AlertTriangle size={13} />
           <span>{operationLabel(repo.state)}</span>
-          <Button size="sm" variant="ghost" icon={<Play size={12} />} onClick={() => void runOperation('continue')}>
-            Continue
-          </Button>
-          <Button size="sm" variant="ghost" icon={<XCircle size={12} />} onClick={() => void runOperation('abort')}>
+          {repo.state !== 'bisecting' ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<Play size={12} />}
+              onClick={() => void runOperation(repo.path, 'continue')}
+            >
+              Continue
+            </Button>
+          ) : null}
+          {canSkip(repo.state) ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<SkipForward size={12} />}
+              onClick={() => void runOperation(repo.path, 'skip')}
+            >
+              Skip
+            </Button>
+          ) : null}
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<XCircle size={12} />}
+            onClick={() => void runOperation(repo.path, 'abort')}
+          >
             Abort
           </Button>
         </div>
@@ -84,7 +136,7 @@ export function StatusBar() {
       ) : null}
 
       <span className="status-right">
-        {status?.headSha ? <code>{status.headSha.slice(0, 8)}</code> : null}
+        {(status?.headSha ?? repo.headSha) ? <code>{(status?.headSha ?? repo.headSha ?? '').slice(0, 8)}</code> : null}
         <span className="status-divider" />
         <span title={appInfo?.git.path}>{appInfo?.git.available ? appInfo.git.version.replace('git version ', 'git ') : 'git unavailable'}</span>
         <span className="status-divider" />
@@ -117,21 +169,34 @@ function operationLabel(state: string): string {
 
 export function RepoOperationBanner() {
   const repo = useStore((state) => state.currentRepo)
-  const notifyError = useStore((state) => state.notifyError)
-  if (!repo || repo.state === 'clean') return null
-  const abort = async (): Promise<void> => {
-    try {
-      await call('git.abortOperation', { path: repo.path })
-      await useStore.getState().refreshAll(repo.path)
-    } catch (error) {
-      notifyError(error)
-    }
+  if (!repo) return null
+  if (repo.isBare) {
+    return (
+      <div className="repo-operation-banner">
+        <GitMerge size={15} />
+        <span>
+          Bare repository: there is no working tree. History, branches, tags and remotes stay available; status, staging and
+          working-tree diffs do not apply.
+        </span>
+      </div>
+    )
   }
+  if (repo.state === 'clean') return null
   return (
     <div className="repo-operation-banner">
       <GitMerge size={15} />
       <span>{operationLabel(repo.state)}. Resolve conflicts, then continue or abort.</span>
-      <Button size="sm" variant="ghost" onClick={() => void abort()}>
+      {repo.state !== 'bisecting' ? (
+        <Button size="sm" variant="ghost" onClick={() => void runOperation(repo.path, 'continue')}>
+          Continue
+        </Button>
+      ) : null}
+      {canSkip(repo.state) ? (
+        <Button size="sm" variant="ghost" onClick={() => void runOperation(repo.path, 'skip')}>
+          Skip
+        </Button>
+      ) : null}
+      <Button size="sm" variant="ghost" onClick={() => void runOperation(repo.path, 'abort')}>
         Abort
       </Button>
     </div>

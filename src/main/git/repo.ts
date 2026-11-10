@@ -8,8 +8,9 @@ import type {
   DiffInput,
   DiffResult,
   DirEntry,
+  DiscardResult,
   FileContent,
-  GitIdentity,
+  GitOperationResult,
   IntegrationAccount,
   LogInput,
   MergeInput,
@@ -31,6 +32,7 @@ import type {
   CheckoutInput
 } from '@shared/types'
 import { buildAuthArgs, buildIdentityEnv, gitError, runGit, tryRunGit } from './runner'
+import type { GitResult, IdentityEnvInput } from './runner'
 import {
   parseBlame,
   parseBranches,
@@ -50,7 +52,7 @@ import { detectProviderFromUrl } from '../providers/remote'
 import { configKey, headPath, refName, relPath, remoteName, revision, revisionRange, text } from '../ipc/validate'
 
 export interface GitAuthContext {
-  identity?: GitIdentity | null
+  identity?: IdentityEnvInput | null
   account?: IntegrationAccount | null
   token?: string | null
   /** Scope the credential helper to this URL origin (used for submodule add). */
@@ -81,6 +83,9 @@ export async function resolveRepo(inputPath: string): Promise<RepoInfo> {
   const bare = bareResult.stdout.trim() === 'true'
   const gitDirResult = await runGit(['rev-parse', '--absolute-git-dir'], { cwd })
   const gitDir = gitDirResult.stdout.trim()
+  // A bare repository has no worktree: `--show-toplevel`, `status` and every
+  // other worktree-only command would fail with a fatal error. Its own folder
+  // is the repository, and the worktree facts stay empty instead of fabricated.
   let root = candidate
   if (!bare) {
     const top = await runGit(['rev-parse', '--show-toplevel'], { cwd })
@@ -101,8 +106,9 @@ export async function resolveRepo(inputPath: string): Promise<RepoInfo> {
   const headRaw = await tryRunGit(['rev-parse', 'HEAD'], { cwd: root })
   const headSha = headRaw?.stdout.trim() || null
 
-  const statusRaw = await runGit(['status', '--porcelain=v2', '--branch', '-z'], { cwd: root })
-  const status = parseStatus(statusRaw.stdout)
+  const status = bare
+    ? null
+    : parseStatus((await runGit(['status', '--porcelain=v2', '--branch', '-z'], { cwd: root })).stdout)
 
   const remotesRaw = await runGit(['remote', '-v'], { cwd: root })
   const remotes = parseRemotes(remotesRaw.stdout).map((remote) => {
@@ -131,9 +137,9 @@ export async function resolveRepo(inputPath: string): Promise<RepoInfo> {
     currentBranch,
     headSha,
     detached,
-    upstream: status.upstream,
-    ahead: status.ahead,
-    behind: status.behind,
+    upstream: status?.upstream ?? null,
+    ahead: status?.ahead ?? 0,
+    behind: status?.behind ?? 0,
     remotes,
     provider: remotes.find((remote) => remote.provider)?.provider,
     state,
@@ -173,8 +179,64 @@ export async function getOperationState(repoPath: string): Promise<RepoInfo['sta
 }
 
 export async function getStatus(repoPath: string): Promise<RepoStatus> {
-  const raw = await runGit(['status', '--porcelain=v2', '--branch', '-z'], { cwd: repoPath })
+  // Run the status command directly and only probe the bare flag when it fails:
+  // that keeps the 5 s poller at one process on a normal checkout while still
+  // turning the bare-repository fatal into an explanation.
+  const args = ['status', '--porcelain=v2', '--branch', '-z']
+  const raw = await runGit(args, { cwd: repoPath, allowFailure: true })
+  if (raw.exitCode !== 0) {
+    if (await isBareRepository(repoPath)) {
+      throw new Error('This is a bare repository; reading the working tree status needs a working tree')
+    }
+    throw gitError(args, raw)
+  }
   return parseStatus(raw.stdout)
+}
+
+/** True when the path is a bare repository, without needing a full `RepoInfo`. */
+export async function isBareRepository(repoPath: string): Promise<boolean> {
+  const result = await tryRunGit(['rev-parse', '--is-bare-repository'], { cwd: repoPath })
+  return result?.exitCode === 0 && result.stdout.trim() === 'true'
+}
+
+/**
+ * Worktree-only commands must fail with an explanation rather than Git's
+ * "this operation must be run in a work tree" fatal, which reads like a bug.
+ */
+async function assertWorktree(repoPath: string, action: string): Promise<void> {
+  if (await isBareRepository(repoPath)) {
+    throw new Error(`This is a bare repository; ${action} is not possible without a working tree`)
+  }
+}
+
+/**
+ * Build the truthful outcome of a mutating operation from the real child exit
+ * status plus the repository state and unmerged paths afterwards. A resolved
+ * promise is never treated as success on its own: a command that exits 0 but
+ * leaves an operation pending is reported as a conflict/pause, and a signalled
+ * or timed-out child keeps its null exit code.
+ */
+export async function buildOperationResult(repoPath: string, result: GitResult): Promise<GitOperationResult> {
+  const state = await getOperationState(repoPath)
+  const inProgress = state !== 'clean'
+  // A squash merge conflicts without leaving MERGE_HEAD behind, so the
+  // unmerged paths are always read; a pending state alone also pauses.
+  const conflictFiles = await readConflictFiles(repoPath)
+  return {
+    status: conflictFiles.length || inProgress ? 'conflict' : result.exitCode === 0 ? 'ok' : 'failed',
+    output: `${result.stdout}${result.stderr}`.trim(),
+    exitCode: result.exitCode,
+    signal: result.signal,
+    state,
+    inProgress,
+    conflictFiles
+  }
+}
+
+async function readConflictFiles(repoPath: string): Promise<string[]> {
+  const result = await tryRunGit(['diff', '--name-only', '--diff-filter=U', '-z'], { cwd: repoPath })
+  if (!result || result.exitCode !== 0) return []
+  return result.stdout.split('\0').filter(Boolean)
 }
 
 export async function getLog(input: LogInput): Promise<Commit[]> {
@@ -304,7 +366,13 @@ export async function getWorktreeStatuses(repoPath: string): Promise<WorktreeSta
 }
 
 export async function getStashes(repoPath: string): Promise<StashInfo[]> {
-  const raw = await runGit(['stash', 'list', '--format=%gd%x1f%H%x1f%gs%x1f%ct'], { cwd: repoPath })
+  const args = ['stash', 'list', '--format=%gd%x1f%H%x1f%gs%x1f%ct']
+  const raw = await runGit(args, { cwd: repoPath, allowFailure: true })
+  if (raw.exitCode !== 0) {
+    // `git stash list` is worktree-only and fails outright in a bare repository.
+    if (await isBareRepository(repoPath)) return []
+    throw gitError(args, raw)
+  }
   return parseStashes(raw.stdout)
 }
 
@@ -379,7 +447,7 @@ export async function addSubmodule(input: SubmoduleAddInput, ctx: GitAuthContext
 
 export async function updateSubmodules(
   input: SubmoduleUpdateInput,
-  identity?: GitIdentity | null
+  identity?: IdentityEnvInput | null
 ): Promise<{ output: string }> {
   const repo = await resolveRepo(input.repoPath)
   if (repo.isBare) throw new Error('Submodules need a working tree')
@@ -637,6 +705,9 @@ async function cleanSubmoduleCheckout(repoPath: string, relative: string): Promi
 }
 
 export async function getDiff(input: DiffInput): Promise<DiffResult> {
+  // Commit and commit-range diffs are object reads and work in a bare
+  // repository; only the worktree and index forms need a checkout.
+  if (!input.commit && !input.compare) await assertWorktree(input.repoPath, 'reading a diff')
   const patchArgs = ['diff', '--no-color', '--no-ext-diff', '--find-renames', '--patch']
   const statArgs = ['diff', '--no-color', '--no-ext-diff', '--find-renames', '--numstat']
   const extra: string[] = []
@@ -910,6 +981,7 @@ export async function setRepoConfig(repoPath: string, key: string, value: string
 }
 
 export async function stageFiles(repoPath: string, files: string[]): Promise<void> {
+  await assertWorktree(repoPath, 'staging files')
   const safe = validateFiles(files)
   await runGit(['add', '--', ...safe], { cwd: repoPath, literalPathspecs: true })
 }
@@ -920,6 +992,7 @@ function lacksRestoreCommand(stderr: string): boolean {
 }
 
 export async function unstageFiles(repoPath: string, files: string[]): Promise<void> {
+  await assertWorktree(repoPath, 'unstaging files')
   const safe = validateFiles(files)
   const args = ['restore', '--staged', '--', ...safe]
   const result = await runGit(args, { cwd: repoPath, allowFailure: true, literalPathspecs: true })
@@ -928,20 +1001,57 @@ export async function unstageFiles(repoPath: string, files: string[]): Promise<v
   await runGit(['reset', '--', ...safe], { cwd: repoPath, literalPathspecs: true })
 }
 
-export async function discardFiles(repoPath: string, files: string[], includeUntracked: boolean): Promise<void> {
+/**
+ * Discard selected paths exactly. Untracked paths are cleaned with `git clean`
+ * and tracked paths restored from HEAD; untracked-only discards never depend on
+ * the restore command, so they keep working in a repository without a commit.
+ * A failed restore is reported as a partial or failed outcome instead of being
+ * swallowed by the untracked cleanup.
+ */
+export async function discardFiles(
+  repoPath: string,
+  files: string[],
+  includeUntracked: boolean
+): Promise<DiscardResult> {
+  await assertWorktree(repoPath, 'discarding changes')
   const safe = validateFiles(files)
-  await runGit(['restore', '--source=HEAD', '--staged', '--worktree', '--', ...safe], {
-    cwd: repoPath,
-    allowFailure: true,
-    literalPathspecs: true
-  })
-  if (includeUntracked) {
-    await runGit(['clean', '-f', '-d', '--', ...safe], { cwd: repoPath, literalPathspecs: true })
+  const status = await getStatus(repoPath)
+  const untracked = new Set(status.files.filter((file) => file.stage === 'untracked').map((file) => file.path))
+  const tracked = safe.filter((file) => !untracked.has(file))
+  const cleanTargets = includeUntracked ? safe.filter((file) => untracked.has(file)) : []
+
+  const restored: string[] = []
+  const cleaned: string[] = []
+  const failed: string[] = []
+  let output = ''
+
+  if (tracked.length) {
+    const args = ['restore', '--source=HEAD', '--staged', '--worktree', '--', ...tracked]
+    const result = await runGit(args, { cwd: repoPath, allowFailure: true, literalPathspecs: true })
+    output += result.stdout + result.stderr
+    if (result.exitCode === 0) restored.push(...tracked)
+    else failed.push(...tracked)
+  }
+  if (cleanTargets.length) {
+    const args = ['clean', '-f', '-d', '--', ...cleanTargets]
+    const result = await runGit(args, { cwd: repoPath, allowFailure: true, literalPathspecs: true })
+    output += result.stdout + result.stderr
+    if (result.exitCode === 0) cleaned.push(...cleanTargets)
+    else failed.push(...cleanTargets)
+  }
+
+  return {
+    status: failed.length === 0 ? 'ok' : restored.length || cleaned.length ? 'partial' : 'failed',
+    restored,
+    cleaned,
+    failed,
+    output: output.trim()
   }
 }
 
 export async function commitChanges(input: CommitInput, ctx: GitAuthContext): Promise<{ sha: string }> {
   if (!input.message.trim()) throw new Error('Commit message cannot be empty')
+  await assertWorktree(input.repoPath, 'creating a commit')
   const { args, env } = contextArgs(ctx)
   const commitArgs = [...args, 'commit', '-m', input.message]
   if (input.amend) commitArgs.push('--amend')
@@ -953,6 +1063,7 @@ export async function commitChanges(input: CommitInput, ctx: GitAuthContext): Pr
 }
 
 export async function checkoutBranch(input: CheckoutInput): Promise<void> {
+  await assertWorktree(input.repoPath, 'checking out a branch')
   if (input.create) {
     validateRefName(input.repoPath, input.branch)
     if (input.startPoint) revision(input.startPoint, 'Start point')
@@ -991,6 +1102,7 @@ export async function createBranch(
   validateRefName(repoPath, name)
   const start = startPoint ? revision(startPoint, 'Start point') : undefined
   if (checkout) {
+    await assertWorktree(repoPath, 'checking out a new branch')
     const args = ['switch', '-c', name]
     if (track && start) args.push('--track')
     if (start) args.push(start)
@@ -1031,7 +1143,8 @@ export async function setUpstream(repoPath: string, branch: string, upstream: st
   await runGit(['branch', `--set-upstream-to=${upstream}`, branch], { cwd: repoPath })
 }
 
-export async function mergeBranch(input: MergeInput, ctx: GitAuthContext): Promise<{ output: string }> {
+export async function mergeBranch(input: MergeInput, ctx: GitAuthContext): Promise<GitOperationResult> {
+  await assertWorktree(input.repoPath, 'merging')
   const { args, env } = contextArgs(ctx)
   const mergeArgs = [...args, 'merge']
   if (input.ffOnly) mergeArgs.push('--ff-only')
@@ -1040,17 +1153,18 @@ export async function mergeBranch(input: MergeInput, ctx: GitAuthContext): Promi
   if (input.message) mergeArgs.push('-m', input.message)
   mergeArgs.push('--end-of-options', revision(input.branch, 'Merge target'))
   const result = await runGit(mergeArgs, { cwd: input.repoPath, env, allowFailure: true })
-  return { output: result.stdout + result.stderr }
+  return buildOperationResult(input.repoPath, result)
 }
 
-export async function rebaseBranch(repoPath: string, onto: string, ctx: GitAuthContext): Promise<{ output: string }> {
+export async function rebaseBranch(repoPath: string, onto: string, ctx: GitAuthContext): Promise<GitOperationResult> {
+  await assertWorktree(repoPath, 'rebasing')
   const { args, env } = contextArgs(ctx)
   const result = await runGit([...args, 'rebase', '--end-of-options', revision(onto, 'Rebase base')], {
     cwd: repoPath,
     env,
     allowFailure: true
   })
-  return { output: result.stdout + result.stderr }
+  return buildOperationResult(repoPath, result)
 }
 
 /**
@@ -1070,21 +1184,24 @@ export function validateCommitShas(value: unknown): string[] {
   return [...new Set(shas)]
 }
 
-export async function cherryPick(repoPath: string, shas: string[], ctx: GitAuthContext): Promise<{ output: string; exitCode: number }> {
+export async function cherryPick(repoPath: string, shas: string[], ctx: GitAuthContext): Promise<GitOperationResult> {
+  await assertWorktree(repoPath, 'cherry-picking')
   const { args, env } = contextArgs(ctx)
   const commits = validateCommitShas(shas)
   const result = await runGit([...args, 'cherry-pick', ...commits], { cwd: repoPath, env, allowFailure: true })
-  return { output: result.stdout + result.stderr, exitCode: result.exitCode }
+  return buildOperationResult(repoPath, result)
 }
 
-export async function revertCommit(repoPath: string, shas: string[], ctx: GitAuthContext): Promise<{ output: string; exitCode: number }> {
+export async function revertCommit(repoPath: string, shas: string[], ctx: GitAuthContext): Promise<GitOperationResult> {
+  await assertWorktree(repoPath, 'reverting')
   const { args, env } = contextArgs(ctx)
   const commits = validateCommitShas(shas)
   const result = await runGit([...args, 'revert', '--no-edit', ...commits], { cwd: repoPath, env, allowFailure: true })
-  return { output: result.stdout + result.stderr, exitCode: result.exitCode }
+  return buildOperationResult(repoPath, result)
 }
 
 export async function resetTo(repoPath: string, commit: string, mode: ResetInput['mode']): Promise<void> {
+  await assertWorktree(repoPath, 'resetting')
   await runGit(['reset', `--${mode}`, '--end-of-options', revision(commit, 'Commit')], { cwd: repoPath })
 }
 
@@ -1114,14 +1231,22 @@ export async function abortOperation(repoPath: string): Promise<void> {
   }
 }
 
+/** Extra configuration and environment a resumed operation needs from the rebase bridge. */
+export interface OperationResumeContext {
+  args?: string[]
+  env?: NodeJS.ProcessEnv
+}
+
 export async function continueOperation(
   repoPath: string,
   ctx: GitAuthContext,
-  extraEnv: NodeJS.ProcessEnv = {}
-): Promise<{ output: string }> {
+  resume: OperationResumeContext = {}
+): Promise<GitOperationResult> {
   const state = await getOperationState(repoPath)
+  if (state === 'clean') throw new Error('No operation in progress')
   const { args, env } = contextArgs(ctx)
-  const runEnv = { ...env, ...extraEnv }
+  const runArgs = [...args, ...(resume.args ?? [])]
+  const runEnv = { ...env, ...resume.env }
   // GIT_EDITOR is forced non-interactive by the runner unless the rebase bridge
   // installs its message editor for a still-running interactive rebase.
   const command =
@@ -1135,24 +1260,39 @@ export async function continueOperation(
             ? 'am'
             : 'merge'
   if (state === 'merging') {
-    await runGit([...args, 'commit', '--no-edit'], { cwd: repoPath, env: runEnv })
-    return { output: 'Merge commit created' }
+    const result = await runGit([...runArgs, 'commit', '--no-edit'], {
+      cwd: repoPath,
+      env: runEnv,
+      allowFailure: true
+    })
+    const outcome = await buildOperationResult(repoPath, result)
+    if (outcome.status === 'ok' && !outcome.output) outcome.output = 'Merge commit created'
+    return outcome
   }
-  const result = await runGit([...args, command, '--continue'], {
+  const result = await runGit([...runArgs, command, '--continue'], {
     cwd: repoPath,
     env: runEnv,
     allowFailure: true
   })
-  return { output: result.stdout + result.stderr }
+  return buildOperationResult(repoPath, result)
 }
 
-export async function skipOperation(repoPath: string, extraEnv: NodeJS.ProcessEnv = {}): Promise<void> {
+export async function skipOperation(
+  repoPath: string,
+  ctx: GitAuthContext = {},
+  resume: OperationResumeContext = {}
+): Promise<GitOperationResult> {
   const state = await getOperationState(repoPath)
-  if (state === 'rebasing') await runGit(['rebase', '--skip'], { cwd: repoPath, env: extraEnv })
-  else if (state === 'cherry-picking') await runGit(['cherry-pick', '--skip'], { cwd: repoPath, env: extraEnv })
-  else if (state === 'reverting') await runGit(['revert', '--skip'], { cwd: repoPath, env: extraEnv })
-  else if (state === 'applying') await runGit(['am', '--skip'], { cwd: repoPath, env: extraEnv })
-  else throw new Error('Nothing to skip')
+  const { args, env } = contextArgs(ctx)
+  const runArgs = [...args, ...(resume.args ?? [])]
+  const runEnv = { ...env, ...resume.env }
+  const options = { cwd: repoPath, env: runEnv, allowFailure: true }
+  if (state === 'rebasing') return buildOperationResult(repoPath, await runGit([...runArgs, 'rebase', '--skip'], options))
+  if (state === 'cherry-picking')
+    return buildOperationResult(repoPath, await runGit([...runArgs, 'cherry-pick', '--skip'], options))
+  if (state === 'reverting') return buildOperationResult(repoPath, await runGit([...runArgs, 'revert', '--skip'], options))
+  if (state === 'applying') return buildOperationResult(repoPath, await runGit([...runArgs, 'am', '--skip'], options))
+  throw new Error('Nothing to skip')
 }
 
 export async function createTag(input: TagCreateInput, ctx: GitAuthContext): Promise<void> {
@@ -1229,6 +1369,7 @@ export async function stashPush(
   includeUntracked: boolean,
   ctx: GitAuthContext
 ): Promise<void> {
+  await assertWorktree(repoPath, 'stashing changes')
   const { args, env } = contextArgs(ctx)
   const stashArgs = [...args, 'stash', 'push']
   if (includeUntracked) stashArgs.push('-u')
@@ -1242,6 +1383,7 @@ function stashIndex(index: number): string {
 }
 
 export async function stashApply(repoPath: string, index: number, pop: boolean): Promise<void> {
+  await assertWorktree(repoPath, 'applying a stash')
   await runGit(['stash', pop ? 'pop' : 'apply', stashIndex(index)], { cwd: repoPath })
 }
 
