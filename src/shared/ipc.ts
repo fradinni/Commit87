@@ -14,6 +14,8 @@ import type {
   DiffInput,
   DiffResult,
   DirEntry,
+  DiscardResult,
+  GitOperationResult,
   FetchInput,
   FileContent,
   GitBinaryInfo,
@@ -26,6 +28,7 @@ import type {
   ProviderConnection,
   ProviderDetection,
   ProviderRepo,
+  PagedResult,
   PullRequest,
   PushInput,
   PullInput,
@@ -45,11 +48,13 @@ import type {
   StatusFile,
   SubmoduleAddInput,
   SubmoduleInfo,
+  SubmoduleRemoveResult,
   SubmoduleUpdateInput,
   TagCreateInput,
   TagInfo,
   TaskEvent,
   TaskHandle,
+  TaskSnapshot,
   TriggerActionInput,
   UpdateStatus,
   WorktreeAddInput,
@@ -62,12 +67,16 @@ import type {
 export interface IpcMethods {
   'app.info': { request: void; response: AppInfo }
   'app.launchTarget': { request: void; response: string | null }
-  'app.checkGit': { request: { path?: string } | void; response: GitBinaryInfo }
+  'app.checkGit': { request: { path?: string }; response: GitBinaryInfo }
+  /** Native picker for a custom Git executable; grants and stores the choice. */
+  'app.pickGitBinary': { request: void; response: GitBinaryInfo | null }
+  /** Forget a custom executable and use the `git` found on PATH. */
+  'app.useSystemGit': { request: void; response: GitBinaryInfo }
   'app.openExternal': { request: { url: string }; response: void }
   'app.openPath': { request: { path: string }; response: { ok: boolean; error?: string } }
   'app.showItemInFolder': { request: { path: string }; response: void }
-  'app.pickDirectory': { request: { title?: string; defaultPath?: string } | void; response: string | null }
-  'app.pickFile': { request: { title?: string; defaultPath?: string; filters?: { name: string; extensions: string[] }[] } | void; response: string | null }
+  'app.pickDirectory': { request: { title?: string; defaultPath?: string }; response: string | null }
+  'app.pickFile': { request: { title?: string; defaultPath?: string; filters?: { name: string; extensions: string[] }[] }; response: string | null }
   'app.openConfigFolder': { request: void; response: void }
 
   'config.get': { request: void; response: AppConfig }
@@ -113,23 +122,23 @@ export interface IpcMethods {
 
   'git.stage': { request: { path: string; files: string[] }; response: void }
   'git.unstage': { request: { path: string; files: string[] }; response: void }
-  'git.discard': { request: { path: string; files: string[]; includeUntracked: boolean }; response: void }
+  'git.discard': { request: { path: string; files: string[]; includeUntracked: boolean }; response: DiscardResult }
   'git.commit': { request: CommitInput; response: { sha: string } }
   'git.checkout': { request: CheckoutInput; response: void }
   'git.createBranch': { request: { path: string; name: string; startPoint?: string; checkout?: boolean; track?: boolean }; response: void }
   'git.renameBranch': { request: { path: string; from: string; to: string }; response: void }
   'git.deleteBranch': { request: { path: string; name: string; force?: boolean; remote?: string; identityId?: string; accountId?: string }; response: void }
   'git.setUpstream': { request: { path: string; branch: string; upstream: string }; response: void }
-  'git.merge': { request: MergeInput; response: { output: string } }
-  'git.rebase': { request: { path: string; onto: string; identityId?: string }; response: { output: string } }
+  'git.merge': { request: MergeInput; response: GitOperationResult }
+  'git.rebase': { request: { path: string; onto: string; identityId?: string }; response: GitOperationResult }
   'git.rebasePlan': { request: { repoPath: string; onto: string }; response: RebasePlan }
   'git.rebaseInteractive': { request: RebasePlanInput; response: RebaseResult }
-  'git.cherryPick': { request: { path: string; shas: string[]; identityId?: string }; response: { output: string; exitCode: number } }
-  'git.revert': { request: { path: string; shas: string[]; identityId?: string }; response: { output: string; exitCode: number } }
+  'git.cherryPick': { request: { path: string; shas: string[]; identityId?: string }; response: GitOperationResult }
+  'git.revert': { request: { path: string; shas: string[]; identityId?: string }; response: GitOperationResult }
   'git.reset': { request: ResetInput; response: void }
   'git.abortOperation': { request: { path: string }; response: void }
-  'git.continueOperation': { request: { path: string; identityId?: string }; response: { output: string } }
-  'git.skipOperation': { request: { path: string }; response: void }
+  'git.continueOperation': { request: { path: string; identityId?: string }; response: GitOperationResult }
+  'git.skipOperation': { request: { path: string; identityId?: string }; response: GitOperationResult }
 
   'git.tagCreate': { request: TagCreateInput; response: void }
   'git.tagPush': { request: { path: string; name: string; remote: string; identityId?: string; accountId?: string }; response: void }
@@ -146,11 +155,16 @@ export interface IpcMethods {
   'git.submoduleAdd': { request: SubmoduleAddInput; response: void }
   'git.submoduleUpdate': { request: SubmoduleUpdateInput; response: { output: string } }
   'git.submoduleSync': { request: { repoPath: string; submodulePath?: string; recursive?: boolean }; response: void }
-  'git.submoduleRemove': { request: { repoPath: string; submodulePath: string; force?: boolean }; response: void }
+  'git.submoduleRemove': {
+    request: { repoPath: string; submodulePath: string; force?: boolean }
+    response: SubmoduleRemoveResult
+  }
   'git.remoteAdd': { request: { path: string; name: string; url: string }; response: void }
   'git.remoteRemove': { request: { path: string; name: string }; response: void }
   'git.remoteSetUrl': { request: { path: string; name: string; url: string; push?: boolean }; response: void }
 
+  /** Running and recently finished tasks, for a renderer that reconnected. */
+  'tasks.snapshot': { request: void; response: TaskSnapshot }
   'git.fetch': { request: FetchInput; response: TaskHandle }
   'git.pull': { request: PullInput; response: TaskHandle }
   'git.push': { request: PushInput; response: TaskHandle }
@@ -159,14 +173,14 @@ export interface IpcMethods {
   'provider.detect': { request: { path: string }; response: ProviderDetection }
   'provider.connections': { request: void; response: ProviderConnection[] }
   'provider.repos': { request: { accountId: string; search?: string }; response: ProviderRepo[] }
-  'provider.pullRequests': { request: { accountId: string; owner: string; repo: string; state?: 'open' | 'closed' | 'all' }; response: PullRequest[] }
+  'provider.pullRequests': { request: { accountId: string; owner: string; repo: string; state?: 'open' | 'closed' | 'all'; page?: string }; response: PagedResult<PullRequest> }
   'provider.createPullRequest': { request: { accountId: string; owner: string; repo: string; input: CreatePullRequestInput }; response: PullRequest }
   'provider.checkoutPullRequest': { request: { path: string; accountId: string; owner: string; repo: string; number: number; branchName?: string; identityId?: string }; response: { branch: string } }
-  'provider.releases': { request: { accountId: string; owner: string; repo: string }; response: Release[] }
+  'provider.releases': { request: { accountId: string; owner: string; repo: string; page?: string }; response: PagedResult<Release> }
   'provider.createRelease': { request: { accountId: string; owner: string; repo: string; input: CreateReleaseInput }; response: Release }
   'provider.deleteRelease': { request: { accountId: string; owner: string; repo: string; id: string }; response: void }
-  'provider.workflows': { request: { accountId: string; owner: string; repo: string }; response: ActionWorkflow[] }
-  'provider.runs': { request: { accountId: string; owner: string; repo: string; workflowId?: string }; response: ActionRun[] }
+  'provider.workflows': { request: { accountId: string; owner: string; repo: string; page?: string }; response: PagedResult<ActionWorkflow> }
+  'provider.runs': { request: { accountId: string; owner: string; repo: string; workflowId?: string; page?: string }; response: PagedResult<ActionRun> }
   'provider.triggerAction': { request: TriggerActionInput; response: void }
 
   'window.minimize': { request: void; response: void }

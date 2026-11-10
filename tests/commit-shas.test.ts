@@ -19,6 +19,9 @@ describe('IPC commit list validation', () => {
     expect(() => validateCommitShas(['--abort'])).toThrow('Invalid commit')
     expect(() => validateCommitShas(['dead beef'])).toThrow('Invalid commit')
     expect(() => validateCommitShas(['abc'])).toThrow('Invalid commit')
+    expect(() => validateCommitShas(['HEAD~1'])).toThrow('Invalid commit')
+    expect(() => validateCommitShas(['main'])).toThrow('Invalid commit')
+    expect(() => validateCommitShas(['deadbeef..cafe'])).toThrow('Invalid commit')
     expect(() => validateCommitShas(['a'.repeat(65)])).toThrow('Invalid commit')
   })
 

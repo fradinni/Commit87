@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { UpdateChannel, UpdateProgress, UpdateStatus } from '../src/shared/types'
+import type { AppImageProbe, VerifiedAppImage } from '../src/main/appimage-binding'
+import { verifyAppImage } from '../src/main/appimage-binding'
 import type { UpdateAdapter, UpdateDownloadTask, UpdateInfoSummary, UpdatePreferences } from '../src/main/updates'
 import { UpdateService, normalizeProgress, versionMatchesChannel } from '../src/main/updates'
 import { detectUpdateSupport } from '../src/main/update-support'
@@ -20,6 +22,8 @@ class FakeAdapter implements UpdateAdapter {
   checks = 0
   downloads = 0
   installs = 0
+  downloadTargets: Array<VerifiedAppImage | null> = []
+  installTargets: Array<VerifiedAppImage | null> = []
   checkResult: UpdateInfoSummary | null = info
   downloadError: Error | null = null
   private emitEvents = true
@@ -73,7 +77,8 @@ class FakeAdapter implements UpdateAdapter {
     return this.checkResult
   }
 
-  download(): UpdateDownloadTask {
+  download(target: VerifiedAppImage | null): UpdateDownloadTask {
+    this.downloadTargets.push(target)
     return { promise: this.runDownload(), cancel: () => undefined }
   }
 
@@ -115,7 +120,8 @@ class FakeAdapter implements UpdateAdapter {
     return { task, release }
   }
 
-  quitAndInstall(): void {
+  quitAndInstall(target: VerifiedAppImage | null): void {
+    this.installTargets.push(target)
     this.installs += 1
   }
 
@@ -160,9 +166,107 @@ class FakeAdapter implements UpdateAdapter {
   }
 }
 
-const packaged: UpdateEnvironment = { platform: 'linux', isPackaged: true, appImage: '/tmp/Commit87.AppImage' }
+interface FakeStat {
+  dev: number
+  ino: number
+  size: number
+  mtimeMs: number
+  mode: number
+  isFile(): boolean
+}
 
-function setup(options: { preferences?: Partial<UpdatePreferences>; environment?: UpdateEnvironment; version?: string } = {}) {
+const IMAGE_PATH = '/home/user/Commit 87.AppImage'
+const MOUNT_POINT = '/tmp/.mount_Commit87'
+const EXEC_PATH = `${MOUNT_POINT}/commit87`
+const IMAGE_DEV = 1
+const IMAGE_INO = 42
+const IMAGE_SIZE = 1024
+const IMAGE_MTIME = 1_700_000_000_000
+const IMAGE_MODE = 0o100755
+
+function makeStat(
+  overrides: { dev?: number; ino?: number; size?: number; mtimeMs?: number; mode?: number } = {}
+): FakeStat {
+  return {
+    dev: overrides.dev ?? IMAGE_DEV,
+    ino: overrides.ino ?? IMAGE_INO,
+    size: overrides.size ?? IMAGE_SIZE,
+    mtimeMs: overrides.mtimeMs ?? IMAGE_MTIME,
+    mode: overrides.mode ?? IMAGE_MODE,
+    isFile: () => true
+  }
+}
+
+function buildMountInfo(source = IMAGE_PATH, mountPoint = MOUNT_POINT): string {
+  const escape = (value: string): string => value.replace(/ /g, '\\040')
+  return `100 90 0:42 / ${escape(mountPoint)} rw,nosuid,nodev - squashfs ${escape(source)} ro\n`
+}
+
+/**
+ * Fake kernel view of a mounted AppImage. `realpath` is the identity so the
+ * tests can reason about the canonical paths they declare.
+ */
+class FakeProbe implements AppImageProbe {
+  platform: NodeJS.Platform = 'linux'
+  execPath: string = EXEC_PATH
+  hint: string | undefined = IMAGE_PATH
+  mountInfo: string = buildMountInfo()
+  private readonly files = new Map<string, FakeStat>()
+
+  constructor() {
+    this.files.set(IMAGE_PATH, makeStat())
+  }
+
+  env(name: string): string | undefined {
+    return name === 'APPIMAGE' ? this.hint : undefined
+  }
+
+  realpath(path: string): string {
+    return path
+  }
+
+  readFile(path: string): string {
+    if (path !== '/proc/self/mountinfo') throw new Error(`ENOENT: ${path}`)
+    return this.mountInfo
+  }
+
+  stat(path: string): FakeStat {
+    const value = this.files.get(path)
+    if (!value) throw new Error(`ENOENT: ${path}`)
+    return value
+  }
+
+  setFile(path: string, stat: FakeStat = makeStat()): void {
+    this.files.set(path, stat)
+  }
+
+  removeFile(path: string): void {
+    this.files.delete(path)
+  }
+}
+
+const verifiedImage: VerifiedAppImage = {
+  imagePath: IMAGE_PATH,
+  dev: IMAGE_DEV,
+  ino: IMAGE_INO,
+  size: IMAGE_SIZE,
+  mtimeMs: IMAGE_MTIME,
+  mode: IMAGE_MODE,
+  mountPoint: MOUNT_POINT,
+  mountSource: IMAGE_PATH,
+  filesystem: 'squashfs'
+}
+
+const packaged: UpdateEnvironment = { platform: 'linux', isPackaged: true, appImage: verifiedImage }
+
+function setup(
+  options: {
+    preferences?: Partial<UpdatePreferences>
+    environment?: UpdateEnvironment
+    version?: string
+    probe?: AppImageProbe
+  } = {}
+) {
   const adapter = new FakeAdapter()
   const preferences: UpdatePreferences = {
     channel: options.preferences?.channel ?? 'stable',
@@ -175,7 +279,8 @@ function setup(options: { preferences?: Partial<UpdatePreferences>; environment?
     version: options.version ?? '0.1.0',
     preferences: () => preferences,
     onChange: (status) => seen.push(status),
-    autoCheckDelayMs: 1000
+    autoCheckDelayMs: 1000,
+    appImageProbe: options.probe ?? new FakeProbe()
   })
   return { adapter, preferences, seen, service }
 }
@@ -235,6 +340,75 @@ describe('update support detection', () => {
     // an NSIS update that would install a second copy.
     expect(detectUpdateSupport({ platform: 'win32', isPackaged: true }).reason).toContain('zip')
     expect(detectUpdateSupport({ platform: 'freebsd', isPackaged: true }).supported).toBe(false)
+  })
+})
+
+describe('AppImage binding', () => {
+  it('accepts an image whose mount source contains the running executable', () => {
+    const probe = new FakeProbe()
+    const result = verifyAppImage(probe)
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error(result.reason)
+    expect(result.target).toEqual(verifiedImage)
+    expect(detectUpdateSupport({ platform: 'linux', isPackaged: true, appImage: result.target })).toEqual({
+      supported: true,
+      format: 'appimage',
+      reason: null
+    })
+  })
+
+  it('rejects a non-empty APPIMAGE for an unpacked or extracted run', async () => {
+    const probe = new FakeProbe()
+    probe.mountInfo = ''
+    const result = verifyAppImage(probe)
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('expected the unpacked run to be rejected')
+    expect(result.reason).toMatch(/unpacked or extracted/i)
+
+    const environment: UpdateEnvironment = {
+      platform: 'linux',
+      isPackaged: true,
+      appImage: null,
+      appImageReason: result.reason
+    }
+    expect(detectUpdateSupport(environment)).toMatchObject({ supported: false, format: null })
+    const { adapter, service } = setup({ environment })
+    await service.check()
+    const status = await service.download()
+    expect(status.phase).toBe('unsupported')
+    expect(() => service.install()).toThrow(/unpacked or extracted/i)
+    expect(adapter.checks).toBe(0)
+    expect(adapter.downloads).toBe(0)
+    expect(adapter.installs).toBe(0)
+  })
+
+  it('rejects an APPIMAGE that names a different file than the mount source', () => {
+    const probe = new FakeProbe()
+    const other = '/home/user/Other.AppImage'
+    probe.hint = other
+    probe.setFile(other, makeStat({ ino: 7 }))
+    const result = verifyAppImage(probe)
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('expected the mismatched hint to be rejected')
+    expect(result.reason).toContain('does not identify the image mounted')
+  })
+
+  it('rejects an executable outside the AppImage mount point', () => {
+    const probe = new FakeProbe()
+    probe.execPath = '/opt/commit87/commit87'
+    const result = verifyAppImage(probe)
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('expected the outside executable to be rejected')
+    expect(result.reason).toContain('outside every AppImage mount point')
+  })
+
+  it('rejects an image that is not a regular executable file', () => {
+    const probe = new FakeProbe()
+    probe.setFile(IMAGE_PATH, makeStat({ mode: 0o100644 }))
+    const result = verifyAppImage(probe)
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('expected a non-executable image to be rejected')
+    expect(result.reason).toContain('not executable')
   })
 })
 
@@ -365,6 +539,48 @@ describe('UpdateService', () => {
     expect(service.getStatus().phase).toBe('ready')
     service.install()
     expect(adapter.installs).toBe(1)
+    expect(adapter.installTargets[0]).toEqual(verifiedImage)
+  })
+
+  it('passes the verified target even after the environment hint is mutated', async () => {
+    const probe = new FakeProbe()
+    const { adapter, service } = setup({ probe })
+    await service.check()
+    probe.hint = '/tmp/replaced.AppImage'
+    process.env.APPIMAGE = '/tmp/replaced.AppImage'
+    try {
+      await service.download()
+      expect(service.getStatus().phase).toBe('ready')
+      service.install()
+    } finally {
+      delete process.env.APPIMAGE
+    }
+    expect(adapter.downloadTargets).toEqual([verifiedImage])
+    expect(adapter.installTargets).toEqual([verifiedImage])
+  })
+
+  it('refuses to download when the verified image disappears after the check', async () => {
+    const probe = new FakeProbe()
+    const { adapter, service } = setup({ probe })
+    await service.check()
+    expect(service.getStatus().phase).toBe('available')
+    probe.removeFile(IMAGE_PATH)
+    const status = await service.download()
+    expect(status.phase).toBe('error')
+    expect(status.error).toContain('no longer available')
+    expect(adapter.downloads).toBe(0)
+  })
+
+  it('refuses to install when the verified image changes after download', async () => {
+    const probe = new FakeProbe()
+    const { adapter, service } = setup({ probe })
+    await service.check()
+    await service.download()
+    expect(service.getStatus().phase).toBe('ready')
+    probe.setFile(IMAGE_PATH, makeStat({ ino: 99 }))
+    expect(() => service.install()).toThrow(/replaced or modified/)
+    expect(adapter.installs).toBe(0)
+    expect(service.getStatus().phase).toBe('error')
   })
 
   it('sanitizes updater errors and keeps the channel selection', async () => {

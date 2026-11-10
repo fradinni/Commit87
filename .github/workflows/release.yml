@@ -6,12 +6,14 @@ on:
   workflow_dispatch:
     inputs:
       draft:
-        description: Publish as a draft release
+        description: 'Keep the release as a draft instead of publishing it (tag pushes ignore this: stable tags are always drafts and -beta.N tags publish as pre-releases)'
         type: boolean
         default: true
 
+# Read-only by default. Only the two jobs that create or write the release ask
+# for `contents: write`; packaging jobs never receive a repository token.
 permissions:
-  contents: write
+  contents: read
 
 # Serialize release runs so two builds never upload to the same draft at once.
 concurrency:
@@ -20,60 +22,113 @@ concurrency:
 
 jobs:
   prepare:
-    name: Prepare draft release
+    name: Resolve release and prepare draft
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      channel: ${{ steps.release.outputs.channel }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+      draft: ${{ steps.release.outputs.draft }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
-      - name: Clear draft release assets
+      - name: Resolve version, channel and release flags
+        id: release
+        shell: bash
+        env:
+          # A tag push takes its version from the tag; a manual run uses the
+          # checked-out package version. Both go through the same validation so
+          # the tag, metadata and draft/prerelease flags can never disagree.
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          RELEASE_DRAFT_INPUT: ${{ inputs.draft }}
+        run: |
+          node scripts/sync-version.mjs --resolve --github-output \
+            --tag "${RELEASE_TAG}" \
+            --draft "${RELEASE_DRAFT_INPUT}"
+      - name: Prepare draft release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # electron-builder replaces assets with delete-then-upload, which races
-        # GitHub's asset index for the tiny latest*.yml files. A tag push always
-        # rebuilds the draft from scratch, so clear it before any job publishes.
+          TAG: ${{ steps.release.outputs.tag }}
+        # Nothing is published before the artifacts are built and verified, so
+        # the release always starts as a draft; the publish job promotes it to
+        # the channel state resolved above. An existing draft is emptied first so
+        # assets from an earlier failed run cannot be mistaken for this build's.
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            tag="$GITHUB_REF_NAME"
-          else
-            tag="v$(node -p "require('./package.json').version")"
-          fi
-          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$tag" --draft --title "Commit87 ${tag#v}" --target "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY"
+          set -euo pipefail
+          # A tag that already points somewhere else would attach this run's
+          # artifacts to a different commit, so resolve the tag before using it.
+          # "Tag absent" and "request failed" both produce no commit, but only
+          # the first one may continue: with an unknown tag state this run could
+          # attach its assets to a tag it cannot see, so read the HTTP status and
+          # treat only 404 as absent.
+          tag_response="$(gh api --include "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" 2>&1)" &&
+            tag_ok=true || tag_ok=false
+          tag_http="$(printf '%s\n' "$tag_response" | awk 'NR == 1 && $1 ~ /^HTTP\// { print $2; exit }')"
+          case "${tag_ok}:${tag_http}" in
+            false:404)
+              # No tag with this name yet; the release create step below makes it.
+              echo "Tag $TAG does not exist yet."
+              ;;
+            true:2*)
+              tag_commit="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha)" || {
+                echo "::error::Tag $TAG exists but its commit could not be resolved; refusing to publish."
+                exit 1
+              }
+              if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
+                echo "::error::Tag $TAG already points at $tag_commit, not at this run's commit $GITHUB_SHA."
+                exit 1
+              fi
+              ;;
+            *)
+              # 403, 5xx, a dropped connection or an unparseable response: the
+              # tag state is unknown, so stop instead of assuming the tag is new.
+              echo "::error::Could not check whether tag $TAG exists (HTTP ${tag_http:-no response}); refusing to prepare a release from an unknown tag state."
+              exit 1
+              ;;
+          esac
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --draft --title "Commit87 ${TAG#v}" --target "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY"
             exit 0
           fi
-          if [[ "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" != "true" ]]; then
-            echo "::error::Release $tag is already published; refusing to replace its assets."
+          if [[ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" != "true" ]]; then
+            echo "::error::Release $TAG is already published; delete it before rebuilding that version."
             exit 1
           fi
-          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
             while IFS= read -r asset; do
               [[ -z "$asset" ]] && continue
-              gh release delete-asset "$tag" "$asset" --yes --repo "$GITHUB_REPOSITORY"
+              gh release delete-asset "$TAG" "$asset" --yes --repo "$GITHUB_REPOSITORY"
             done
 
-  release:
-    name: Publish ${{ matrix.target }} (${{ matrix.arch }})
+  build:
+    name: Build ${{ matrix.target }} (${{ matrix.arch }})
     needs: prepare
     strategy:
       fail-fast: false
       matrix:
         include:
+          # Both Linux architectures must come from one invocation. The x64 feed
+          # is <channel>-linux.yml and the arm64 feed is
+          # <channel>-linux-arm64.yml; split jobs each wrote only their own file
+          # and the workflow uploaded only the x64 one, so arm64 clients had no
+          # feed at all. One build writes both, cross-packaging arm64 on the x64
+          # host exactly as CI's package-linux job already does (electron-builder
+          # fetches the arm64 Electron runtime; this project has no native addons).
           - target: linux
-            arch: x64
-            archArgs: --x64
+            arch: x64+arm64
+            archArgs: --x64 --arm64
             runner: ubuntu-24.04
             electronCache: |
               ~/.cache/electron-builder
-          - target: linux
-            arch: arm64
-            archArgs: --arm64
-            runner: ubuntu-24.04-arm
-            electronCache: |
-              ~/.cache/electron-builder
-          # Both Windows architectures share latest.yml, so build them in one
+          # Both Windows architectures share latest.yml/beta.yml, so build them in one
           # invocation: separate jobs would overwrite each other's metadata and
           # leave one architecture pointing at the other installer.
           - target: win
@@ -82,9 +137,9 @@ jobs:
             runner: windows-2022
             electronCache: |
               ~/AppData/Local/electron-builder/Cache
-          # Both macOS architectures share latest-mac.yml, so build them in one
-          # invocation. macos-13 (the last Intel image) is retiring, so x64 is
-          # cross-packaged on the Apple Silicon runner instead.
+          # Both macOS architectures share latest-mac.yml/beta-mac.yml, so build
+          # them in one invocation. macos-13 (the last Intel image) is retiring,
+          # so x64 is cross-packaged on the Apple Silicon runner instead.
           - target: mac
             arch: x64+arm64
             archArgs: --x64 --arm64
@@ -92,34 +147,28 @@ jobs:
             electronCache: |
               ~/Library/Caches/electron-builder
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
     env:
-      # Only -beta.N tags use the beta feed. Any other prerelease identifier
-      # would publish a channel file no client asks for, so the workflow rejects
-      # it below.
-      COMMIT87_RELEASE_CHANNEL: ${{ startsWith(github.ref, 'refs/tags/') && contains(github.ref_name, '-beta.') && 'beta' || 'latest' }}
+      # The single resolved release identity for every build in this matrix.
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      COMMIT87_RELEASE_CHANNEL: ${{ needs.prepare.outputs.channel }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
       - name: Cache Electron and packaging toolsets
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ matrix.electronCache }}
           key: ${{ runner.os }}-electron-builder-${{ matrix.arch }}-${{ hashFiles('package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-electron-builder-${{ matrix.arch }}-
             ${{ runner.os }}-electron-builder-
-      - name: Validate release channel
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: bash
-        run: |
-          tag="${GITHUB_REF_NAME#v}"
-          if [[ "$tag" == *-* && "$tag" != *-beta.* ]]; then
-            echo "::error::Only -beta.N prerelease tags are supported; got $GITHUB_REF_NAME"
-            exit 1
-          fi
       - run: npm ci
       - name: Install Linux packaging tools
         if: matrix.target == 'linux'
@@ -127,16 +176,42 @@ jobs:
         # fakeroot and rpm on the host and bsdtar (libarchive-tools) for the
         # pacman .MTREE index.
         run: sudo apt-get update && sudo apt-get install -y fakeroot rpm libarchive-tools
-      - run: node scripts/sync-version.mjs "${GITHUB_REF_NAME#v}"
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Apply the resolved version
         shell: bash
+        run: node scripts/sync-version.mjs "$RELEASE_VERSION"
       - run: npm test
       - run: npm run build
-      - name: Build and publish
+      - name: Build Linux packages
+        if: matrix.target == 'linux'
         shell: bash
-        # electron-builder treats an empty CSC_LINK as a certificate path and
+        run: node scripts/build-packages.mts --config electron-builder.config.cjs --linux ${{ matrix.archArgs }} --publish never
+      - name: Build Windows packages
+        if: matrix.target == 'win'
+        shell: bash
+        # electron-builder treats an empty WIN_CSC_LINK as a certificate path and
         # fails on the project directory, so the signing variables are only
-        # exported when the matching secret is configured.
+        # exported when the matching secret is configured. Secrets are scoped to
+        # this platform's build step.
+        env:
+          SIGN_WIN_CERT: ${{ secrets.WIN_CERT_P12 }}
+          SIGN_WIN_CERT_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD }}
+        run: |
+          if [ -n "${SIGN_WIN_CERT:-}" ]; then
+            export WIN_CSC_LINK="$SIGN_WIN_CERT"
+            export WIN_CSC_KEY_PASSWORD="$SIGN_WIN_CERT_PASSWORD"
+          fi
+          node scripts/build-packages.mts --config electron-builder.config.cjs --win ${{ matrix.archArgs }} --publish never
+      - name: Build macOS packages
+        if: matrix.target == 'mac'
+        shell: bash
+        # Apple credentials and the Developer ID certificate only exist in this
+        # step, which only runs on the macOS runner.
+        env:
+          SIGN_MAC_CERT: ${{ secrets.MAC_CERT_P12 }}
+          SIGN_MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          SIGN_APPLE_ID: ${{ secrets.APPLE_ID }}
+          SIGN_APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          SIGN_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           if [ -n "${SIGN_MAC_CERT:-}" ]; then
             export CSC_LINK="$SIGN_MAC_CERT"
@@ -149,33 +224,22 @@ jobs:
             export APPLE_APP_SPECIFIC_PASSWORD="$SIGN_APPLE_PASSWORD"
             export APPLE_TEAM_ID="$SIGN_APPLE_TEAM_ID"
           fi
-          if [ -n "${SIGN_WIN_CERT:-}" ]; then
-            export WIN_CSC_LINK="$SIGN_WIN_CERT"
-            export WIN_CSC_KEY_PASSWORD="$SIGN_WIN_CERT_PASSWORD"
-          fi
           # scripts/build-packages.mts runs electron-builder and retries transient
           # download failures (5xx, resets) with backoff, so a short GitHub
           # incident does not fail a release whose code is already verified.
-          node scripts/build-packages.mts --config electron-builder.config.cjs --${{ matrix.target }} ${{ matrix.archArgs }} --publish always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SIGN_MAC_CERT: ${{ matrix.target == 'mac' && secrets.MAC_CERT_P12 || '' }}
-          SIGN_MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
-          SIGN_APPLE_ID: ${{ secrets.APPLE_ID }}
-          SIGN_APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          SIGN_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          SIGN_WIN_CERT: ${{ matrix.target == 'win' && secrets.WIN_CERT_P12 || '' }}
-          SIGN_WIN_CERT_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD }}
-      # macOS refuses to run an app whose code signature does not match its
-      # binaries: the fuse patch invalidates Electron's linker ad-hoc signature,
-      # and without a Developer ID certificate electron-builder leaves it broken,
-      # so Gatekeeper kills the app at launch ("application is damaged"). The
-      # electronFuses.resetAdHocDarwinSignature option re-signs ad-hoc after the
-      # patch; this step proves the result is valid so a broken app can never
-      # reach the draft release.
-      - name: Verify macOS code signature
+          node scripts/build-packages.mts --config electron-builder.config.cjs --mac ${{ matrix.archArgs }} --publish never
+      # Flipping the fuses patches Electron's binaries, which invalidates the
+      # ad-hoc signature the linker stamped on them. Without a Developer ID
+      # certificate electron-builder leaves the patched binaries broken and
+      # macOS kills the app at launch ("application is damaged"), so every build
+      # must carry a valid signature. A production build must additionally be
+      # signed by the expected team and accepted by Gatekeeper.
+      - name: Verify macOS signing against the release policy
         if: matrix.target == 'mac'
         shell: bash
+        env:
+          HAS_MAC_CERT: ${{ secrets.MAC_CERT_P12 != '' }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -184,21 +248,271 @@ jobs:
             echo "::error::No macOS app bundle found under dist/mac*"
             exit 1
           fi
-          for app in "${apps[@]}"; do
-            echo "Verifying $app..."
-            codesign --verify --deep --strict --verbose=1 "$app" || {
-              echo "::error::$app has an invalid code signature; macOS would report the app as damaged."
+          if [[ "$HAS_MAC_CERT" == "true" ]]; then
+            if [[ -z "${APPLE_TEAM_ID:-}" ]]; then
+              echo "::error::MAC_CERT_P12 is configured without APPLE_TEAM_ID; a production build must be signed by the expected team and notarized."
               exit 1
-            }
-          done
-      - name: Warn on unsigned macOS build
-        if: matrix.target == 'mac'
+            fi
+            for app in "${apps[@]}"; do
+              echo "Verifying $app..."
+              codesign --verify --deep --strict --verbose=2 "$app"
+              details="$(codesign -dv --verbose=4 "$app" 2>&1 || true)"
+              if ! grep -q '^Authority=Developer ID Application:' <<<"$details"; then
+                echo "::error::$app is not signed with a Developer ID Application certificate."
+                exit 1
+              fi
+              if ! grep -qx "TeamIdentifier=${APPLE_TEAM_ID}" <<<"$details"; then
+                echo "::error::$app was not signed by the team in APPLE_TEAM_ID."
+                exit 1
+              fi
+              # Gatekeeper refuses an unnotarized Developer ID build, so this
+              # checks the notarization result rather than only the signature.
+              if ! spctl --assess --type execute --verbose=4 "$app"; then
+                echo "::error::$app is not accepted by Gatekeeper; notarization is missing or failed."
+                exit 1
+              fi
+            done
+            echo "macOS: Developer ID signed and notarized (production)." >> "$GITHUB_STEP_SUMMARY"
+          else
+            for app in "${apps[@]}"; do
+              echo "Verifying $app..."
+              codesign --verify --deep --strict --verbose=2 "$app" || {
+                echo "::error::$app has an invalid code signature; macOS would report the app as damaged."
+                exit 1
+              }
+            done
+            echo "::warning::No MAC_CERT_P12 secret: this is a development/unsigned (ad-hoc) macOS build, not a production release."
+          fi
+      - name: Record signing status
         shell: bash
         env:
-          SIGN_MAC_CERT: ${{ secrets.MAC_CERT_P12 }}
+          HAS_MAC_CERT: ${{ secrets.MAC_CERT_P12 != '' }}
+          HAS_WIN_CERT: ${{ secrets.WIN_CERT_P12 != '' }}
+        # A development/unsigned build must say so on the published artifact, not
+        # only in the job log.
         run: |
-          if [ -n "${SIGN_MAC_CERT:-}" ]; then
-            exit 0
+          mkdir -p dist
+          {
+            echo "Commit87 ${RELEASE_VERSION} (${COMMIT87_RELEASE_CHANNEL} channel)"
+            case "${{ matrix.target }}" in
+              linux)
+                echo "Linux: unsigned package formats; verify downloads against SHA256SUMS.txt."
+                ;;
+              win)
+                if [[ "$HAS_WIN_CERT" == "true" ]]; then
+                  echo "Windows: signed with the configured code-signing certificate."
+                else
+                  echo "Windows: UNSIGNED development build. SmartScreen will warn and users must allow the installer."
+                fi
+                ;;
+              mac)
+                if [[ "$HAS_MAC_CERT" == "true" ]]; then
+                  echo "macOS: Developer ID signed and notarized."
+                else
+                  echo "macOS: DEVELOPMENT build, ad-hoc signed only (no Developer ID, not notarized). Gatekeeper blocks it until the user allows it in System Settings."
+                fi
+                ;;
+            esac
+          } > "dist/SIGNING-STATUS-${{ matrix.target }}.txt"
+      - name: Upload Linux artifacts
+        if: matrix.target == 'linux'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-linux-${{ matrix.arch }}
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.rpm
+            dist/*.pkg.tar.xz
+            dist/*.tar.gz
+            dist/${{ needs.prepare.outputs.channel }}-linux.yml
+            dist/${{ needs.prepare.outputs.channel }}-linux-arm64.yml
+            dist/SIGNING-STATUS-linux.txt
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload Windows artifacts
+        if: matrix.target == 'win'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-win-${{ matrix.arch }}
+          path: |
+            dist/*.exe
+            dist/*.zip
+            dist/*.blockmap
+            dist/${{ needs.prepare.outputs.channel }}.yml
+            dist/SIGNING-STATUS-win.txt
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload macOS artifacts
+        if: matrix.target == 'mac'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-mac-${{ matrix.arch }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.blockmap
+            dist/${{ needs.prepare.outputs.channel }}-mac.yml
+            dist/SIGNING-STATUS-mac.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Verify and publish
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      CHANNEL: ${{ needs.prepare.outputs.channel }}
+      PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+      DRAFT: ${{ needs.prepare.outputs.draft }}
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: Verify assembled artifacts
+        shell: bash
+        # Every platform's payload and update metadata must be complete before
+        # anything reaches the release. Metadata filenames are derived from the
+        # resolved channel (plus the architecture for Linux), so a beta build
+        # cannot attach latest* metadata.
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          count() { find dist -maxdepth 1 -name "$1" | wc -l; }
+
+          for meta in "${CHANNEL}.yml" "${CHANNEL}-linux.yml" "${CHANNEL}-linux-arm64.yml" "${CHANNEL}-mac.yml"; do
+            [[ -s "dist/$meta" ]] || fail "missing update metadata dist/$meta"
+            declared="$(awk '/^version:/ { print $2; exit }' "dist/$meta")"
+            [[ "$declared" == "$VERSION" ]] || fail "dist/$meta declares version $declared, expected $VERSION"
+            while IFS= read -r url; do
+              [[ -z "$url" ]] && continue
+              name="${url%%\?*}"
+              [[ -s "dist/$name" ]] || fail "dist/$meta references missing artifact $name"
+            done < <(sed -nE 's/^[[:space:]]*- url:[[:space:]]*//p' "dist/$meta")
+          done
+
+          # The Linux updater asks for its feed by architecture: x64 reads
+          # <channel>-linux.yml and arm64 reads <channel>-linux-arm64.yml. Both
+          # files must exist and each must name an AppImage built for its own
+          # architecture, so neither client can be pointed at the other's
+          # package and an arm64 build cannot ship without its feed. (The
+          # here-strings keep grep -q from racing sed under pipefail.)
+          linux_urls() { sed -nE 's/^[[:space:]]*- url:[[:space:]]*//p' "dist/$1"; }
+          x64_urls="$(linux_urls "${CHANNEL}-linux.yml")"
+          grep -Eiq -- '-linux-(x86_64|x64)\.AppImage$' <<<"$x64_urls" ||
+            fail "dist/${CHANNEL}-linux.yml does not name an x64 AppImage"
+          if grep -Eiq -- '-linux-(arm64|aarch64)\.AppImage$' <<<"$x64_urls"; then
+            fail "dist/${CHANNEL}-linux.yml names an arm64 AppImage"
+          fi
+          arm64_urls="$(linux_urls "${CHANNEL}-linux-arm64.yml")"
+          grep -Eiq -- '-linux-(arm64|aarch64)\.AppImage$' <<<"$arm64_urls" ||
+            fail "dist/${CHANNEL}-linux-arm64.yml does not name an arm64 AppImage"
+          if grep -Eiq -- '-linux-(x86_64|x64)\.AppImage$' <<<"$arm64_urls"; then
+            fail "dist/${CHANNEL}-linux-arm64.yml names an x64 AppImage"
+          fi
+
+          for meta in dist/*.yml dist/*.yaml; do
+            [[ -e "$meta" ]] || continue
+            base="$(basename "$meta")"
+            case "$base" in
+              "${CHANNEL}.yml" | "${CHANNEL}-linux.yml" | "${CHANNEL}-linux-arm64.yml" | "${CHANNEL}-mac.yml") ;;
+              builder-debug.yml | builder-effective-config.yaml)
+                echo "::warning::ignoring electron-builder debug output $base"
+                ;;
+              *) fail "unexpected update metadata $base for the ${CHANNEL} channel" ;;
+            esac
+          done
+          rm -f dist/builder-debug.yml dist/builder-effective-config.yaml
+
+          # Two architectures for every target; every target builds its two
+          # architectures in one invocation so the platform metadata is complete.
+          for spec in '*.AppImage:2' '*.deb:2' '*.rpm:2' '*.pkg.tar.xz:2' '*.tar.gz:2' '*.exe:4' '*.dmg:2'; do
+            pattern="${spec%:*}"
+            expected="${spec##*:}"
+            actual="$(count "$pattern")"
+            [[ "$actual" -ge "$expected" ]] || fail "expected at least $expected $pattern files, found $actual"
+          done
+          for pattern in '*-win-x64.zip' '*-win-arm64.zip' '*-mac-x64.zip' '*-mac-arm64.zip'; do
+            [[ "$(count "$pattern")" -ge 1 ]] || fail "missing $pattern"
+          done
+          # Windows installers and the macOS update zips ship separate block maps
+          # for differential updates; electron-builder's own publisher used to
+          # upload them, so a release kept entirely from these artifacts must too.
+          [[ "$(count '*.blockmap')" -ge 2 ]] || fail "expected block maps for differential updates in dist"
+          empty="$(find dist -maxdepth 1 -type f -size 0 -print -quit)"
+          [[ -z "$empty" ]] || fail "empty artifact: $empty"
+      - name: Record build provenance and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat dist/SIGNING-STATUS-*.txt > dist/SIGNING-STATUS.txt
+          rm -f dist/SIGNING-STATUS-*.txt
+          {
+            echo "Commit87 ${VERSION} (${CHANNEL} channel)"
+            echo "pre-release: ${PRERELEASE}"
+            echo "draft after this run: ${DRAFT}"
+            echo "channel metadata: ${CHANNEL}.yml, ${CHANNEL}-linux.yml, ${CHANNEL}-linux-arm64.yml, ${CHANNEL}-mac.yml"
+            echo "source commit: ${GITHUB_SHA}"
+            echo "source ref: ${GITHUB_REF}"
+            echo "workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          } > dist/BUILD-INFO.txt
+          mapfile -t payloads < <(
+            find dist -maxdepth 1 -type f \
+              \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.pkg.tar.xz' \
+                 -o -name '*.tar.gz' -o -name '*.exe' -o -name '*.dmg' -o -name '*.zip' \
+                 -o -name '*.blockmap' \) \
+              -printf '%f\n' | sort
+          )
+          ( cd dist && sha256sum -- "${payloads[@]}" > SHA256SUMS.txt )
+          cat dist/SIGNING-STATUS.txt dist/BUILD-INFO.txt
+      - name: Upload verified artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          assets=(
+            dist/*.AppImage dist/*.deb dist/*.rpm dist/*.pkg.tar.xz dist/*.tar.gz
+            dist/*.exe dist/*.dmg dist/*.zip dist/*.blockmap
+            "dist/${CHANNEL}.yml" "dist/${CHANNEL}-linux.yml" "dist/${CHANNEL}-linux-arm64.yml" "dist/${CHANNEL}-mac.yml"
+            dist/SHA256SUMS.txt dist/BUILD-INFO.txt dist/SIGNING-STATUS.txt
+          )
+          # Drop globs that matched nothing so one platform-specific pattern
+          # cannot fail the whole upload; the verification step above already
+          # proved the required payloads are present.
+          present=()
+          for asset in "${assets[@]}"; do
+            [[ -e "$asset" ]] && present+=("$asset")
+          done
+          gh release upload "$TAG" "${present[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+      - name: Apply the resolved draft and pre-release flags
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Stable releases stay drafts until a maintainer promotes them
+        # (`gh release edit <tag> --draft=false`); -beta.N releases publish as
+        # pre-releases so stable clients never see them.
+        run: |
+          set -euo pipefail
+          if [[ "$DRAFT" == "true" ]]; then
+            if [[ "$PRERELEASE" == "true" ]]; then
+              # A beta draft is still flagged as a pre-release, so promoting it
+              # with `--draft=false` cannot turn it into a stable "latest" entry.
+              gh release edit "$TAG" --draft --prerelease --repo "$GITHUB_REPOSITORY"
+            else
+              gh release edit "$TAG" --draft --repo "$GITHUB_REPOSITORY"
+            fi
+            echo "Kept $TAG as a draft. Promote it with: gh release edit $TAG --draft=false" >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$PRERELEASE" == "true" ]]; then
+            gh release edit "$TAG" --draft=false --prerelease --repo "$GITHUB_REPOSITORY"
+          else
+            gh release edit "$TAG" --draft=false --repo "$GITHUB_REPOSITORY"
           fi
           echo "::warning::macOS build is ad-hoc signed but not signed with a Developer ID certificate and not notarized."
           echo "::warning::Users downloading it will see a Gatekeeper prompt (System Settings > Privacy & Security > Open Anyway to launch)."

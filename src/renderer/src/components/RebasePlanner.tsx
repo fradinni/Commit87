@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp, ListTree } from 'lucide-react'
 import type { Commit, RebaseAction, RebasePlan } from '@shared/types'
-import { activeIdentity, useStore } from '../store'
+import { clipOutput, operationNotice, selectedIdentityId, useStore } from '../store'
 import { call, errorMessage } from '../lib/ipc'
 import { Badge, Button, EmptyState, Field, IconButton, LoadingBlock, Modal, Select, TextArea } from './ui'
 
@@ -165,23 +165,22 @@ export function RebasePlanner() {
           action: row.action,
           message: row.action === 'reword' ? row.message : undefined
         })),
-        identityId: activeIdentity()?.id
+        identityId: selectedIdentityId()
       })
       await useStore.getState().refreshAll(repoPath)
-      if (result.inProgress) {
+      const notice = operationNotice(result, 'Interactive rebase finished', 'Interactive rebase')
+      if (result.status === 'ok') {
         closeRebase()
-        if (/\bCONFLICT\b|Could not apply/.test(result.output)) {
-          notify('Rebase paused on conflicts. Resolve them, then use Continue or Abort in the status bar.', 'info')
-        } else {
-          notify(result.output.slice(-900) || 'Rebase paused. Use Continue or Abort in the status bar.', 'error')
-        }
-      } else if (result.exitCode !== 0) {
-        const message = result.output || 'The interactive rebase could not start'
-        setError(message)
-        notify(message.slice(0, 900), 'error')
+        notify(notice.message, notice.kind)
+      } else if (result.status === 'conflict' || result.inProgress) {
+        // A conflict, edit stop or hook pause leaves Continue/Skip/Abort in the
+        // status bar; never announce it as a completed rebase.
+        closeRebase()
+        notify(notice.message, notice.kind)
       } else {
-        closeRebase()
-        notify('Interactive rebase finished', 'success')
+        const message = clipOutput(result.output) || 'The interactive rebase could not start'
+        setError(message)
+        notify(notice.message, notice.kind)
       }
     } catch (nextError) {
       setError(errorMessage(nextError))

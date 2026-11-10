@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Builds .deb, .rpm and .pkg.tar.zst packages from dist/linux-unpacked.
+"""Builds .deb, .rpm and .pkg.tar.zst packages from the unpacked Electron app.
 
-This is the fallback for build hosts where electron-builder's bundled fpm
-cannot run (for example Fedora without libcrypt.so.1). CI uses electron-builder
-directly, which produces the same layouts.
+The input is electron-builder's host-architecture output: `dist/linux-unpacked` on
+x86_64 and `dist/linux-arm64-unpacked` on arm64 (see `unpacked_dir`). This is the
+fallback for build hosts where electron-builder's bundled fpm cannot run (for
+example Fedora without libcrypt.so.1). CI uses electron-builder directly, which
+produces the same layouts.
 
 Usage:
     python3 scripts/package-linux.py            # all formats for the host arch
@@ -26,7 +28,6 @@ import zlib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DIST = ROOT / "dist"
-APP_DIR = DIST / "linux-unpacked"
 ICONS = ROOT / "build" / "icons"
 PKG_NAME = "commit87"
 DISPLAY_NAME = "Commit87"
@@ -43,10 +44,20 @@ SUMMARY = "A focused desktop Git client"
 LICENSE = "MIT"
 
 ARCH_MAP = {
-    "x86_64": {"deb": "amd64", "rpm": "x86_64", "pacman": "x86_64"},
-    "aarch64": {"deb": "arm64", "rpm": "aarch64", "pacman": "aarch64"},
-    "arm64": {"deb": "arm64", "rpm": "aarch64", "pacman": "aarch64"},
+    "x86_64": {"deb": "amd64", "rpm": "x86_64", "pacman": "x86_64", "unpacked": "linux-unpacked"},
+    "aarch64": {"deb": "arm64", "rpm": "aarch64", "pacman": "aarch64", "unpacked": "linux-arm64-unpacked"},
+    "arm64": {"deb": "arm64", "rpm": "aarch64", "pacman": "aarch64", "unpacked": "linux-arm64-unpacked"},
 }
+
+# electron-builder names its output directory after the target architecture, so the
+# fallback has to read the host architecture's directory instead of assuming x64.
+# main() replaces this placeholder before any format is built.
+APP_DIR = DIST / ARCH_MAP["x86_64"]["unpacked"]
+
+
+def unpacked_dir(machine: str) -> pathlib.Path:
+    """The electron-builder unpacked directory this host's packages are built from."""
+    return DIST / ARCH_MAP[machine]["unpacked"]
 
 DEB_DEPENDS = "git, libgtk-3-0, libnotify4, libnss3, libxss1, libxtst6, xdg-utils, libatspi2.0-0, libsecret-1-0"
 RPM_REQUIRES = ["git", "gtk3", "libnotify", "nss", "libXScrnSaver", "libXtst", "xdg-utils", "at-spi2-core", "libsecret"]
@@ -344,10 +355,59 @@ command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q
 # --------------------------------------------------------------------------- pacman
 
 
+def tar_command() -> list[str]:
+    return ["bsdtar"] if shutil.which("bsdtar") else ["tar"]
+
+
+def pacman_archive(out: pathlib.Path, pkgdir: pathlib.Path) -> None:
+    """Writes the pacman package archive from the contents of pkgdir.
+
+    pacman reads the package metadata from the archive root, so the entries are
+    archived from inside pkgdir instead of being wrapped in a top-level directory.
+    """
+    entries = [".PKGINFO"]
+    if (pkgdir / ".INSTALL").is_file():
+        entries.append(".INSTALL")
+    entries.extend(sorted(entry.name for entry in pkgdir.iterdir() if entry.name not in {".PKGINFO", ".INSTALL"}))
+    subprocess.run([*tar_command(), "--zstd", "-cf", str(out), "-C", str(pkgdir), *entries], check=True)
+
+
+def pacman_archive_entries(archive: pathlib.Path) -> list[str]:
+    result = subprocess.run(
+        [*tar_command(), "--zstd", "-tf", str(archive)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    names: list[str] = []
+    for line in result.stdout.splitlines():
+        name = line.strip()
+        if not name:
+            continue
+        names.append(name[2:] if name.startswith("./") else name)
+    return names
+
+
+PACMAN_ROOT_ENTRIES = {".PKGINFO", ".INSTALL", "opt", "usr"}
+
+
+def assert_pacman_layout(archive: pathlib.Path) -> None:
+    """Fails unless .PKGINFO sits at the archive root and nothing wraps the payload."""
+    names = pacman_archive_entries(archive)
+    roots = {name.split("/", 1)[0] for name in names}
+    if ".PKGINFO" not in roots:
+        raise SystemExit(f"{archive.name}: .PKGINFO is missing from the archive root")
+    unexpected = sorted(root for root in roots if root not in PACMAN_ROOT_ENTRIES)
+    if unexpected:
+        raise SystemExit(f"{archive.name}: unexpected archive root entries {unexpected}")
+    if any(name.endswith("/.PKGINFO") or name.endswith("/.INSTALL") for name in names):
+        raise SystemExit(f"{archive.name}: package metadata is nested below the archive root")
+
+
 def build_pacman(arch: str) -> pathlib.Path:
-    pkgdir = DIST / "pacman-build" / PKG_NAME
+    pkgdir = DIST / "pacman-build" / "root"
     shutil.rmtree(pkgdir.parent, ignore_errors=True)
-    (pkgdir / ".PKGINFO").parent.mkdir(parents=True, exist_ok=True)
+    pkgdir.mkdir(parents=True)
 
     pkginfo = [
         f"pkgname = {PKG_NAME}",
@@ -389,29 +449,26 @@ def build_pacman(arch: str) -> pathlib.Path:
             target.chmod(mode)
 
     out = DIST / f"Commit87-{VERSION}-{arch}.pkg.tar.zst"
-    subprocess.run(
-        [
-            "bsdtar" if shutil.which("bsdtar") else "tar",
-            "--zstd",
-            "-cf",
-            str(out),
-            "-C",
-            str(pkgdir.parent),
-            PKG_NAME,
-        ],
-        check=True,
-    )
+    pacman_archive(out, pkgdir)
+    assert_pacman_layout(out)
     shutil.rmtree(pkgdir.parent, ignore_errors=True)
     return out
 
 
 def main() -> int:
-    if not APP_DIR.is_dir():
-        print("dist/linux-unpacked is missing; run `npm run pack:dir` first", file=sys.stderr)
-        return 1
+    global APP_DIR
     machine = os.uname().machine
     if machine not in ARCH_MAP:
         print(f"unsupported architecture: {machine}", file=sys.stderr)
+        return 1
+    APP_DIR = unpacked_dir(machine)
+    if not APP_DIR.is_dir():
+        expected = ", ".join(sorted({entry["unpacked"] for entry in ARCH_MAP.values()}))
+        print(
+            f"{APP_DIR.relative_to(ROOT)} is missing; run `npm run pack:dir` for {machine} "
+            f"(electron-builder writes one of: {expected})",
+            file=sys.stderr,
+        )
         return 1
     archs = ARCH_MAP[machine]
 

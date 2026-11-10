@@ -9,12 +9,19 @@ import {
   type ConflictChoice,
   type ConflictParseResult
 } from '../lib/conflict'
-import { call } from '../lib/ipc'
-import { useStore } from '../store'
+import { call, errorMessage } from '../lib/ipc'
+import { conflictDraftKey, useStore } from '../store'
 import { Button, ConfirmDialog, EmptyState, LoadingBlock } from './ui'
 
 const MAX_EDIT_BYTES = 512 * 1024
 const EMPTY_PARSE: ConflictParseResult = { lines: [], regions: [], malformed: false }
+
+/** The content a draft was derived from. A different hash is a different baseline. */
+interface Baseline {
+  sha: string
+  text: string
+  eol: '\n' | '\r\n'
+}
 
 export function ConflictView({
   repoPath,
@@ -35,17 +42,68 @@ export function ConflictView({
 }) {
   const notify = useStore((state) => state.notify)
   const notifyError = useStore((state) => state.notifyError)
+  const saveConflictDraft = useStore((state) => state.saveConflictDraft)
+  const clearConflictDrafts = useStore((state) => state.clearConflictDrafts)
   const raw = content?.content ?? ''
   const original = useMemo(() => raw.replace(/\r\n/g, '\n'), [raw])
-  const eol = useMemo(() => detectLineEnding(raw), [raw])
   const [output, setOutput] = useState(original)
+  const [eol, setEol] = useState<'\n' | '\r\n'>(() => detectLineEnding(raw))
+  const [baseline, setBaseline] = useState<Baseline | null>(null)
+  const [pending, setPending] = useState<Baseline | null>(null)
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [resetOpen, setResetOpen] = useState(false)
   const [reloadOpen, setReloadOpen] = useState(false)
 
+  /**
+   * Adopt loaded bytes only while nothing would be lost. The first load for
+   * this editor hydrates a persisted draft for the same baseline; a later
+   * baseline change either adopts silently (no edits) or keeps the user's
+   * bytes and asks for an explicit reload.
+   */
   useEffect(() => {
-    setOutput(original)
-  }, [original])
+    if (!content) return
+    const next: Baseline = {
+      sha: content.sha256 ?? '',
+      text: original,
+      eol: detectLineEnding(content.content)
+    }
+    if (!baseline) {
+      const draft = useStore.getState().conflictDrafts[conflictDraftKey(repoPath, file.path, next.sha)]
+      setBaseline(next)
+      setOutput(draft ? draft.output : next.text)
+      setEol(draft ? draft.eol : next.eol)
+      return
+    }
+    if (baseline.sha === next.sha && baseline.text === next.text) return
+    if (output === baseline.text) {
+      setBaseline(next)
+      setOutput(next.text)
+      setEol(next.eol)
+      setPending(null)
+      return
+    }
+    setPending(next)
+  }, [baseline, content, file.path, original, output, repoPath])
+
+  const persist = (value: string, nextEol: '\n' | '\r\n'): void => {
+    if (!baseline) return
+    if (value === baseline.text) {
+      clearConflictDrafts(repoPath, file.path)
+      return
+    }
+    saveConflictDraft(conflictDraftKey(repoPath, file.path, baseline.sha), {
+      output: value,
+      eol: nextEol,
+      updatedAt: Date.now()
+    })
+  }
+
+  const changeOutput = (value: string): void => {
+    setOutput(value)
+    setSaveError(null)
+    persist(value, eol)
+  }
 
   const tooLarge = content !== null && (content.truncated || content.size > MAX_EDIT_BYTES)
   const parsed = useMemo(
@@ -54,16 +112,18 @@ export function ConflictView({
   )
   const ready = parsed.regions.length === 0 && !parsed.malformed
   const editable = content !== null && !content.binary && !tooLarge
-  const dirty = output !== original
+  const dirty = baseline !== null && output !== baseline.text
 
   const apply = (index: number, choice: ConflictChoice): void => {
     if (saving) return
-    setOutput((current) => applyConflictChoice(current, index, choice))
+    const next = applyConflictChoice(output, index, choice)
+    changeOutput(next)
   }
 
   const save = async (): Promise<void> => {
     if (!ready || !editable || saving) return
     setSaving(true)
+    setSaveError(null)
     try {
       if (!dirty) {
         // Nothing to rewrite: the file was resolved elsewhere (or already had
@@ -73,16 +133,43 @@ export function ConflictView({
         await call('git.resolveConflict', {
           repoPath,
           file: file.path,
-          content: withLineEndings(output, eol)
+          content: withLineEndings(output, eol),
+          // The baseline the bytes were derived from, not the newest read: a
+          // file that changed under the draft must be rejected, not overwritten.
+          expectedSha256: baseline?.sha || content?.sha256
         })
       }
+      clearConflictDrafts(repoPath, file.path)
+      setPending(null)
       await useStore.getState().refreshStatus(repoPath)
       notify(dirty ? 'Conflict resolved and staged' : 'File staged', 'success')
     } catch (nextError) {
+      // The bytes stay in the editor so the user can reload and try again.
+      setSaveError(errorMessage(nextError))
       notifyError(nextError)
     } finally {
       setSaving(false)
     }
+  }
+
+  const adoptPending = (): void => {
+    if (!pending) return
+    setBaseline(pending)
+    setOutput(pending.text)
+    setEol(pending.eol)
+    setPending(null)
+    setSaveError(null)
+    clearConflictDrafts(repoPath, file.path)
+    onReload()
+  }
+
+  const reset = (): void => {
+    if (!baseline) return
+    setOutput(baseline.text)
+    setEol(baseline.eol)
+    setSaveError(null)
+    clearConflictDrafts(repoPath, file.path)
+    setResetOpen(false)
   }
 
   const status = tooLarge
@@ -115,6 +202,21 @@ export function ConflictView({
           </Button>
         </div>
       </div>
+
+      {pending ? (
+        <div className="conflict-stale-banner" role="status">
+          <AlertTriangle size={14} />
+          <span className="conflict-banner-text">
+            This file changed on disk after it was loaded. Your resolution is kept; reload the new content to start
+            from it.
+          </span>
+          <div className="conflict-banner-actions">
+            <Button size="sm" variant="ghost" icon={<RefreshCw size={12} />} onClick={adoptPending} disabled={saving}>
+              Reload new content
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       {loading ? (
         <LoadingBlock label="Reading conflicted file…" />
@@ -241,12 +343,17 @@ export function ConflictView({
                 </Button>
               </div>
             </header>
+            {saveError ? (
+              <div className="conflict-save-error" role="alert">
+                {saveError}
+              </div>
+            ) : null}
             <div className={`conflict-output-status${ready && editable ? ' is-ready' : ''}`}>{status}</div>
             <textarea
               className="conflict-output-editor"
               aria-label="Resolved file content"
               value={output}
-              onChange={(event) => setOutput(event.target.value)}
+              onChange={(event) => changeOutput(event.target.value)}
               spellCheck={false}
               wrap="off"
               readOnly={!editable || saving}
@@ -263,10 +370,7 @@ export function ConflictView({
         danger
         busy={saving}
         onCancel={() => setResetOpen(false)}
-        onConfirm={() => {
-          setOutput(original)
-          setResetOpen(false)
-        }}
+        onConfirm={reset}
       />
       <ConfirmDialog
         open={reloadOpen}
@@ -278,6 +382,9 @@ export function ConflictView({
         onCancel={() => setReloadOpen(false)}
         onConfirm={() => {
           setReloadOpen(false)
+          // The dialog promises to discard the edits, so restore the baseline
+          // first: the reloaded bytes are then adopted without a second prompt.
+          reset()
           onReload()
         }}
       />

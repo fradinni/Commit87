@@ -50,6 +50,71 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
   }
 }
 
+export interface ProviderCapabilities {
+  pullRequests: {
+    list: boolean
+    create: boolean
+    checkout: boolean
+  }
+  releases: {
+    list: boolean
+    create: boolean
+    delete: boolean
+    draft: boolean
+    prerelease: boolean
+  }
+  actions: {
+    list: boolean
+    dispatch: boolean
+    inputs: boolean
+  }
+  pagination: {
+    pullRequests: boolean
+    releases: boolean
+    workflows: boolean
+    runs: boolean
+  }
+}
+
+/**
+ * Static capabilities of each forge. The renderer uses these to hide or
+ * disable controls whose intent the provider cannot honour; main enforces the
+ * same limits before any write is sent.
+ */
+export const PROVIDER_CAPABILITIES: Record<ProviderId, ProviderCapabilities> = {
+  github: {
+    pullRequests: { list: true, create: true, checkout: true },
+    releases: { list: true, create: true, delete: true, draft: true, prerelease: true },
+    actions: { list: true, dispatch: true, inputs: true },
+    pagination: { pullRequests: true, releases: true, workflows: true, runs: true }
+  },
+  gitlab: {
+    pullRequests: { list: true, create: true, checkout: true },
+    // GitLab releases have no draft state and no faithful prerelease flag;
+    // "upcoming" is a scheduled release, not a prerelease.
+    releases: { list: true, create: true, delete: true, draft: false, prerelease: false },
+    actions: { list: true, dispatch: true, inputs: true },
+    pagination: { pullRequests: true, releases: true, workflows: false, runs: true }
+  },
+  bitbucket: {
+    pullRequests: { list: true, create: true, checkout: true },
+    releases: { list: false, create: false, delete: false, draft: false, prerelease: false },
+    // Pipelines cannot accept workflow_dispatch-style inputs.
+    actions: { list: true, dispatch: true, inputs: false },
+    pagination: { pullRequests: true, releases: false, workflows: false, runs: true }
+  },
+  gitea: {
+    pullRequests: { list: true, create: true, checkout: true },
+    releases: { list: true, create: true, delete: true, draft: true, prerelease: true },
+    actions: { list: true, dispatch: true, inputs: true },
+    pagination: { pullRequests: true, releases: true, workflows: false, runs: true }
+  }
+}
+
+export function providerCapabilities(provider: ProviderId): ProviderCapabilities {
+  return PROVIDER_CAPABILITIES[provider]
+}
+
 export interface GitIdentity {
   id: string
   label: string
@@ -62,12 +127,31 @@ export interface GitIdentity {
   createdAt: number
 }
 
+/**
+ * The server an integration's token belongs to. A token is only released to a
+ * Git destination whose host (and explicit port) matches this authority; the
+ * fingerprint binds the stored secret to the endpoint it was issued for.
+ */
+export interface IntegrationAuthority {
+  provider: ProviderId
+  /** Normalized base URL host, lowercase with default ports removed. */
+  host: string
+  /** Explicit non-default port of the base URL, when it has one. */
+  port?: number
+  /** Optional separate Git host (for example a clone host behind an API domain). */
+  cloneHost?: string
+  /** Stable digest of the provider, host, explicit port, clone host and base URL path. */
+  fingerprint: string
+}
+
 export interface IntegrationAccount {
   id: string
   provider: ProviderId
   label: string
   username: string
   baseUrl: string
+  /** Server this account's token is bound to. Derived from provider and baseUrl. */
+  authority?: IntegrationAuthority
   identityId?: string
   hasToken: boolean
   createdAt: number
@@ -79,6 +163,8 @@ export interface IntegrationInput {
   label: string
   username: string
   baseUrl: string
+  /** Optional Git host when it differs from the base URL host. */
+  cloneHost?: string
   identityId?: string
   token?: string
 }
@@ -255,6 +341,8 @@ export interface RefInfo {
 
 export interface TagInfo {
   name: string
+  /** Fully qualified ref (`refs/tags/<name>`), safe to use as a checkout target. */
+  ref: string
   sha: string
   targetSha: string
   annotated: boolean
@@ -322,6 +410,11 @@ export interface SubmoduleAddInput {
   accountId?: string
 }
 
+export interface SubmoduleRemoveResult {
+  /** Where the module clone was moved for recovery; null when it had none. */
+  retainedPath: string | null
+}
+
 export interface SubmoduleUpdateInput {
   repoPath: string
   submodulePath?: string
@@ -342,6 +435,12 @@ export interface StatusFile {
   worktree: string
   stage: FileStage
   label: string
+  /**
+   * True when porcelain v2 reported this pair as a rename. Copies also carry
+   * `origPath` but leave their source in place, so `origPath` alone is not a
+   * signal to act on both paths.
+   */
+  rename?: boolean
 }
 
 export interface RepoStatus {
@@ -381,7 +480,8 @@ export interface RepoConfigEntry {
 export interface DirEntry {
   name: string
   path: string
-  type: 'file' | 'directory'
+  /** A symbolic link is listed but never followed or read by the app. */
+  type: 'file' | 'directory' | 'symlink'
   size?: number
 }
 
@@ -392,6 +492,8 @@ export interface FileContent {
   truncated: boolean
   size: number
   from: 'worktree' | 'head'
+  /** SHA-256 of the returned bytes, absent when truncated or binary. */
+  sha256?: string
 }
 
 export interface BlameLine {
@@ -427,6 +529,10 @@ export interface PullRequest {
   draft: boolean
   author: string
   sourceBranch: string
+  /** Full `owner/repo` of the contributor's repository when the forge reports it. */
+  sourceRepo?: string
+  /** Authoritative head commit. Empty only when the forge omitted it. */
+  headSha: string
   targetBranch: string
   webUrl: string
   createdAt: number
@@ -434,6 +540,16 @@ export interface PullRequest {
   additions?: number
   deletions?: number
   mergeable?: boolean | null
+}
+
+/** One page of a forge collection plus how to ask for the next one. */
+export interface PagedResult<T> {
+  items: T[]
+  hasMore: boolean
+  /** Opaque continuation token interpreted by the provider adapter. */
+  nextPage?: string
+  /** The provider does not expose this collection for the repository. */
+  unsupported?: boolean
 }
 
 export interface CreatePullRequestInput {
@@ -504,6 +620,7 @@ export interface ProviderDetection {
   owner?: string
   repo?: string
   webUrlBase?: string
+  capabilities?: ProviderCapabilities
 }
 
 export interface IntegrationTestResult {
@@ -560,6 +677,29 @@ export interface TaskHandle {
   taskId: string
 }
 
+/**
+ * One task as main remembers it for renderer reconnection. `output` is a
+ * bounded redacted tail, never the whole stream.
+ */
+export interface TaskSnapshotEntry {
+  taskId: string
+  kind: TaskStart['kind']
+  title: string
+  repoPath?: string
+  phase: 'running' | 'end' | 'error'
+  startedAt: number
+  endedAt?: number
+  exitCode?: number
+  error?: string
+  output: string
+}
+
+/** Running tasks plus a small bounded inventory of recently finished ones. */
+export interface TaskSnapshot {
+  running: TaskSnapshotEntry[]
+  recent: TaskSnapshotEntry[]
+}
+
 export interface PushInput {
   repoPath: string
   remote?: string
@@ -599,6 +739,8 @@ export interface ResolveConflictInput {
   repoPath: string
   file: string
   content: string
+  /** Hash of the content the editor loaded; the save is rejected if it no longer matches. */
+  expectedSha256?: string
 }
 
 export interface LogInput {
@@ -620,11 +762,14 @@ export interface DiffInput {
 
 export interface CheckoutInput {
   repoPath: string
+  /** A branch, tag or (with `detach`) a commit or fully qualified ref. */
   branch: string
   create?: boolean
   startPoint?: string
   track?: boolean
   force?: boolean
+  /** Detach HEAD at the target instead of switching to a branch. */
+  detach?: boolean
 }
 
 export interface MergeInput {
@@ -662,11 +807,39 @@ export interface RebasePlanInput {
   identityId?: string
 }
 
-export interface RebaseResult {
+/**
+ * Truthful result of a mutating Git operation. It is built in the main process
+ * from the real child exit status, the repository state afterwards and the
+ * unmerged paths, so a resolved promise is never mistaken for success.
+ */
+export interface GitOperationResult {
+  status: 'ok' | 'conflict' | 'failed'
+  /** Combined stdout and stderr of the command. */
   output: string
-  exitCode: number
-  /** True when the repository is left in a rebasing state (conflict, edit or hook stop). */
+  /** Child exit code, or null when the process was signalled or timed out. */
+  exitCode: number | null
+  /** Termination signal when the child did not exit normally. */
+  signal: string | null
+  /** Operation state after the command (`clean` when nothing is pending). */
+  state: RepoState
+  /** True when the repository still has an operation to continue or abort. */
   inProgress: boolean
+  /** Unmerged paths reported by the index at the end of the command. */
+  conflictFiles: string[]
+}
+
+export type RebaseResult = GitOperationResult
+
+/**
+ * Outcome of discarding selected paths. A failed tracked restore is reported
+ * instead of being swallowed, while untracked-only discards stay successful.
+ */
+export interface DiscardResult {
+  status: 'ok' | 'partial' | 'failed'
+  restored: string[]
+  cleaned: string[]
+  failed: string[]
+  output: string
 }
 
 export interface ResetInput {
@@ -722,6 +895,7 @@ export interface ProviderConnection {
   baseUrl: string
   label: string
   hasToken: boolean
+  capabilities: ProviderCapabilities
 }
 
 export interface ConsoleInput {

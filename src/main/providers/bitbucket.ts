@@ -4,13 +4,16 @@ import type {
   CreatePullRequestInput,
   CreateReleaseInput,
   IntegrationAccount,
-  PullRequest,
+  PagedResult,
+  ProviderCapabilities,
   ProviderRepo,
+  PullRequest,
   Release
 } from '@shared/types'
-import { apiRequest } from './http'
+import { providerCapabilities } from '@shared/types'
+import { apiRequest, joinUrl } from './http'
 import type { ProviderClient } from './types'
-import { requireToken, toEpoch } from './types'
+import { pageOf, requireToken, toEpoch, unsupportedPage } from './types'
 
 interface BitbucketRepo {
   uuid: string
@@ -29,13 +32,19 @@ interface BitbucketRepo {
   }
 }
 
+interface BitbucketPullSource {
+  branch?: { name?: string }
+  commit?: { hash?: string }
+  repository?: { full_name?: string }
+}
+
 interface BitbucketPull {
   id: number
   title: string
   state: string
   draft?: boolean
   author?: { display_name?: string; nickname?: string; username?: string }
-  source?: { branch?: { name?: string } }
+  source?: BitbucketPullSource
   destination?: { branch?: { name?: string } }
   created_on: string
   updated_on: string
@@ -46,7 +55,7 @@ interface BitbucketPipeline {
   uuid: string
   build_number?: number
   state?: { name?: string; result?: { name?: string } }
-  target?: { ref_name?: string; selector?: { pattern?: string } }
+  target?: { ref_name?: string; selector?: { pattern?: string }; commit?: { hash?: string } }
   created_on: string
   completed_on?: string
   links?: { html?: { href?: string } }
@@ -58,9 +67,18 @@ interface BitbucketPage<T> {
   next?: string
 }
 
+/**
+ * Bitbucket's `state` filter is inclusive: asking for one state omits the
+ * others, and omitting the parameter does not reliably return every state, so
+ * `closed` and `all` name the states explicitly.
+ */
+const CLOSED_STATES = ['MERGED', 'DECLINED', 'SUPERSEDED'] as const
+const ALL_STATES = ['OPEN', ...CLOSED_STATES] as const
+
 export class BitbucketClient implements ProviderClient {
   readonly provider = 'bitbucket'
   readonly account: IntegrationAccount
+  readonly capabilities: ProviderCapabilities = providerCapabilities('bitbucket')
   private readonly token: string
   private readonly base: string
 
@@ -70,13 +88,50 @@ export class BitbucketClient implements ProviderClient {
     this.base = account.baseUrl.replace(/\/+$/, '')
   }
 
-  private request<T>(path: string, options: { method?: 'GET' | 'POST' | 'DELETE'; query?: Record<string, string | number | boolean | undefined>; body?: unknown } = {}): Promise<T> {
-    return apiRequest<T>(`${this.base}${path}`, {
+  private request<T>(
+    path: string,
+    options: {
+      method?: 'GET' | 'POST' | 'DELETE'
+      query?: Record<string, string | number | boolean | readonly string[] | undefined>
+      body?: unknown
+    } = {}
+  ): Promise<T> {
+    return apiRequest<T>(joinUrl(this.base, path), {
       ...options,
       token: this.token,
       provider: this.provider,
       username: this.account.username
     })
+  }
+
+  /**
+   * Continuation links may be absolute. Only a same-origin URL of the expected
+   * repository collection is allowed, so a `page` token the renderer supplies
+   * or a hostile `next` link can never aim the account token at another host
+   * or API surface.
+   */
+  private continuation(path: string, collection: string): string {
+    const isCollection = (name: string): boolean => {
+      const normalized = name.replace(/^\/2\.0(?=\/)/, '').replace(/\/+$/, '')
+      return normalized === collection.replace(/\/+$/, '')
+    }
+    if (!/^https?:\/\//i.test(path)) {
+      if (!isCollection(path)) throw new Error('Invalid pagination link')
+      return path
+    }
+    let target: URL
+    let base: URL
+    try {
+      target = new URL(path)
+      base = new URL(this.base)
+    } catch {
+      throw new Error('Invalid pagination link')
+    }
+    if (target.origin !== base.origin) {
+      throw new Error('Refusing to follow a pagination link to another host')
+    }
+    if (!isCollection(target.pathname)) throw new Error('Invalid pagination link')
+    return path
   }
 
   async getCurrentUser(): Promise<{ login: string; name?: string }> {
@@ -85,11 +140,23 @@ export class BitbucketClient implements ProviderClient {
   }
 
   async listRepos(search?: string): Promise<ProviderRepo[]> {
-    const data = await this.request<BitbucketPage<BitbucketRepo>>('/repositories', {
-      query: { role: 'member', pagelen: 100, sort: '-updated_on' }
-    })
+    const repos: BitbucketRepo[] = []
+    let path = '/repositories'
+    let query: Record<string, string | number | readonly string[]> | undefined = {
+      role: 'member',
+      pagelen: 100,
+      sort: '-updated_on'
+    }
+    // Follow `next` so a large workspace does not silently stop at page one.
+    for (let page = 0; page < 20; page += 1) {
+      const data = await this.request<BitbucketPage<BitbucketRepo>>(path, query ? { query } : {})
+      repos.push(...(data.values ?? []))
+      if (!data.next) break
+      path = this.continuation(data.next, '/repositories')
+      query = undefined
+    }
     const term = search?.trim().toLowerCase()
-    return data.values
+    return repos
       .filter((repo) => !term || repo.full_name.toLowerCase().includes(term))
       .map((repo) => {
         const https = repo.links.clone?.find((clone) => clone.name === 'https')
@@ -110,32 +177,26 @@ export class BitbucketClient implements ProviderClient {
       })
   }
 
-  async listPullRequests(owner: string, repo: string, state: 'open' | 'closed' | 'all'): Promise<PullRequest[]> {
-    const query: Record<string, string | number> = { pagelen: 50, sort: '-updated_on' }
-    if (state === 'open') query.state = 'OPEN'
-    const data = await this.request<BitbucketPage<BitbucketPull>>(`/repositories/${owner}/${repo}/pullrequests`, { query })
-    const items = data.values.filter((pull) => state !== 'closed' || pull.state !== 'OPEN')
-    return items.map((pull) => ({
-      id: String(pull.id),
-      number: pull.id,
-      title: pull.title,
-      state:
-        pull.state === 'OPEN'
-          ? pull.draft
-            ? 'draft'
-            : 'open'
-          : pull.state === 'MERGED'
-            ? 'merged'
-            : 'closed',
-      draft: Boolean(pull.draft),
-      author: pull.author?.display_name ?? pull.author?.nickname ?? pull.author?.username ?? '',
-      sourceBranch: pull.source?.branch?.name ?? '',
-      targetBranch: pull.destination?.branch?.name ?? '',
-      webUrl: pull.links?.html?.href ?? '',
-      createdAt: toEpoch(pull.created_on),
-      updatedAt: toEpoch(pull.updated_on),
-      mergeable: null
-    }))
+  async getPullRequest(owner: string, repo: string, number: number): Promise<PullRequest> {
+    const pull = await this.request<BitbucketPull>(`/repositories/${owner}/${repo}/pullrequests/${number}`)
+    return this.mapPull(pull)
+  }
+
+  async listPullRequests(
+    owner: string,
+    repo: string,
+    state: 'open' | 'closed' | 'all',
+    page?: string
+  ): Promise<PagedResult<PullRequest>> {
+    const query: Record<string, string | number | readonly string[]> = { pagelen: 50, sort: '-updated_on' }
+    if (state === 'open') query.state = ['OPEN']
+    else if (state === 'closed') query.state = CLOSED_STATES
+    else query.state = ALL_STATES
+    const path = page
+      ? this.continuation(page, `/repositories/${owner}/${repo}/pullrequests`)
+      : `/repositories/${owner}/${repo}/pullrequests`
+    const data = await this.request<BitbucketPage<BitbucketPull>>(path, { query })
+    return pageOf((data.values ?? []).map((pull) => this.mapPull(pull)), data.next)
   }
 
   async createPullRequest(owner: string, repo: string, input: CreatePullRequestInput): Promise<PullRequest> {
@@ -157,6 +218,8 @@ export class BitbucketClient implements ProviderClient {
       draft: Boolean(pull.draft),
       author: pull.author?.display_name ?? '',
       sourceBranch: input.sourceBranch,
+      sourceRepo: pull.source?.repository?.full_name,
+      headSha: pull.source?.commit?.hash ?? '',
       targetBranch: input.targetBranch,
       webUrl: pull.links?.html?.href ?? '',
       createdAt: toEpoch(pull.created_on),
@@ -165,10 +228,11 @@ export class BitbucketClient implements ProviderClient {
     }
   }
 
-  async listReleases(owner: string, repo: string): Promise<Release[]> {
+  async listReleases(owner: string, repo: string, page?: string): Promise<PagedResult<Release>> {
     void owner
     void repo
-    return []
+    void page
+    return unsupportedPage()
   }
 
   async createRelease(owner: string, repo: string, input: CreateReleaseInput): Promise<Release> {
@@ -185,18 +249,22 @@ export class BitbucketClient implements ProviderClient {
     throw new Error('Bitbucket Cloud does not support releases')
   }
 
-  async listWorkflows(owner: string, repo: string): Promise<ActionWorkflow[]> {
+  async listWorkflows(owner: string, repo: string, page?: string): Promise<PagedResult<ActionWorkflow>> {
     void owner
     void repo
-    return [{ id: 'pipeline', name: 'Bitbucket Pipelines', path: 'bitbucket-pipelines.yml' }]
+    void page
+    return pageOf([{ id: 'pipeline', name: 'Bitbucket Pipelines', path: 'bitbucket-pipelines.yml' }])
   }
 
-  async listRuns(owner: string, repo: string, workflowId?: string): Promise<ActionRun[]> {
+  async listRuns(owner: string, repo: string, workflowId?: string, page?: string): Promise<PagedResult<ActionRun>> {
     void workflowId
-    const data = await this.request<BitbucketPage<BitbucketPipeline>>(`/repositories/${owner}/${repo}/pipelines/`, {
+    const path = page
+      ? this.continuation(page, `/repositories/${owner}/${repo}/pipelines/`)
+      : `/repositories/${owner}/${repo}/pipelines/`
+    const data = await this.request<BitbucketPage<BitbucketPipeline>>(path, {
       query: { pagelen: 40, sort: '-created_on' }
     })
-    return data.values.map((pipeline) => {
+    const items = (data.values ?? []).map((pipeline) => {
       const state = pipeline.state?.name ?? 'PENDING'
       const result = pipeline.state?.result?.name
       return {
@@ -207,13 +275,14 @@ export class BitbucketClient implements ProviderClient {
         status: mapStatus(state),
         conclusion: result ? mapResult(result) : null,
         branch: pipeline.target?.ref_name ?? '',
-        sha: '',
+        sha: pipeline.target?.commit?.hash ?? '',
         event: pipeline.trigger?.name ?? 'push',
         createdAt: toEpoch(pipeline.created_on),
         updatedAt: pipeline.completed_on ? toEpoch(pipeline.completed_on) : undefined,
         webUrl: pipeline.links?.html?.href ?? ''
       }
     })
+    return pageOf(items, data.next)
   }
 
   async triggerAction(
@@ -224,11 +293,39 @@ export class BitbucketClient implements ProviderClient {
     inputs?: Record<string, string>
   ): Promise<void> {
     void workflowId
-    void inputs
+    if (inputs && Object.keys(inputs).length) {
+      throw new Error('Bitbucket Pipelines does not accept workflow inputs. Remove them or define pipeline variables in Bitbucket.')
+    }
     await this.request(`/repositories/${owner}/${repo}/pipelines/`, {
       method: 'POST',
       body: { target: { type: 'pipeline', ref_type: 'branch', ref_name: ref } }
     })
+  }
+
+  private mapPull(pull: BitbucketPull): PullRequest {
+    return {
+      id: String(pull.id),
+      number: pull.id,
+      title: pull.title,
+      state:
+        pull.state === 'OPEN'
+          ? pull.draft
+            ? 'draft'
+            : 'open'
+          : pull.state === 'MERGED'
+            ? 'merged'
+            : 'closed',
+      draft: Boolean(pull.draft),
+      author: pull.author?.display_name ?? pull.author?.nickname ?? pull.author?.username ?? '',
+      sourceBranch: pull.source?.branch?.name ?? '',
+      sourceRepo: pull.source?.repository?.full_name,
+      headSha: pull.source?.commit?.hash ?? '',
+      targetBranch: pull.destination?.branch?.name ?? '',
+      webUrl: pull.links?.html?.href ?? '',
+      createdAt: toEpoch(pull.created_on),
+      updatedAt: toEpoch(pull.updated_on),
+      mergeable: null
+    }
   }
 }
 

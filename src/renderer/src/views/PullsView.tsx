@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUpRight, Download, GitPullRequest, Plus, RefreshCw } from 'lucide-react'
 import type { PullRequest } from '@shared/types'
+import { providerCapabilities } from '@shared/types'
 import { useStore } from '../store'
 import { call } from '../lib/ipc'
 import { formatRelativeTime } from '../lib/format'
 import { Badge, Button, EmptyState, Field, Modal, Select, TextArea, TextInput } from '../components/ui'
 
 export function PullsView() {
-  const repo = useStore((state) => state.currentRepo)
+  // Stable identifiers only: a status poll replaces `currentRepo` and
+  // `detection` objects, but must not reload the forge list.
+  const repoPath = useStore((state) => state.currentRepo?.path ?? null)
   const detection = useStore((state) => state.detection)
   const branches = useStore((state) => state.branches)
   const status = useStore((state) => state.status)
@@ -18,6 +21,10 @@ export function PullsView() {
   const [state, setState] = useState<'open' | 'closed' | 'all'>('open')
   const [pulls, setPulls] = useState<PullRequest[]>([])
   const [loading, setLoading] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const [nextPage, setNextPage] = useState<string | undefined>(undefined)
+  const [hasMore, setHasMore] = useState(false)
   const [busy, setBusy] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [title, setTitle] = useState('')
@@ -32,28 +39,59 @@ export function PullsView() {
   )
   const localBranches = useMemo(() => branches.filter((item) => item.type === 'branch'), [branches])
   const label = detection.provider === 'gitlab' ? 'merge request' : 'pull request'
+  const caps = detection.capabilities?.pullRequests ?? (account ? providerCapabilities(account.provider).pullRequests : undefined)
+  // Accumulated list for "Load more"; the store mirror may be reset by an
+  // unrelated refresh, so paging reads its own copy.
+  const loadedPulls = useRef<PullRequest[]>([])
+  // Only the newest request may write state; a slower response for a previous
+  // filter or page must not overwrite newer results.
+  const requestGeneration = useRef(0)
 
-  const load = useCallback(async () => {
-    if (!repo || !detection.accountId || !detection.owner || !detection.repo) return
-    const repoPath = repo.path
-    setLoading(true)
+  const load = useCallback(async (page?: string): Promise<void> => {
+    if (!repoPath || !detection.accountId || !detection.owner || !detection.repo) return
+    const generation = requestGeneration.current + 1
+    requestGeneration.current = generation
+    const appending = Boolean(page)
+    if (appending) {
+      setLoadingMore(true)
+      setLoading(false)
+    } else {
+      setLoading(true)
+      setLoadingMore(false)
+    }
     try {
       const result = await call('provider.pullRequests', {
         accountId: detection.accountId,
         owner: detection.owner,
         repo: detection.repo,
-        state
+        state,
+        page
       })
-      setPulls(result)
-      useStore.getState().updateTab(repoPath, { pulls: result })
+      if (generation !== requestGeneration.current) return
+      const next = appending ? mergePulls(loadedPulls.current, result.items) : result.items
+      loadedPulls.current = next
+      setPulls(next)
+      setNextPage(result.nextPage)
+      setHasMore(result.hasMore && Boolean(result.nextPage))
+      setFailed(false)
+      useStore.getState().updateTab(repoPath, { pulls: next })
     } catch (error) {
+      if (generation !== requestGeneration.current) return
+      setFailed(true)
       notifyError(error)
     } finally {
-      setLoading(false)
+      // Clear this request's own flag even when a newer request superseded it.
+      if (appending) setLoadingMore(false)
+      else setLoading(false)
     }
-  }, [detection.accountId, detection.owner, detection.repo, notifyError, repo, state])
+  }, [detection.accountId, detection.owner, detection.repo, notifyError, repoPath, state])
 
   useEffect(() => {
+    loadedPulls.current = []
+    setPulls([])
+    setNextPage(undefined)
+    setHasMore(false)
+    setLoadingMore(false)
     void load()
   }, [load])
 
@@ -63,7 +101,7 @@ export function PullsView() {
     setTarget(localBranches.find((item) => item.shortName === 'main')?.shortName ?? localBranches.find((item) => item.shortName === 'master')?.shortName ?? '')
   }, [createOpen, localBranches, status?.branch])
 
-  if (!repo) return null
+  if (!repoPath) return null
 
   if (!account || !detection.owner || !detection.repo) {
     return (
@@ -108,13 +146,13 @@ export function PullsView() {
   const checkout = async (pull: PullRequest): Promise<void> => {
     try {
       const result = await call('provider.checkoutPullRequest', {
-        path: repo.path,
+        path: repoPath,
         accountId: account.id,
         owner: detection.owner!,
         repo: detection.repo!,
         number: pull.number
       })
-      await useStore.getState().refreshAll(repo.path)
+      await useStore.getState().refreshAll(repoPath)
       notifications(`Checked out ${result.branch}`, 'success')
     } catch (error) {
       notifyError(error)
@@ -147,12 +185,21 @@ export function PullsView() {
       </div>
 
       {pulls.length === 0 && !loading ? (
-        <EmptyState
-          icon={<GitPullRequest size={22} />}
-          title={`No ${label}s`}
-          description={`There are no ${state === 'all' ? '' : `${state} `}${label}s for this repository, or the token cannot see them.`}
-          action={<Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}>Create one</Button>}
-        />
+        failed ? (
+          <EmptyState
+            icon={<GitPullRequest size={22} />}
+            title={`Could not load ${label}s`}
+            description="The forge request failed. Check the account token and try again."
+            action={<Button variant="outline" size="sm" onClick={() => void load()}>Retry</Button>}
+          />
+        ) : (
+          <EmptyState
+            icon={<GitPullRequest size={22} />}
+            title={`No ${label}s`}
+            description={`There are no ${state === 'all' ? '' : `${state} `}${label}s for this repository, or the token cannot see them.`}
+            action={<Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}>Create one</Button>}
+          />
+        )
       ) : (
         <div className="pull-list">
           {pulls.map((pull) => (
@@ -175,15 +222,24 @@ export function PullsView() {
                 </span>
               </button>
               <div className="pull-actions">
-                <Button size="sm" variant="ghost" icon={<Download size={13} />} onClick={() => void checkout(pull)}>
-                  Checkout
-                </Button>
+                {caps?.checkout ? (
+                  <Button size="sm" variant="ghost" icon={<Download size={13} />} onClick={() => void checkout(pull)}>
+                    Checkout
+                  </Button>
+                ) : null}
                 <Button size="sm" variant="ghost" icon={<ArrowUpRight size={13} />} onClick={() => void call('app.openExternal', { url: pull.webUrl }).catch(notifyError)}>
                   Open
                 </Button>
               </div>
             </article>
           ))}
+          {hasMore ? (
+            <div className="list-load-more">
+              <Button size="sm" variant="outline" loading={loadingMore} onClick={() => void load(nextPage)}>
+                Load more {label}s
+              </Button>
+            </div>
+          ) : null}
         </div>
       )}
 
@@ -229,4 +285,9 @@ export function PullsView() {
       </Modal>
     </div>
   )
+}
+
+function mergePulls(existing: PullRequest[], incoming: PullRequest[]): PullRequest[] {
+  const seen = new Set(existing.map((pull) => pull.id))
+  return [...existing, ...incoming.filter((pull) => !seen.has(pull.id))]
 }

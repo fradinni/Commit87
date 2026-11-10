@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { destinationFromUrl, integrationAuthority } from '../src/main/providers/remote'
 
 const state = vi.hoisted(() => ({ userData: '' }))
 
@@ -24,6 +25,13 @@ const { AppStore } = await import('../src/main/store')
 
 interface PersistedConfig {
   recentRepos: Array<{ path: string; name: string; pinned?: boolean }>
+  integrations?: Array<{ id: string; authority?: { host: string; fingerprint: string } }>
+}
+
+interface PersistedSecrets {
+  version: number
+  encrypted: boolean
+  tokens: Record<string, { value: string; fingerprint: string } | string>
 }
 
 let userData = ''
@@ -31,6 +39,10 @@ const createdDirs: string[] = []
 
 async function readConfig(): Promise<PersistedConfig> {
   return JSON.parse(await fs.readFile(path.join(userData, 'config.json'), 'utf8')) as PersistedConfig
+}
+
+async function readSecrets(): Promise<PersistedSecrets> {
+  return JSON.parse(await fs.readFile(path.join(userData, 'secrets.json'), 'utf8')) as PersistedSecrets
 }
 
 async function makeProfileDir(): Promise<string> {
@@ -155,5 +167,272 @@ describe('AppStore recent repositories', () => {
     if (!backup) throw new Error('expected the unreadable profile to be kept')
     expect((await fs.stat(path.join(userData, backup))).isDirectory()).toBe(true)
     expect(await readConfig()).toMatchObject({ recentRepos: [] })
+  })
+})
+
+describe('AppStore integration authorities', () => {
+  async function addGitlab(store: InstanceType<typeof AppStore>, host = 'https://gitlab.company.com') {
+    return store.saveIntegration({
+      provider: 'gitlab',
+      label: 'GitLab',
+      username: 'me',
+      baseUrl: host,
+      token: 'dummy-token'
+    })
+  }
+
+  it('binds the stored token to the account authority', async () => {
+    const store = new AppStore()
+    await store.init()
+    const account = await addGitlab(store)
+
+    const persisted = await readSecrets()
+    expect(persisted.version).toBe(2)
+    expect(persisted.tokens[account.id]).toMatchObject({
+      value: 'dummy-token',
+      fingerprint: integrationAuthority('gitlab', 'https://gitlab.company.com')?.fingerprint
+    })
+    expect(await store.getToken(account.id)).toBe('dummy-token')
+    expect((await readConfig()).integrations?.[0].authority).toMatchObject({ host: 'gitlab.company.com' })
+  })
+
+  it('keeps the token for label and username edits', async () => {
+    const store = new AppStore()
+    await store.init()
+    const account = await addGitlab(store)
+
+    const renamed = await store.saveIntegration({
+      id: account.id,
+      provider: 'gitlab',
+      label: 'Work GitLab',
+      username: 'ada',
+      baseUrl: 'https://gitlab.company.com'
+    })
+
+    expect(renamed.hasToken).toBe(true)
+    expect(await store.getToken(account.id)).toBe('dummy-token')
+  })
+
+  it('clears the token when the endpoint changes without a replacement', async () => {
+    const store = new AppStore()
+    await store.init()
+    const account = await addGitlab(store)
+
+    const moved = await store.saveIntegration({
+      id: account.id,
+      provider: 'gitlab',
+      label: 'GitLab',
+      username: 'me',
+      baseUrl: 'https://gitlab.other.example'
+    })
+
+    expect(moved.hasToken).toBe(false)
+    expect(await store.getToken(account.id)).toBeNull()
+    expect(Object.keys((await readSecrets()).tokens)).not.toContain(account.id)
+  })
+
+  it('binds a replacement token to the new endpoint', async () => {
+    const store = new AppStore()
+    await store.init()
+    const account = await addGitlab(store)
+
+    const moved = await store.saveIntegration({
+      id: account.id,
+      provider: 'gitlab',
+      label: 'GitLab',
+      username: 'me',
+      baseUrl: 'https://gitlab.other.example',
+      token: 'replacement-token'
+    })
+
+    expect(moved.hasToken).toBe(true)
+    expect(await store.getToken(account.id)).toBe('replacement-token')
+    expect((await readSecrets()).tokens[account.id]).toMatchObject({
+      fingerprint: integrationAuthority('gitlab', 'https://gitlab.other.example')?.fingerprint
+    })
+  })
+
+  it('clears the token when the base URL path changes', async () => {
+    const store = new AppStore()
+    await store.init()
+    const account = await store.saveIntegration({
+      provider: 'gitlab',
+      label: 'GitLab',
+      username: 'me',
+      baseUrl: 'https://gitlab.company.com/api/v4',
+      token: 'dummy-token'
+    })
+
+    const moved = await store.saveIntegration({
+      id: account.id,
+      provider: 'gitlab',
+      label: 'GitLab',
+      username: 'me',
+      baseUrl: 'https://gitlab.company.com/api/v5'
+    })
+
+    expect(moved.hasToken).toBe(false)
+  })
+
+  it('lets a host match authorize even when the provider heuristic differs', async () => {
+    const store = new AppStore()
+    await store.init()
+    const account = await store.saveIntegration({
+      provider: 'gitea',
+      label: 'Gitea',
+      username: 'me',
+      baseUrl: 'https://gitlab.company.com',
+      token: 'dummy-token'
+    })
+    const destination = destinationFromUrl('https://gitlab.company.com/acme/app.git')
+    // The hostname suggests "gitlab", but the configured account for that
+    // exact host is still the authorized one.
+    expect(store.authorizeAccount('/work/alpha', 'gitlab', destination)?.id).toBe(account.id)
+  })
+
+  it('rejects plain http endpoints except on loopback', async () => {
+    const store = new AppStore()
+    await store.init()
+    await expect(
+      store.saveIntegration({
+        provider: 'gitea',
+        label: 'Gitea',
+        username: 'me',
+        baseUrl: 'http://git.internal:3000',
+        token: 'dummy-token'
+      })
+    ).rejects.toThrow(/https/)
+
+    const local = await store.saveIntegration({
+      provider: 'gitea',
+      label: 'Local',
+      username: 'me',
+      baseUrl: 'http://127.0.0.1:3000',
+      token: 'dummy-token'
+    })
+    expect(local.hasToken).toBe(true)
+  })
+
+  it('drops unbound version 1 tokens, backfills authorities and removes orphans', async () => {
+    await fs.writeFile(
+      path.join(userData, 'config.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        integrations: [
+          {
+            id: 'acc-legacy',
+            provider: 'gitlab',
+            label: 'GitLab',
+            username: 'me',
+            baseUrl: 'https://gitlab.company.com',
+            hasToken: true,
+            createdAt: 0
+          }
+        ]
+      }),
+      'utf8'
+    )
+    await fs.writeFile(
+      path.join(userData, 'secrets.json'),
+      JSON.stringify({ version: 1, encrypted: false, tokens: { 'acc-legacy': 'legacy-token', orphan: 'orphan-token' } }),
+      'utf8'
+    )
+
+    const store = new AppStore()
+    await store.init()
+
+    // Version 1 kept a token across endpoint edits and recorded no authority,
+    // so the server it belongs to is unknowable: require it again.
+    expect(await store.getToken('acc-legacy')).toBeNull()
+    expect(store.getConfig().integrations[0]?.hasToken).toBe(false)
+    const secrets = await readSecrets()
+    expect(secrets.version).toBe(2)
+    expect(secrets.tokens['acc-legacy']).toBeUndefined()
+    expect(secrets.tokens.orphan).toBeUndefined()
+    expect((await readConfig()).integrations?.[0].authority).toMatchObject({ host: 'gitlab.company.com' })
+
+    // The migrated profile loads without another rewrite.
+    const restarted = new AppStore()
+    await restarted.init()
+    expect(await restarted.getToken('acc-legacy')).toBeNull()
+  })
+
+  it('refuses a stored token whose recorded authority no longer matches', async () => {
+    await fs.writeFile(
+      path.join(userData, 'config.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        integrations: [
+          {
+            id: 'acc',
+            provider: 'gitlab',
+            label: 'GitLab',
+            username: 'me',
+            baseUrl: 'https://gitlab.company.com',
+            hasToken: true,
+            createdAt: 0
+          }
+        ]
+      }),
+      'utf8'
+    )
+    await fs.writeFile(
+      path.join(userData, 'secrets.json'),
+      JSON.stringify({
+        version: 2,
+        encrypted: false,
+        tokens: { acc: { value: 'stale-token', fingerprint: 'gitlab|gitlab.previous.example||' } }
+      }),
+      'utf8'
+    )
+
+    const store = new AppStore()
+    await store.init()
+    expect(store.hasToken('acc')).toBe(false)
+    await expect(store.getToken('acc')).rejects.toThrow(/different server/)
+  })
+
+  it('authorizes only an exact destination, never a pinned or sole account', async () => {
+    const store = new AppStore()
+    await store.init()
+    const account = await addGitlab(store)
+    const githubDestination = destinationFromUrl('https://github.com/acme/app.git')
+    if (!githubDestination) throw new Error('expected a destination')
+
+    await store.setRepoDefaults('/work/alpha', {
+      identityId: undefined,
+      defaultRemote: 'origin',
+      integrationByProvider: { gitlab: account.id }
+    })
+
+    // Pinned and sole account, but the host does not match: anonymous.
+    expect(store.authorizeAccount('/work/alpha', 'gitlab', githubDestination)).toBeUndefined()
+    expect(store.authorizeAccount('/work/alpha', undefined, githubDestination)).toBeUndefined()
+
+    // An explicit id must match too.
+    expect(() => store.authorizeAccount('/work/alpha', 'gitlab', githubDestination, account.id)).toThrow(/not authorized/)
+    expect(
+      store.authorizeAccount('/work/alpha', undefined, destinationFromUrl('https://gitlab.company.com/a/b.git'), account.id)?.id
+    ).toBe(account.id)
+  })
+
+  it('prefers a matching pinned account over other matching accounts', async () => {
+    const store = new AppStore()
+    await store.init()
+    await addGitlab(store)
+    const second = await store.saveIntegration({
+      provider: 'gitlab',
+      label: 'Other GitLab',
+      username: 'me',
+      baseUrl: 'https://gitlab.company.com',
+      token: 'other-token'
+    })
+    await store.setRepoDefaults('/work/alpha', {
+      identityId: undefined,
+      defaultRemote: 'origin',
+      integrationByProvider: { gitlab: second.id }
+    })
+    const destination = destinationFromUrl('https://gitlab.company.com/a/b.git')
+    expect(store.authorizeAccount('/work/alpha', 'gitlab', destination)?.id).toBe(second.id)
   })
 })

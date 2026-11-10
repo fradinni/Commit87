@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  RequestScope,
   applyRepoTabPatch,
   closeTabRecord,
   cycleTabId,
@@ -167,6 +168,40 @@ describe('repository tab grouping', () => {
   })
 })
 
+describe('request ownership', () => {
+  it('lets the newest request for a field win', () => {
+    const scope = new RequestScope()
+    const first = scope.begin('/repo', ['repo'])
+    const second = scope.begin('/repo', ['repo'])
+    expect(scope.owns(first, 'repo')).toBe(false)
+    expect(scope.owns(second, 'repo')).toBe(true)
+  })
+
+  it('keeps separate fields independent for overlapping refreshes', () => {
+    const scope = new RequestScope()
+    const full = scope.begin('/repo', ['repo', 'branches'])
+    const poll = scope.begin('/repo', ['repo'])
+    expect(scope.owns(full, 'repo')).toBe(false)
+    expect(scope.owns(full, 'branches')).toBe(true)
+    expect(scope.owns(poll, 'repo')).toBe(true)
+  })
+
+  it('voids everything captured before a close and reopen', () => {
+    const scope = new RequestScope()
+    const before = scope.begin('/repo', ['repo', 'commits'])
+    scope.restart('/repo')
+    const after = scope.begin('/repo', ['repo'])
+    expect(scope.isCurrent(before)).toBe(false)
+    expect(scope.owns(before, 'repo')).toBe(false)
+    expect(scope.owns(before, 'commits')).toBe(false)
+    expect(scope.owns(after, 'repo')).toBe(true)
+    // A different repository is never affected by another tab's lifetime.
+    const other = scope.begin('/other', ['repo'])
+    scope.restart('/repo')
+    expect(scope.owns(other, 'repo')).toBe(true)
+  })
+})
+
 describe('active tab patch mirroring', () => {
   const tabs: FakeTab[] = [{ id: 'a', status: 'clean', view: 'graph' }, { id: 'b', status: 'dirty', view: 'files' }]
 
@@ -198,5 +233,18 @@ describe('active tab patch mirroring', () => {
   it('allows clearing a repository field to null or undefined', () => {
     const next = applyRepoTabPatch(tabs, 'b', { status: null })
     expect(next?.[1].status).toBeNull()
+  })
+
+  it('mirrors commit and conflict drafts with the repository tab', () => {
+    const conflictDrafts = {
+      '/repo\u0000src/app.ts\u0000abc': { output: 'ours\n', eol: '\n' as const, updatedAt: 1 }
+    }
+    const patch = { commitMessage: 'wip: draft', commitAmend: true, commitSignoff: true, conflictDrafts }
+    expect(pickRepoTabPatch(patch)).toEqual(patch)
+
+    const next = applyRepoTabPatch(tabs, 'a', patch)
+    expect(next?.[0]).toMatchObject(patch)
+    expect(next?.[1]).toEqual(tabs[1])
+    expect(tabs[0]).not.toMatchObject(patch)
   })
 })

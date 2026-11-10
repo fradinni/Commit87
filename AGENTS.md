@@ -87,7 +87,7 @@ version files from `package.json`.
 src/main/          Electron main: window/protocol, menu, store + secrets, tasks
 src/main/git/      runner (spawn/env), parsers, typed repo operations
 src/main/providers/ GitHub, GitLab, Bitbucket, Gitea clients + service/URL helpers
-src/main/ipc/      single validated IPC router (exhaustive switch)
+src/main/ipc/      single validated IPC router (typed decoder/handler tables) + grants
 src/preload/       contextBridge: invoke + task/window/menu subscriptions only
 src/shared/        pure domain types and the typed IPC contract (no Node/Electron)
 src/renderer/src/  React UI: App, components, views, zustand store, lib, styles
@@ -100,7 +100,7 @@ docs/              architecture, packaging, testing, screenshots
 Rules by boundary: `shared` stays dependency-free; `main` validates and owns privileges;
 `preload` exposes only the bridge; `renderer` has no Node, secrets, or direct network.
 Extending IPC means: add to `IpcMethods` in `src/shared/ipc.ts`, add a type in
-`src/shared/types.ts`, implement the exhaustive case in `src/main/ipc/router.ts`, then wire
+`src/shared/types.ts`, add the decoder and handler entries in `src/main/ipc/router.ts`, then wire
 the store/view. Never bypass `src/renderer/src/lib/ipc.ts`.
 
 Integration tests create temporary repositories under `os.tmpdir()` and clean up; never

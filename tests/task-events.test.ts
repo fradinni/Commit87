@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import os from 'node:os'
-import { TaskManager } from '../src/main/tasks'
+import { TASK_RECENT_LIMIT, TASK_TAIL_BYTES, TaskManager, TaskOutputBuffer } from '../src/main/tasks'
 import type { TaskEvent } from '../src/shared/types'
 
 interface RunOptions {
@@ -34,6 +34,106 @@ function runTask(repoPath: string | undefined, options: RunOptions = {}): Promis
     })
   })
 }
+
+describe('bounded task output', () => {
+  it('caps a newline-free stream instead of growing without limit', () => {
+    const buffer = new TaskOutputBuffer(20, 8)
+    const emitted = buffer.push('x'.repeat(50))
+    expect(emitted.length).toBeGreaterThan(1)
+    expect(emitted.every((line) => line.length <= 8)).toBe(true)
+    expect(buffer.tail.length).toBeLessThanOrEqual(20)
+  })
+
+  it('keeps the retained tail bounded for long output', () => {
+    const buffer = new TaskOutputBuffer(32, 16)
+    for (let index = 0; index < 100; index += 1) buffer.push(`line-${index}\n`)
+    expect(buffer.tail.length).toBeLessThanOrEqual(32)
+    expect(buffer.tail).toContain('line-99')
+    expect(buffer.tail).not.toContain('line-0\n')
+  })
+
+  it('flushes an unterminated last line and ignores blank separators', () => {
+    const buffer = new TaskOutputBuffer(TASK_TAIL_BYTES, 1024)
+    expect(buffer.push('one\n\n')).toEqual(['one'])
+    expect(buffer.push('two without newline')).toEqual([])
+    expect(buffer.finish()).toEqual(['two without newline'])
+    expect(buffer.finish()).toEqual([])
+  })
+
+  it('emits an over-long terminated line as bounded pieces, not a truncated one', () => {
+    const buffer = new TaskOutputBuffer(64, 8)
+    const emitted = buffer.push(`${'abcdefgh'.repeat(4)}\n`)
+    expect(emitted.join('')).toBe('abcdefgh'.repeat(4))
+    expect(emitted.every((line) => line.length <= 8)).toBe(true)
+    expect(buffer.finish()).toEqual([])
+  })
+
+  it('redacts through the same hook as the emitted events', () => {
+    const buffer = new TaskOutputBuffer(200, 200, (text) => text.replace('secret', '***'))
+    const emitted = buffer.push('token secret here\n')
+    expect(emitted).toEqual(['token *** here'])
+    expect(buffer.tail).not.toContain('secret')
+  })
+})
+
+describe('task inventory snapshot', () => {
+  function startVersionTask(): { manager: TaskManager; taskId: string; done: Promise<void> } {
+    let settle: (() => void) | null = null
+    const manager = new TaskManager((event) => {
+      if (event.phase === 'end' || event.phase === 'error') settle?.()
+    })
+    const done = new Promise<void>((resolve) => {
+      settle = resolve
+    })
+    const { taskId } = manager.start({
+      kind: 'console',
+      title: 'git version',
+      args: ['version'],
+      cwd: os.tmpdir(),
+      repoPath: '/tmp/commit87-task-events'
+    })
+    return { manager, taskId, done }
+  }
+
+  it('lists a running task immediately and moves it to recent on completion', async () => {
+    const { manager, taskId, done } = startVersionTask()
+    const running = manager.snapshot()
+    expect(running.running.map((entry) => entry.taskId)).toContain(taskId)
+    expect(running.recent).toHaveLength(0)
+
+    await done
+    const snapshot = manager.snapshot()
+    expect(snapshot.running).toHaveLength(0)
+    const finished = snapshot.recent.find((entry) => entry.taskId === taskId)
+    expect(finished?.phase).toBe('end')
+    expect(finished?.repoPath).toBe('/tmp/commit87-task-events')
+    expect(finished?.output).toContain('git version')
+  })
+
+  it('caps the recent inventory and drops the oldest entries', async () => {
+    let settle: (() => void) | null = null
+    const manager = new TaskManager((event) => {
+      if (event.phase === 'end' || event.phase === 'error') settle?.()
+    })
+    const ids: string[] = []
+    const run = (): Promise<void> =>
+      new Promise<void>((resolve) => {
+        settle = resolve
+        const { taskId } = manager.start({
+          kind: 'console',
+          title: 'git version',
+          args: ['version'],
+          cwd: os.tmpdir()
+        })
+        ids.push(taskId)
+      })
+    for (let index = 0; index < TASK_RECENT_LIMIT + 2; index += 1) await run()
+
+    const snapshot = manager.snapshot()
+    expect(snapshot.recent).toHaveLength(TASK_RECENT_LIMIT)
+    expect(snapshot.recent.map((entry) => entry.taskId)).toEqual(ids.slice(2))
+  })
+})
 
 describe('task events carry the repository they belong to', () => {
   it('tags every phase of a task with repoPath', async () => {

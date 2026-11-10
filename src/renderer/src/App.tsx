@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { FolderGit2, Plus } from 'lucide-react'
-import { activeIdentity, useStore } from './store'
+import { selectedIdentityId, useStore } from './store'
 import { call, errorMessage } from './lib/ipc'
 import { repoPathKey } from './lib/tabs'
 import { Logo, TitleBar } from './components/TitleBar'
@@ -82,6 +82,12 @@ export function App() {
         void useStore.getState().openRepo(event.repoPath).catch((error) => useStore.getState().notifyError(error))
       }
     })
+    // Subscribing first and reconciling afterwards means a completion can
+    // arrive either way without being lost; the store deduplicates by task id
+    // and against the completions the previous renderer already announced.
+    void call('tasks.snapshot', undefined)
+      .then((snapshot) => useStore.getState().reconcileTasks(snapshot))
+      .catch(() => undefined)
     const unsubscribeUpdates = window.commit87.onUpdateStatus((status) => {
       const previous = useStore.getState().updateStatus
       useStore.getState().setUpdateStatus(status)
@@ -225,6 +231,8 @@ export function App() {
         (item) => item.repoPath && repoPathKey(item.repoPath, window.commit87.platform) === activeId
       )
       if (document.visibilityState === 'visible' && !activeBusy) {
+        // Only status and the cheap repository facts are refreshed here; the
+        // commit graph, collections and forge detection are not re-read.
         void state.refreshStatus()
       }
     }, 5000)
@@ -297,7 +305,7 @@ export function App() {
     if (!state.currentRepo) return
     setPushRemote(state.repoDefaults.defaultRemote ?? state.currentRepo.remotes[0]?.name ?? '')
     setPushBranch(state.status?.branch ?? state.currentRepo.currentBranch ?? '')
-    setPushIdentity(activeIdentity()?.id)
+    setPushIdentity(selectedIdentityId())
     setPushAccount(state.detection.accountId)
     setPushUpstream(!state.status?.upstream)
     setPushForce('none')

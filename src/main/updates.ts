@@ -1,4 +1,6 @@
 import type { UpdateChannel, UpdateProgress, UpdateStatus } from '@shared/types'
+import { createAppImageProbe, revalidateAppImage } from './appimage-binding'
+import type { AppImageProbe, VerifiedAppImage } from './appimage-binding'
 import { detectUpdateSupport } from './update-support'
 import type { UpdateEnvironment, UpdateSupport } from './update-support'
 
@@ -19,9 +21,13 @@ export interface UpdateAdapter {
   setAutoInstallOnAppQuit(value: boolean): void
   setAllowDowngrade(value: boolean): void
   check(): Promise<UpdateInfoSummary | null>
-  /** Starts a download; the returned task can cancel it (used on a channel switch). */
-  download(): UpdateDownloadTask
-  quitAndInstall(): void
+  /**
+   * Starts a download; the returned task can cancel it (used on a channel
+   * switch). The verified AppImage target is passed explicitly so the adapter
+   * never reads a possibly-mutated `APPIMAGE` environment variable.
+   */
+  download(target: VerifiedAppImage | null): UpdateDownloadTask
+  quitAndInstall(target: VerifiedAppImage | null): void
   onChecking(listener: () => void): void
   onAvailable(listener: (info: UpdateInfoSummary) => void): void
   onNotAvailable(listener: () => void): void
@@ -48,6 +54,8 @@ export interface UpdateServiceOptions {
   onChange?: (status: UpdateStatus) => void
   /** Delay before the automatic check after launch. */
   autoCheckDelayMs?: number
+  /** Injectable probe so AppImage revalidation can be tested without FUSE. */
+  appImageProbe?: AppImageProbe
 }
 
 const MAX_ERROR_LENGTH = 500
@@ -88,6 +96,8 @@ export class UpdateService {
   private readonly adapter: UpdateAdapter
   private readonly support: UpdateSupport
   private readonly options: UpdateServiceOptions
+  private readonly appImageProbe: AppImageProbe
+  private readonly appImageTarget: VerifiedAppImage | null
   private status: UpdateStatus
   private appliedChannel: UpdateChannel
   private appliedAutoCheck: boolean
@@ -107,6 +117,8 @@ export class UpdateService {
     this.options = options
     this.adapter = options.adapter
     this.support = detectUpdateSupport(options.environment)
+    this.appImageProbe = options.appImageProbe ?? createAppImageProbe()
+    this.appImageTarget = options.environment.appImage ?? null
     const preferences = options.preferences()
     this.appliedChannel = preferences.channel
     this.appliedAutoCheck = preferences.autoCheck
@@ -260,6 +272,15 @@ export class UpdateService {
       throw new Error('No update is available to download.')
     }
 
+    // Revalidate immediately before the adapter is allowed to act. The target,
+    // not the environment, is what the adapter will replace.
+    const binding = this.boundAppImageTarget()
+    if (!binding.ok) {
+      this.fail(new Error(`The update download was refused: ${binding.reason}`))
+      this.emit()
+      return this.snapshot()
+    }
+
     const generation = ++this.downloadGeneration
     this.downloadChannel = this.status.channel
     this.status.phase = 'downloading'
@@ -271,7 +292,7 @@ export class UpdateService {
 
     const task = ((): UpdateDownloadTask => {
       try {
-        return this.adapter.download()
+        return this.adapter.download(binding.target)
       } catch (error) {
         // A synchronous adapter failure must not leave the UI stuck in
         // `downloading` with no task to settle.
@@ -316,7 +337,31 @@ export class UpdateService {
     if (this.status.phase !== 'ready') {
       throw new Error('No downloaded update is ready to install.')
     }
-    this.adapter.quitAndInstall()
+    // Recompute the binding again: the package was downloaded minutes ago and
+    // the target may have been replaced, renamed or unmounted since.
+    const binding = this.boundAppImageTarget()
+    if (!binding.ok) {
+      const error = new Error(`The update cannot be installed: ${binding.reason}`)
+      this.fail(error)
+      this.emit()
+      throw error
+    }
+    this.adapter.quitAndInstall(binding.target)
+  }
+
+  /**
+   * Return the verified AppImage target for an adapter call, or explain why the
+   * call must not happen. Non-AppImage formats have no such target and are
+   * unaffected by this check.
+   */
+  private boundAppImageTarget(): { ok: true; target: VerifiedAppImage | null } | { ok: false; reason: string } {
+    if (this.support.format !== 'appimage') return { ok: true, target: null }
+    if (!this.appImageTarget) {
+      return { ok: false, reason: 'no update target is bound to the running installation.' }
+    }
+    const check = revalidateAppImage(this.appImageProbe, this.appImageTarget)
+    if (!check.ok) return { ok: false, reason: check.reason }
+    return { ok: true, target: this.appImageTarget }
   }
 
   private applyAdapterPreferences(preferences: UpdatePreferences): void {

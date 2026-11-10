@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type {
@@ -7,8 +8,9 @@ import type {
   DiffInput,
   DiffResult,
   DirEntry,
+  DiscardResult,
   FileContent,
-  GitIdentity,
+  GitOperationResult,
   IntegrationAccount,
   LogInput,
   MergeInput,
@@ -20,6 +22,7 @@ import type {
   StashInfo,
   SubmoduleAddInput,
   SubmoduleInfo,
+  SubmoduleRemoveResult,
   SubmoduleUpdateInput,
   TagCreateInput,
   TagInfo,
@@ -28,7 +31,8 @@ import type {
   WorktreeStatus,
   CheckoutInput
 } from '@shared/types'
-import { buildAuthArgs, buildIdentityEnv, runGit, tryRunGit } from './runner'
+import { buildAuthArgs, buildIdentityEnv, gitError, runGit, tryRunGit } from './runner'
+import type { GitResult, IdentityEnvInput } from './runner'
 import {
   parseBlame,
   parseBranches,
@@ -45,9 +49,10 @@ import {
   parseWorktrees
 } from './parsers'
 import { detectProviderFromUrl } from '../providers/remote'
+import { configKey, headPath, refName, relPath, remoteName, revision, revisionRange, text } from '../ipc/validate'
 
 export interface GitAuthContext {
-  identity?: GitIdentity | null
+  identity?: IdentityEnvInput | null
   account?: IntegrationAccount | null
   token?: string | null
   /** Scope the credential helper to this URL origin (used for submodule add). */
@@ -60,7 +65,165 @@ function contextArgs(ctx: GitAuthContext): { args: string[]; env: NodeJS.Process
   return { args: [...ident.args, ...auth.args], env: { ...ident.env, ...auth.env } }
 }
 
+/**
+ * Discovery facts that belong to the repository directory itself. They survive
+ * a refresh and are reused only while every directory still exists; anything
+ * that can change without Git (branch, HEAD, status, remotes, operation state)
+ * is read on every call.
+ */
+interface StableRepoFacts {
+  root: string
+  canonicalRoot: string
+  gitDir: string
+  commonDir: string
+  name: string
+  isBare: boolean
+  worktree: boolean
+  /** `dev:ino` of the Git directory, so a re-created repository is not reused. */
+  gitDirId: string
+}
+
+/** Process counts for the discovery note in `docs/architecture.md` and its test. */
+export const repoDiscoveryMetrics = { calls: 0, spawns: 0, cacheHits: 0 }
+
+const STABLE_DISCOVERY = new Map<string, StableRepoFacts>()
+let discoveryEpoch = 0
+const STABLE_DISCOVERY_PENDING = new Map<string, Promise<StableRepoFacts>>()
+const RESOLVE_PENDING = new Map<string, Promise<RepoInfo>>()
+
+export function resetRepoDiscoveryMetrics(): void {
+  repoDiscoveryMetrics.calls = 0
+  repoDiscoveryMetrics.spawns = 0
+  repoDiscoveryMetrics.cacheHits = 0
+}
+
+/**
+ * Drop cached discovery for a path that was just created, removed, renamed or
+ * re-initialized. Every matching key is removed so a linked worktree and its
+ * common directory cannot keep stale facts.
+ */
+export function invalidateRepoDiscovery(...inputs: string[]): void {
+  discoveryEpoch += 1
+  for (const input of inputs) {
+    const target = path.resolve(input)
+    for (const [key, facts] of STABLE_DISCOVERY) {
+      if (
+        key === target ||
+        path.resolve(facts.root) === target ||
+        path.resolve(facts.canonicalRoot) === target ||
+        path.resolve(facts.gitDir) === target ||
+        path.resolve(facts.commonDir) === target
+      ) {
+        STABLE_DISCOVERY.delete(key)
+        STABLE_DISCOVERY_PENDING.delete(key)
+      }
+    }
+  }
+}
+
+async function stableFactsStillExist(facts: StableRepoFacts): Promise<boolean> {
+  try {
+    const stats = await Promise.all([
+      fs.stat(facts.root),
+      fs.stat(facts.canonicalRoot),
+      fs.stat(facts.gitDir)
+    ])
+    if (!stats.every((stat) => stat.isDirectory())) return false
+    // A folder that was deleted and re-created as a different repository has
+    // the same paths but a different Git directory identity.
+    const identity = await statIdentity(facts.gitDir)
+    return identity !== '' && identity === facts.gitDirId
+  } catch {
+    return false
+  }
+}
+
+async function statIdentity(target: string): Promise<string> {
+  try {
+    const stat = await fs.stat(target)
+    return `${stat.dev}:${stat.ino}`
+  } catch {
+    return ''
+  }
+}
+
+async function discoverStable(candidate: string): Promise<StableRepoFacts> {
+  const cwd = candidate
+  repoDiscoveryMetrics.spawns += 1
+  const bareResult = await tryRunGit(['rev-parse', '--is-bare-repository'], { cwd })
+  if (!bareResult || bareResult.exitCode !== 0) {
+    throw new Error(`${cwd} is not a Git repository`)
+  }
+  const bare = bareResult.stdout.trim() === 'true'
+  // One process for the remaining paths. A bare repository cannot ask for
+  // `--show-toplevel`, so only the non-bare form includes it.
+  const args = bare
+    ? ['rev-parse', '--absolute-git-dir', '--git-common-dir']
+    : ['rev-parse', '--absolute-git-dir', '--show-toplevel', '--git-common-dir']
+  repoDiscoveryMetrics.spawns += 1
+  const paths = await runGit(args, { cwd })
+  const lines = paths.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const gitDir = lines[0]
+  if (!gitDir) throw new Error(`${cwd} is not a Git repository`)
+  // A bare repository has no worktree: its own folder is the repository.
+  const root = !bare && lines[1] ? lines[1] : candidate
+  const commonRaw = bare ? lines[1] : lines[2]
+  const commonDirRaw = commonRaw ? path.resolve(root, commonRaw) : gitDir
+  const canonicalRoot = await fs.realpath(root).catch(() => path.resolve(root))
+  // Symlinked checkouts can reach the same shared Git directory through
+  // different paths; resolve it once so linked worktrees group consistently.
+  const commonDir = await fs.realpath(commonDirRaw).catch(() => commonDirRaw)
+  return {
+    root,
+    canonicalRoot,
+    gitDir,
+    commonDir,
+    name: path.basename(root) || path.basename(candidate),
+    isBare: bare,
+    worktree: path.resolve(commonDirRaw) !== path.resolve(gitDir),
+    gitDirId: await statIdentity(gitDir)
+  }
+}
+
+async function stableFactsFor(candidate: string, canonicalCandidate: string): Promise<StableRepoFacts> {
+  const cached = STABLE_DISCOVERY.get(canonicalCandidate)
+  if (cached) {
+    if (await stableFactsStillExist(cached)) {
+      repoDiscoveryMetrics.cacheHits += 1
+      return cached
+    }
+    STABLE_DISCOVERY.delete(canonicalCandidate)
+  }
+  const pending = STABLE_DISCOVERY_PENDING.get(canonicalCandidate)
+  if (pending) return pending
+  const epoch = discoveryEpoch
+  const started = discoverStable(candidate)
+    .then((facts) => {
+      // An invalidation that happened while discovery was running wins: do not
+      // repopulate the cache with facts that were just declared stale.
+      if (discoveryEpoch === epoch) STABLE_DISCOVERY.set(canonicalCandidate, facts)
+      return facts
+    })
+    .finally(() => {
+      if (STABLE_DISCOVERY_PENDING.get(canonicalCandidate) === started) {
+        STABLE_DISCOVERY_PENDING.delete(canonicalCandidate)
+      }
+    })
+  STABLE_DISCOVERY_PENDING.set(canonicalCandidate, started)
+  return started
+}
+
+/**
+ * Resolve a repository. Stable directory discovery is cached; branch, HEAD,
+ * status, remotes and the pending operation are read live so external Git
+ * activity is always visible. Concurrent calls for the same checkout share
+ * one throwaway read instead of spawning the same commands in parallel.
+ */
 export async function resolveRepo(inputPath: string): Promise<RepoInfo> {
+  repoDiscoveryMetrics.calls += 1
   const candidate = path.resolve(inputPath)
   let stat
   try {
@@ -70,37 +233,47 @@ export async function resolveRepo(inputPath: string): Promise<RepoInfo> {
   }
   if (!stat.isDirectory()) throw new Error(`Not a directory: ${candidate}`)
 
-  const cwd = candidate
-  const bareResult = await tryRunGit(['rev-parse', '--is-bare-repository'], { cwd })
-  if (!bareResult || bareResult.exitCode !== 0) {
-    throw new Error(`${cwd} is not a Git repository`)
+  const canonicalCandidate = await fs.realpath(candidate).catch(() => candidate)
+  const pending = RESOLVE_PENDING.get(canonicalCandidate)
+  if (pending) return pending
+  const started = resolveRepoFresh(candidate, canonicalCandidate)
+  RESOLVE_PENDING.set(canonicalCandidate, started)
+  try {
+    return await started
+  } finally {
+    if (RESOLVE_PENDING.get(canonicalCandidate) === started) RESOLVE_PENDING.delete(canonicalCandidate)
   }
-  const bare = bareResult.stdout.trim() === 'true'
-  const gitDirResult = await runGit(['rev-parse', '--absolute-git-dir'], { cwd })
-  const gitDir = gitDirResult.stdout.trim()
-  let root = candidate
-  if (!bare) {
-    const top = await runGit(['rev-parse', '--show-toplevel'], { cwd })
-    root = top.stdout.trim() || candidate
+}
+
+async function resolveRepoFresh(candidate: string, canonicalCandidate: string): Promise<RepoInfo> {
+  const facts = await stableFactsFor(candidate, canonicalCandidate)
+  const { root, isBare: bare } = facts
+
+  let currentBranch: string | null
+  let headSha: string | null
+  let detached: boolean
+  let status: RepoStatus | null
+  if (bare) {
+    repoDiscoveryMetrics.spawns += 1
+    const branchRaw = await tryRunGit(['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: root })
+    const rawBranch = branchRaw?.stdout.trim() ?? 'HEAD'
+    detached = rawBranch === 'HEAD'
+    currentBranch = detached ? null : rawBranch || null
+    repoDiscoveryMetrics.spawns += 1
+    const headRaw = await tryRunGit(['rev-parse', 'HEAD'], { cwd: root })
+    headSha = headRaw?.stdout.trim() || null
+    status = null
+  } else {
+    // The branch status already carries HEAD, upstream and ahead/behind, so a
+    // second pair of `rev-parse` calls is unnecessary.
+    repoDiscoveryMetrics.spawns += 1
+    status = await getStatus(root)
+    currentBranch = status.branch
+    headSha = status.headSha
+    detached = status.detached
   }
-  const canonicalRoot = await fs.realpath(root).catch(() => path.resolve(root))
-  const commonRaw = await tryRunGit(['rev-parse', '--git-common-dir'], { cwd })
-  const commonDirRaw = commonRaw?.stdout.trim() ? path.resolve(root, commonRaw.stdout.trim()) : gitDir
-  // Symlinked checkouts can reach the same shared Git directory through
-  // different paths; resolve it once so linked worktrees group consistently.
-  const commonDir = await fs.realpath(commonDirRaw).catch(() => commonDirRaw)
-  const linkedWorktree = path.resolve(commonDirRaw) !== path.resolve(gitDir)
 
-  const branchRaw = await tryRunGit(['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: root })
-  const rawBranch = branchRaw?.stdout.trim() ?? 'HEAD'
-  const detached = rawBranch === 'HEAD'
-  const currentBranch = detached ? null : rawBranch || null
-  const headRaw = await tryRunGit(['rev-parse', 'HEAD'], { cwd: root })
-  const headSha = headRaw?.stdout.trim() || null
-
-  const statusRaw = await runGit(['status', '--porcelain=v2', '--branch', '-z'], { cwd: root })
-  const status = parseStatus(statusRaw.stdout)
-
+  repoDiscoveryMetrics.spawns += 1
   const remotesRaw = await runGit(['remote', '-v'], { cwd: root })
   const remotes = parseRemotes(remotesRaw.stdout).map((remote) => {
     const detected = detectProviderFromUrl(remote.fetchUrl) ?? detectProviderFromUrl(remote.pushUrl)
@@ -115,63 +288,168 @@ export async function resolveRepo(inputPath: string): Promise<RepoInfo> {
     }
   })
 
-  const state = await getOperationState(root)
+  const state = await getOperationState(root, () => {
+    repoDiscoveryMetrics.spawns += 1
+  })
 
   return {
     path: root,
-    canonicalPath: canonicalRoot,
+    canonicalPath: facts.canonicalRoot,
     root,
-    gitDir,
-    commonDir,
-    name: path.basename(root) || path.basename(candidate),
+    gitDir: facts.gitDir,
+    commonDir: facts.commonDir,
+    name: facts.name,
     isBare: bare,
     currentBranch,
     headSha,
     detached,
-    upstream: status.upstream,
-    ahead: status.ahead,
-    behind: status.behind,
+    upstream: status?.upstream ?? null,
+    ahead: status?.ahead ?? 0,
+    behind: status?.behind ?? 0,
     remotes,
     provider: remotes.find((remote) => remote.provider)?.provider,
     state,
-    worktree: linkedWorktree
+    worktree: facts.worktree
   }
 }
 
-export async function getOperationState(repoPath: string): Promise<RepoInfo['state']> {
-  const paths = [
-    ['MERGE_HEAD', 'merging'],
-    ['rebase-merge', 'rebasing'],
-    ['rebase-apply', 'rebasing'],
-    ['CHERRY_PICK_HEAD', 'cherry-picking'],
-    ['REVERT_HEAD', 'reverting'],
-    ['BISECT_LOG', 'bisecting']
-  ] as const
-  for (const [gitPath, state] of paths) {
-    const result = await tryRunGit(['rev-parse', '--git-path', gitPath], { cwd: repoPath })
-    if (!result) continue
-    const resolved = path.resolve(repoPath, result.stdout.trim())
-    try {
-      await fs.access(resolved)
-      if (gitPath === 'rebase-apply') {
-        try {
-          await fs.access(path.join(resolved, 'applying'))
-          return 'applying'
-        } catch {
-          // rebase
-        }
+const OPERATION_MARKERS = [
+  ['MERGE_HEAD', 'merging'],
+  ['rebase-merge', 'rebasing'],
+  ['rebase-apply', 'rebasing'],
+  ['CHERRY_PICK_HEAD', 'cherry-picking'],
+  ['REVERT_HEAD', 'reverting'],
+  ['BISECT_LOG', 'bisecting']
+] as const
+
+async function operationMarkerExists(target: string): Promise<boolean> {
+  try {
+    await fs.access(target)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Read the pending operation from the real git dir. One `rev-parse` prints
+ * every marker path (`--git-path` may be repeated), so this stays a single
+ * process on every supported Git; an older or unusual Git falls back to one
+ * probe per marker. The result is never cached: an external merge or rebase
+ * must be visible on the next poll.
+ */
+export async function getOperationState(repoPath: string, onSpawn?: () => void): Promise<RepoInfo['state']> {
+  onSpawn?.()
+  const args = ['rev-parse', ...OPERATION_MARKERS.flatMap(([marker]) => ['--git-path', marker])]
+  const combined = await tryRunGit(args, { cwd: repoPath })
+  if (combined && combined.exitCode === 0) {
+    const lines = combined.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+    if (lines.length === OPERATION_MARKERS.length) {
+      for (let index = 0; index < OPERATION_MARKERS.length; index += 1) {
+        const [marker, state] = OPERATION_MARKERS[index]
+        const resolved = path.resolve(repoPath, lines[index])
+        if (!(await operationMarkerExists(resolved))) continue
+        if (marker === 'rebase-apply' && (await operationMarkerExists(path.join(resolved, 'applying')))) return 'applying'
+        return state
       }
-      return state
-    } catch {
-      // not present
+      return 'clean'
     }
+  }
+
+  for (const [marker, state] of OPERATION_MARKERS) {
+    onSpawn?.()
+    const result = await tryRunGit(['rev-parse', '--git-path', marker], { cwd: repoPath })
+    if (!result || result.exitCode !== 0) continue
+    const resolved = path.resolve(repoPath, result.stdout.trim())
+    if (!(await operationMarkerExists(resolved))) continue
+    if (marker === 'rebase-apply' && (await operationMarkerExists(path.join(resolved, 'applying')))) return 'applying'
+    return state
   }
   return 'clean'
 }
 
+const STATUS_PENDING = new Map<string, Promise<RepoStatus>>()
+
+/**
+ * `git status` is read live on every call, but the 5 s poll and a refresh
+ * often ask for the same repository at the same moment. They share that
+ * throwaway read instead of running two identical processes.
+ */
 export async function getStatus(repoPath: string): Promise<RepoStatus> {
-  const raw = await runGit(['status', '--porcelain=v2', '--branch', '-z'], { cwd: repoPath })
+  const key = path.resolve(repoPath)
+  const pending = STATUS_PENDING.get(key)
+  if (pending) return pending
+  const started = runStatus(repoPath)
+  STATUS_PENDING.set(key, started)
+  try {
+    return await started
+  } finally {
+    if (STATUS_PENDING.get(key) === started) STATUS_PENDING.delete(key)
+  }
+}
+
+async function runStatus(repoPath: string): Promise<RepoStatus> {
+  // Run the status command directly and only probe the bare flag when it fails:
+  // that keeps the 5 s poller at one process on a normal checkout while still
+  // turning the bare-repository fatal into an explanation.
+  const args = ['status', '--porcelain=v2', '--branch', '-z']
+  const raw = await runGit(args, { cwd: repoPath, allowFailure: true })
+  if (raw.exitCode !== 0) {
+    if (await isBareRepository(repoPath)) {
+      throw new Error('This is a bare repository; reading the working tree status needs a working tree')
+    }
+    throw gitError(args, raw)
+  }
   return parseStatus(raw.stdout)
+}
+
+/** True when the path is a bare repository, without needing a full `RepoInfo`. */
+export async function isBareRepository(repoPath: string): Promise<boolean> {
+  const result = await tryRunGit(['rev-parse', '--is-bare-repository'], { cwd: repoPath })
+  return result?.exitCode === 0 && result.stdout.trim() === 'true'
+}
+
+/**
+ * Worktree-only commands must fail with an explanation rather than Git's
+ * "this operation must be run in a work tree" fatal, which reads like a bug.
+ */
+async function assertWorktree(repoPath: string, action: string): Promise<void> {
+  if (await isBareRepository(repoPath)) {
+    throw new Error(`This is a bare repository; ${action} is not possible without a working tree`)
+  }
+}
+
+/**
+ * Build the truthful outcome of a mutating operation from the real child exit
+ * status plus the repository state and unmerged paths afterwards. A resolved
+ * promise is never treated as success on its own: a command that exits 0 but
+ * leaves an operation pending is reported as a conflict/pause, and a signalled
+ * or timed-out child keeps its null exit code.
+ */
+export async function buildOperationResult(repoPath: string, result: GitResult): Promise<GitOperationResult> {
+  const state = await getOperationState(repoPath)
+  const inProgress = state !== 'clean'
+  // A squash merge conflicts without leaving MERGE_HEAD behind, so the
+  // unmerged paths are always read; a pending state alone also pauses.
+  const conflictFiles = await readConflictFiles(repoPath)
+  return {
+    status: conflictFiles.length || inProgress ? 'conflict' : result.exitCode === 0 ? 'ok' : 'failed',
+    output: `${result.stdout}${result.stderr}`.trim(),
+    exitCode: result.exitCode,
+    signal: result.signal,
+    state,
+    inProgress,
+    conflictFiles
+  }
+}
+
+async function readConflictFiles(repoPath: string): Promise<string[]> {
+  const result = await tryRunGit(['diff', '--name-only', '--diff-filter=U', '-z'], { cwd: repoPath })
+  if (!result || result.exitCode !== 0) return []
+  return result.stdout.split('\0').filter(Boolean)
 }
 
 export async function getLog(input: LogInput): Promise<Commit[]> {
@@ -192,8 +470,11 @@ export async function getLog(input: LogInput): Promise<Commit[]> {
   if (input.search) {
     args.push('--regexp-ignore-case', `--grep=${input.search}`)
   }
-  if (input.branch) args.push(input.branch)
-  else if (input.all !== false) args.push('--branches', '--tags', '--remotes', 'HEAD')
+  if (input.branch) {
+    args.push('--end-of-options', revision(input.branch, 'Branch'))
+  } else if (input.all !== false) {
+    args.push('--branches', '--tags', '--remotes', '--end-of-options', 'HEAD')
+  }
   args.push('--')
   const raw = await runGit(args, { cwd: input.repoPath, maxBuffer: 32 * 1024 * 1024 })
   return parseLog(raw.stdout)
@@ -201,7 +482,13 @@ export async function getLog(input: LogInput): Promise<Commit[]> {
 
 export async function getCommit(repoPath: string, sha: string): Promise<Commit> {
   const raw = await runGit(
-    ['show', '-s', '--pretty=format:%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ce%x1f%ct%x1f%D%x1f%s%x1f%b', sha],
+    [
+      'show',
+      '-s',
+      '--pretty=format:%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ce%x1f%ct%x1f%D%x1f%s%x1f%b',
+      '--end-of-options',
+      revision(sha, 'Commit')
+    ],
     { cwd: repoPath }
   )
   const commits = parseLog(raw.stdout + '\x1e')
@@ -225,8 +512,13 @@ export async function getBranches(repoPath: string): Promise<RefInfo[]> {
 }
 
 export async function getTags(repoPath: string): Promise<TagInfo[]> {
-  const format = [
-    '%(refname:short)',
+  // `%(contents)` goes last: it may contain newlines and must not be split as
+  // a record delimiter. `%00` terminates each record so a message line can
+  // never be read as another tag.
+  const fields = [
+    // `strip=2` removes `refs/tags/` deterministically. `:short` returns
+    // `tags/v2` when a branch shares the name, which breaks the UI label.
+    '%(refname:strip=2)',
     '%(objectname)',
     '%(objecttype)',
     '%(*objectname)',
@@ -235,8 +527,12 @@ export async function getTags(repoPath: string): Promise<TagInfo[]> {
     '%(taggeremail)',
     '%(taggerdate:unix)',
     '%(committerdate:unix)',
+    // Fully qualified: `%(refname:short)` returns `tags/v2` when a branch and
+    // a tag share a name, and re-prefixing that yields `refs/tags/tags/v2`.
+    '%(refname)',
     '%(contents)'
-  ].join('%1f')
+  ]
+  const format = `${fields.join('%1f')}%00`
   const raw = await runGit(['for-each-ref', `--format=${format}`, 'refs/tags'], { cwd: repoPath })
   return parseTags(raw.stdout)
 }
@@ -283,7 +579,13 @@ export async function getWorktreeStatuses(repoPath: string): Promise<WorktreeSta
 }
 
 export async function getStashes(repoPath: string): Promise<StashInfo[]> {
-  const raw = await runGit(['stash', 'list', '--format=%gd%x1f%H%x1f%gs%x1f%ct'], { cwd: repoPath })
+  const args = ['stash', 'list', '--format=%gd%x1f%H%x1f%gs%x1f%ct']
+  const raw = await runGit(args, { cwd: repoPath, allowFailure: true })
+  if (raw.exitCode !== 0) {
+    // `git stash list` is worktree-only and fails outright in a bare repository.
+    if (await isBareRepository(repoPath)) return []
+    throw gitError(args, raw)
+  }
   return parseStashes(raw.stdout)
 }
 
@@ -336,12 +638,29 @@ export async function addSubmodule(input: SubmoduleAddInput, ctx: GitAuthContext
   if (input.force) addArgs.push('--force')
   addArgs.push('--', url)
   if (submodulePath) addArgs.push(submodulePath)
-  await runGit(addArgs, { cwd: repo.path, env, timeoutMs: 600_000 })
+
+  // Removing the last submodule drops `.gitmodules` from the working tree but
+  // leaves it in HEAD, and `git submodule add` then refuses because the file is
+  // "not in the working tree". That is exactly the state a just-removed
+  // submodule leaves behind, so recreate the empty file and retry once; Git
+  // fills it with the new section and stages it.
+  const options = { cwd: repo.path, env, timeoutMs: 600_000 }
+  let result = await runGit(addArgs, { ...options, allowFailure: true })
+  const gitmodulesPath = path.join(repo.path, '.gitmodules')
+  if (
+    result.exitCode !== 0 &&
+    /\.gitmodules file is in the working tree/i.test(result.stderr) &&
+    !(await pathExists(gitmodulesPath))
+  ) {
+    await fs.writeFile(gitmodulesPath, '')
+    result = await runGit(addArgs, { ...options, allowFailure: true })
+  }
+  if (result.exitCode !== 0) throw gitError(addArgs, result)
 }
 
 export async function updateSubmodules(
   input: SubmoduleUpdateInput,
-  identity?: GitIdentity | null
+  identity?: IdentityEnvInput | null
 ): Promise<{ output: string }> {
   const repo = await resolveRepo(input.repoPath)
   if (repo.isBare) throw new Error('Submodules need a working tree')
@@ -393,11 +712,17 @@ export async function syncSubmodules(repoPath: string, submodulePath?: string, r
 
 /**
  * Remove a tracked submodule: unregister it, remove the working tree and the
- * gitlink, then clean the module directory under the current worktree's git
- * dir. Only paths that appear in `git submodule status` are accepted, so this
- * can never delete an arbitrary folder.
+ * gitlink, then drop the submodule configuration. Only paths that appear in
+ * `git submodule status` are accepted, so this can never delete an arbitrary
+ * folder. The module clone under the Git directory is moved aside instead of
+ * deleted, so commits that were never pushed stay recoverable and the same URL
+ * can be added again at the same path.
  */
-export async function removeSubmodule(repoPath: string, submodulePath: string, force = false): Promise<void> {
+export async function removeSubmodule(
+  repoPath: string,
+  submodulePath: string,
+  force = false
+): Promise<SubmoduleRemoveResult> {
   const repo = await resolveRepo(repoPath)
   if (repo.isBare) throw new Error('Submodules need a working tree')
   const relative = validateSubmodulePath(repo.path, submodulePath)
@@ -406,12 +731,27 @@ export async function removeSubmodule(repoPath: string, submodulePath: string, f
   const entry = submodules.find((submodule) => submodule.path === relative)
   if (!entry) throw new Error(`Not a tracked submodule: ${relative}`)
   if (!force && (entry.dirty || entry.modified || entry.conflicted)) {
-    throw new Error('The submodule has local changes or unpushed commits; use force removal to discard them')
+    throw new Error(
+      'The submodule has local changes or unpushed commits; force removal discards its working-tree checkout but keeps the local module clone and its objects for recovery'
+    )
   }
 
   const configs = parseSubmoduleConfig(await readSubmoduleConfig(repo.path))
   const configured = [...configs.entries()].find(([, config]) => normalizeSubmodulePath(config.path) === relative)
   const name = configured?.[0] ?? entry.name
+
+  // Resolve the clone the way Git does for *this* worktree: a linked worktree
+  // keeps its own copy under <git-dir>/worktrees/<id>/modules. Resolve it
+  // before anything is removed so a hostile name in .gitmodules can never make
+  // the move touch a directory outside the modules root.
+  const modulesRoot = await gitPath(repo.path, 'modules')
+  const moduleDir = await gitPath(repo.path, `modules/${name}`)
+  const fromModulesRoot = path.relative(modulesRoot, moduleDir)
+  const escapesModulesRoot =
+    !fromModulesRoot || fromModulesRoot === '..' || fromModulesRoot.startsWith(`..${path.sep}`)
+  if (escapesModulesRoot || path.isAbsolute(fromModulesRoot)) {
+    throw new Error(`Refusing to move a module clone outside the Git modules directory: ${moduleDir}`)
+  }
 
   // `git submodule deinit` unregisters the checkout before `git rm` runs, so
   // reject an unstaged .gitmodules first: otherwise a failed rm would leave a
@@ -457,9 +797,6 @@ export async function removeSubmodule(repoPath: string, submodulePath: string, f
     })
   }
 
-  const moduleDir = await submoduleModuleDir(repo, name)
-  if (moduleDir) await fs.rm(moduleDir, { recursive: true, force: true })
-
   // `git rm` leaves an empty .gitmodules behind when the last submodule is
   // removed. Drop the file too so the change set is a single clean deletion.
   const remaining = parseSubmoduleConfig(await readSubmoduleConfig(repo.path))
@@ -470,6 +807,72 @@ export async function removeSubmodule(repoPath: string, submodulePath: string, f
       await runGit(['rm', '-f', '--', '.gitmodules'], { cwd: repo.path, allowFailure: true })
     }
   }
+
+  return { retainedPath: await retainModuleClone(moduleDir) }
+}
+
+/** Resolve a path inside this worktree's Git directory the way Git reports it. */
+async function gitPath(repoPath: string, target: string): Promise<string> {
+  const result = await runGit(['rev-parse', '--git-path', target], { cwd: repoPath })
+  const reported = result.stdout.trim()
+  if (!reported) throw new Error(`Git did not report the path of ${target}`)
+  return path.resolve(repoPath, reported)
+}
+
+const MODULE_RETENTION_INFIX = '.removed-'
+
+/**
+ * Move the module clone aside so the recovery copy survives while the original
+ * name becomes free again: `git submodule add` refuses a name whose directory
+ * already exists, and `git submodule update --init` still finds the clone when
+ * the user moves `<dir>.removed-<stamp>` back to `<dir>`. The move is a rename
+ * inside the same Git directory, so the objects are never copied or deleted.
+ */
+async function retainModuleClone(moduleDir: string): Promise<string | null> {
+  if (!(await pathExists(moduleDir))) return null
+
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')
+  let failure: unknown = null
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const target = `${moduleDir}${MODULE_RETENTION_INFIX}${stamp}${attempt === 0 ? '' : `-${attempt}`}`
+    try {
+      await fs.rename(moduleDir, target)
+      return target
+    } catch (error) {
+      failure = error
+      // The clone vanished underneath us: nothing is left to keep.
+      if (isErrorCode(error, 'ENOENT')) return null
+      // The target name is already taken; try the next counter.
+      if (isErrorCode(error, 'EEXIST', 'ENOTEMPTY', 'ENOTDIR')) continue
+      break
+    }
+  }
+
+  const reason = failure instanceof Error ? failure.message : String(failure)
+  throw new Error(
+    `The submodule was removed, but its module clone could not be moved aside: ${reason}\n` +
+      `The clone is still at ${moduleDir}; move or delete that directory before adding a submodule with the same name.`
+  )
+}
+
+/** Whether anything (directory, file or link) occupies the path. */
+async function pathExists(target: string): Promise<boolean> {
+  return fs.lstat(target).then(
+    () => true,
+    (error: unknown) => {
+      if (isErrorCode(error, 'ENOENT')) return false
+      throw error
+    }
+  )
+}
+
+function isErrorCode(error: unknown, ...codes: string[]): boolean {
+  return (
+    error instanceof Error &&
+    'code' in error &&
+    typeof error.code === 'string' &&
+    codes.includes(error.code)
+  )
 }
 
 async function readSubmoduleConfig(repoPath: string): Promise<string> {
@@ -502,20 +905,6 @@ function validateSubmodulePath(repoPath: string, submodulePath: string): string 
   return normalized
 }
 
-/**
- * Resolve the module dir for the current worktree. `git rev-parse --git-path`
- * is authoritative: the main worktree uses `<git-dir>/modules`, while a linked
- * worktree uses its own `<git-dir>/worktrees/<id>/modules`.
- */
-async function submoduleModuleDir(repo: RepoInfo, name: string): Promise<string | null> {
-  const modulesRoot = path.resolve(repo.gitDir, 'modules')
-  const raw = await tryRunGit(['rev-parse', '--git-path', `modules/${name}`], { cwd: repo.root })
-  const reported = raw?.stdout.trim()
-  const candidate = reported ? path.resolve(repo.root, reported) : path.resolve(modulesRoot, name)
-  if (candidate === modulesRoot || !isInside(modulesRoot, candidate)) return null
-  return candidate
-}
-
 /** Remove untracked files from a checkout and every nested submodule inside it. */
 async function cleanSubmoduleCheckout(repoPath: string, relative: string): Promise<void> {
   const root = safeJoin(repoPath, relative)
@@ -529,48 +918,75 @@ async function cleanSubmoduleCheckout(repoPath: string, relative: string): Promi
 }
 
 export async function getDiff(input: DiffInput): Promise<DiffResult> {
+  // Commit and commit-range diffs are object reads and work in a bare
+  // repository; only the worktree and index forms need a checkout.
+  if (!input.commit && !input.compare) await assertWorktree(input.repoPath, 'reading a diff')
   const patchArgs = ['diff', '--no-color', '--no-ext-diff', '--find-renames', '--patch']
   const statArgs = ['diff', '--no-color', '--no-ext-diff', '--find-renames', '--numstat']
   const extra: string[] = []
   if (input.staged) extra.push('--cached')
-  if (input.compare) extra.push(input.compare)
+  if (input.compare) extra.push('--end-of-options', revisionRange(input.compare, 'Compare'))
   if (input.commit) {
+    const commit = revision(input.commit, 'Commit')
     patchArgs.length = 0
-    patchArgs.push('show', '--no-color', '--no-ext-diff', '--format=', '--patch', input.commit)
+    patchArgs.push('show', '--no-color', '--no-ext-diff', '--format=', '--patch', '--end-of-options', commit)
     statArgs.length = 0
-    statArgs.push('show', '--no-color', '--no-ext-diff', '--format=', '--numstat', input.commit)
+    statArgs.push('show', '--no-color', '--no-ext-diff', '--format=', '--numstat', '--end-of-options', commit)
   } else {
     patchArgs.push(...extra)
     statArgs.push(...extra)
   }
   if (input.path) {
-    patchArgs.push('--', input.path)
-    statArgs.push('--', input.path)
+    const file = relPath(input.path, 'File')
+    patchArgs.push('--', file)
+    statArgs.push('--', file)
   }
   const [patch, stats] = await Promise.all([
-    runGit(patchArgs, { cwd: input.repoPath, maxBuffer: 48 * 1024 * 1024 }),
-    runGit(statArgs, { cwd: input.repoPath, maxBuffer: 16 * 1024 * 1024 })
+    runGit(patchArgs, { cwd: input.repoPath, maxBuffer: 48 * 1024 * 1024, literalPathspecs: Boolean(input.path) }),
+    runGit(statArgs, { cwd: input.repoPath, maxBuffer: 16 * 1024 * 1024, literalPathspecs: Boolean(input.path) })
   ])
   return { patch: patch.stdout, files: parseNumstat(stats.stdout) }
 }
 
+/**
+ * Walk from the real repository root to `target`, rejecting every symlinked
+ * segment (the root itself was already resolved). A link is never followed, so
+ * a lexical `..` check cannot be tricked into reading outside the checkout.
+ */
+async function assertNoSymlinkPath(root: string, target: string): Promise<void> {
+  const relative = path.relative(root, target)
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error('Path escapes the repository')
+  }
+  let current = root
+  for (const segment of relative ? relative.split(path.sep) : []) {
+    current = path.join(current, segment)
+    const stat = await fs.lstat(current)
+    if (stat.isSymbolicLink()) throw new Error(`Path passes through a symbolic link: ${relative}`)
+  }
+}
+
 export async function listTree(repoPath: string, dir = ''): Promise<DirEntry[]> {
-  const root = path.resolve(repoPath)
+  const root = await fs.realpath(repoPath)
   const target = safeJoin(root, dir)
+  await assertNoSymlinkPath(root, target)
+  const targetStat = await fs.lstat(target)
+  if (!targetStat.isDirectory()) throw new Error(`Not a folder: ${dir}`)
   const entries = await fs.readdir(target, { withFileTypes: true })
   const result: DirEntry[] = []
   for (const entry of entries) {
     if (entry.name === '.git') continue
     const rel = dir ? `${dir}/${entry.name}` : entry.name
-    const abs = path.join(target, entry.name)
     if (entry.isDirectory()) {
       result.push({ name: entry.name, path: rel, type: 'directory' })
     } else if (entry.isSymbolicLink()) {
-      result.push({ name: entry.name, path: rel, type: 'file' })
+      // Listed but never followed: the renderer shows it as a link, and reads
+      // of it are rejected below.
+      result.push({ name: entry.name, path: rel, type: 'symlink' })
     } else if (entry.isFile()) {
       let size: number | undefined
       try {
-        size = (await fs.stat(abs)).size
+        size = (await fs.lstat(path.join(target, entry.name))).size
       } catch {
         size = undefined
       }
@@ -594,7 +1010,12 @@ const MAX_RESOLVED_BYTES = 5 * 1024 * 1024
  * parent chain). This keeps the staging action narrow; ordinary file edits
  * remain in the user's external editor.
  */
-export async function resolveConflict(repoPath: string, file: string, content: string): Promise<void> {
+export async function resolveConflict(
+  repoPath: string,
+  file: string,
+  content: string,
+  expectedSha256?: string
+): Promise<void> {
   if (content.includes('\0')) throw new Error('Resolved content contains a NUL byte')
   if (Buffer.byteLength(content, 'utf8') > MAX_RESOLVED_BYTES) {
     throw new Error('Resolved file is too large to save from the app')
@@ -603,13 +1024,14 @@ export async function resolveConflict(repoPath: string, file: string, content: s
     throw new Error('Remove the conflict markers before staging the file')
   }
 
+  const relative = relPath(file, 'File')
   const repo = await resolveRepo(repoPath)
   if (repo.isBare) throw new Error('Conflicted files need a working tree')
   const status = await getStatus(repo.path)
-  const entry = status.files.find((item) => item.path === file)
+  const entry = status.files.find((item) => item.path === relative)
   if (!entry || entry.stage !== 'conflicted') throw new Error('This file is not in conflict')
 
-  const target = safeJoin(repo.path, file)
+  const target = safeJoin(repo.path, relative)
   const rootReal = await fs.realpath(repo.path)
   let parentReal: string
   try {
@@ -631,10 +1053,15 @@ export async function resolveConflict(repoPath: string, file: string, content: s
     if (decodeText(current).binary) {
       throw new Error('This file is not UTF-8 text; resolve it outside the app')
     }
+    if (expectedSha256 && sha256(current) !== expectedSha256) {
+      throw new Error('The file changed on disk since it was loaded; reload it before saving')
+    }
+  } else if (expectedSha256) {
+    throw new Error('The file changed or was removed on disk since it was loaded; reload it before saving')
   }
 
   await fs.writeFile(target, content, 'utf8')
-  await runGit(['add', '--', file], { cwd: repo.path })
+  await runGit(['add', '--', relative], { cwd: repo.path, literalPathspecs: true })
 }
 
 export async function readFileContent(
@@ -643,38 +1070,63 @@ export async function readFileContent(
   from: 'worktree' | 'head' = 'worktree',
   commit?: string
 ): Promise<FileContent> {
-  const root = path.resolve(repoPath)
+  const root = await fs.realpath(repoPath)
   let buffer: Buffer
   let size = 0
   if (from === 'worktree') {
-    const abs = safeJoin(root, file)
-    const stat = await fs.stat(abs)
-    if (!stat.isFile()) throw new Error(`Not a file: ${file}`)
-    size = stat.size
-    const handle = await fs.open(abs, 'r')
+    const relative = relPath(file, 'File')
+    const abs = safeJoin(root, relative)
+    await assertNoSymlinkPath(root, abs)
+    const stat = await fs.lstat(abs)
+    if (stat.isSymbolicLink()) throw new Error(`Not a regular file: ${relative}`)
+    if (!stat.isFile()) throw new Error(`Not a file: ${relative}`)
+    // O_NOFOLLOW closes the race between the lstat above and the open. On
+    // platforms without it the value is 0 and the lstat remains the guard.
+    const noFollow = fs.constants.O_NOFOLLOW ?? 0
+    const handle = await fs.open(abs, fs.constants.O_RDONLY | noFollow).catch((error: unknown) => {
+      if (isErrorCode(error, 'ELOOP')) throw new Error(`Not a regular file: ${relative}`)
+      throw error
+    })
     try {
-      const length = Math.min(stat.size, MAX_FILE_BYTES)
+      const opened = await handle.stat()
+      if (!opened.isFile()) throw new Error(`Not a file: ${relative}`)
+      size = opened.size
+      const length = Math.min(size, MAX_FILE_BYTES)
       const chunk = Buffer.alloc(length)
-      await handle.read(chunk, 0, length, 0)
+      if (length) await handle.read(chunk, 0, length, 0)
       buffer = chunk
     } finally {
       await handle.close()
     }
   } else {
-    const spec = `${commit ?? 'HEAD'}:${file.replace(/\\/g, '/')}`
-    const result = await runGit(['show', spec], { cwd: root, maxBuffer: MAX_FILE_BYTES + 1024 })
+    const rev = commit ? revision(commit, 'Commit') : 'HEAD'
+    const relative = headPath(file, 'File').replace(/\\/g, '/')
+    const spec = `${rev}:${relative}`
+    const result = await runGit(['show', '--end-of-options', spec], {
+      cwd: root,
+      maxBuffer: MAX_FILE_BYTES + 1024
+    })
     buffer = Buffer.from(result.stdout, 'utf8')
     size = buffer.length
   }
   const decoded = decodeText(buffer)
+  const truncated = size > MAX_FILE_BYTES
   return {
     path: file,
     content: decoded.content,
     binary: decoded.binary,
-    truncated: size > MAX_FILE_BYTES,
+    truncated,
     size,
-    from
+    from,
+    // Identity of the exact bytes the editor received, so a later save can
+    // reject a file that changed underneath it. Omitted when the read was
+    // truncated or the content is not text.
+    sha256: truncated || decoded.binary ? undefined : sha256(buffer)
   }
+}
+
+function sha256(buffer: Buffer): string {
+  return createHash('sha256').update(buffer).digest('hex')
 }
 
 /**
@@ -690,9 +1142,12 @@ function decodeText(buffer: Buffer): { content: string; binary: boolean } {
 }
 
 export async function getBlame(repoPath: string, file: string, commit?: string): Promise<BlameLine[]> {
-  const args = ['blame', '--line-porcelain', '--', file]
-  if (commit) args.splice(1, 0, commit)
-  const raw = await runGit(args, { cwd: repoPath, maxBuffer: 32 * 1024 * 1024 })
+  const relative = relPath(file, 'File')
+  const args = ['blame', '--line-porcelain']
+  if (commit) args.push(revision(commit, 'Commit'))
+  // `git blame` only treats `--` as the path separator after --end-of-options.
+  args.push('--end-of-options', '--', relative)
+  const raw = await runGit(args, { cwd: repoPath, maxBuffer: 32 * 1024 * 1024, literalPathspecs: true })
   return parseBlame(raw.stdout)
 }
 
@@ -701,37 +1156,115 @@ export async function getRepoConfig(repoPath: string): Promise<RepoConfigEntry[]
   return parseConfig(raw.stdout)
 }
 
+/**
+ * Keys that make Git or a helper execute a program. The console and
+ * `git.setConfig` share this policy: ordinary repository settings keep working,
+ * while a local config write can never install code that runs later.
+ */
+const EXECUTION_CONFIG_KEYS: RegExp[] = [
+  /^core\.(hooksPath|fsmonitor|sshCommand|pager|editor|askPass|gitProxy)$/i,
+  /^sequence\.editor$/i,
+  /^gpg\.program$/i,
+  /^credential\./i,
+  /^alias\./i,
+  /^include(if)?\./i,
+  /^protocol\./i,
+  /^filter\./i,
+  /^diff\..*\.(textconv|command)$/i,
+  /^merge\..*\.driver$/i,
+  /^submodule\..*\.update$/i,
+  /^url\..*\.insteadOf$/i,
+  /^remote\..*\.(uploadpack|receivepack)$/i
+]
+
+function isExecutionConfigKey(key: string): boolean {
+  return EXECUTION_CONFIG_KEYS.some((pattern) => pattern.test(key))
+}
+
 export async function setRepoConfig(repoPath: string, key: string, value: string): Promise<void> {
-  if (!/^[a-zA-Z0-9.-]+$/.test(key)) throw new Error('Invalid configuration key')
-  await runGit(['config', '--local', key, value], { cwd: repoPath })
+  const name = configKey(key)
+  if (isExecutionConfigKey(name)) {
+    throw new Error(
+      `"${name}" controls a program Git runs. Set it outside the app; Commit87 does not install executable configuration.`
+    )
+  }
+  const content = text(value, 'Configuration value', { max: 4096 })
+  if (/[\r\n]/.test(content)) throw new Error('Configuration value must be a single line')
+  await runGit(['config', '--local', name, content], { cwd: repoPath })
 }
 
 export async function stageFiles(repoPath: string, files: string[]): Promise<void> {
+  await assertWorktree(repoPath, 'staging files')
   const safe = validateFiles(files)
-  await runGit(['add', '--', ...safe], { cwd: repoPath })
+  await runGit(['add', '--', ...safe], { cwd: repoPath, literalPathspecs: true })
+}
+
+/** Older Git releases predate `restore`; only that failure may fall back to `reset`. */
+function lacksRestoreCommand(stderr: string): boolean {
+  return /'restore' is not a git command/i.test(stderr)
 }
 
 export async function unstageFiles(repoPath: string, files: string[]): Promise<void> {
+  await assertWorktree(repoPath, 'unstaging files')
   const safe = validateFiles(files)
-  const result = await tryRunGit(['restore', '--staged', '--', ...safe], { cwd: repoPath })
-  if (!result || result.exitCode !== 0) {
-    await runGit(['reset', '--', ...safe], { cwd: repoPath })
-  }
+  const args = ['restore', '--staged', '--', ...safe]
+  const result = await runGit(args, { cwd: repoPath, allowFailure: true, literalPathspecs: true })
+  if (result.exitCode === 0) return
+  if (!lacksRestoreCommand(result.stderr)) throw gitError(args, result)
+  await runGit(['reset', '--', ...safe], { cwd: repoPath, literalPathspecs: true })
 }
 
-export async function discardFiles(repoPath: string, files: string[], includeUntracked: boolean): Promise<void> {
+/**
+ * Discard selected paths exactly. Untracked paths are cleaned with `git clean`
+ * and tracked paths restored from HEAD; untracked-only discards never depend on
+ * the restore command, so they keep working in a repository without a commit.
+ * A failed restore is reported as a partial or failed outcome instead of being
+ * swallowed by the untracked cleanup.
+ */
+export async function discardFiles(
+  repoPath: string,
+  files: string[],
+  includeUntracked: boolean
+): Promise<DiscardResult> {
+  await assertWorktree(repoPath, 'discarding changes')
   const safe = validateFiles(files)
-  await runGit(['restore', '--source=HEAD', '--staged', '--worktree', '--', ...safe], {
-    cwd: repoPath,
-    allowFailure: true
-  })
-  if (includeUntracked) {
-    await runGit(['clean', '-f', '-d', '--', ...safe], { cwd: repoPath })
+  const status = await getStatus(repoPath)
+  const untracked = new Set(status.files.filter((file) => file.stage === 'untracked').map((file) => file.path))
+  const tracked = safe.filter((file) => !untracked.has(file))
+  const cleanTargets = includeUntracked ? safe.filter((file) => untracked.has(file)) : []
+
+  const restored: string[] = []
+  const cleaned: string[] = []
+  const failed: string[] = []
+  let output = ''
+
+  if (tracked.length) {
+    const args = ['restore', '--source=HEAD', '--staged', '--worktree', '--', ...tracked]
+    const result = await runGit(args, { cwd: repoPath, allowFailure: true, literalPathspecs: true })
+    output += result.stdout + result.stderr
+    if (result.exitCode === 0) restored.push(...tracked)
+    else failed.push(...tracked)
+  }
+  if (cleanTargets.length) {
+    const args = ['clean', '-f', '-d', '--', ...cleanTargets]
+    const result = await runGit(args, { cwd: repoPath, allowFailure: true, literalPathspecs: true })
+    output += result.stdout + result.stderr
+    if (result.exitCode === 0) cleaned.push(...cleanTargets)
+    else failed.push(...cleanTargets)
+  }
+
+  return {
+    status: failed.length === 0 ? 'ok' : restored.length || cleaned.length ? 'partial' : 'failed',
+    restored,
+    cleaned,
+    failed,
+    output: output.trim()
   }
 }
 
 export async function commitChanges(input: CommitInput, ctx: GitAuthContext): Promise<{ sha: string }> {
   if (!input.message.trim()) throw new Error('Commit message cannot be empty')
+  await assertWorktree(input.repoPath, 'creating a commit')
   const { args, env } = contextArgs(ctx)
   const commitArgs = [...args, 'commit', '-m', input.message]
   if (input.amend) commitArgs.push('--amend')
@@ -743,20 +1276,33 @@ export async function commitChanges(input: CommitInput, ctx: GitAuthContext): Pr
 }
 
 export async function checkoutBranch(input: CheckoutInput): Promise<void> {
+  await assertWorktree(input.repoPath, 'checking out a branch')
   if (input.create) {
+    validateRefName(input.repoPath, input.branch)
+    if (input.startPoint) revision(input.startPoint, 'Start point')
     const args = ['switch', '-c', input.branch]
     if (input.track && input.startPoint) args.push('--track')
     if (input.startPoint) args.push(input.startPoint)
     await runGit(args, { cwd: input.repoPath })
     return
   }
+  // A checkout target may be a commit (detached) but must never be read as a
+  // path: the old `git checkout <name>` fallback restored a tracked file when
+  // the ref did not exist.
+  validateCheckoutTarget(input.repoPath, input.branch, Boolean(input.detach))
   const args = ['switch']
   if (input.force) args.push('--force')
+  if (input.detach) args.push('--detach')
   args.push(input.branch)
-  const result = await tryRunGit(args, { cwd: input.repoPath, allowFailure: true })
-  if (!result || result.exitCode !== 0) {
-    await runGit(['checkout', input.branch], { cwd: input.repoPath })
+  await runGit(args, { cwd: input.repoPath })
+}
+
+function validateCheckoutTarget(repoPath: string, target: string, allowCommit: boolean): void {
+  if (allowCommit) {
+    revision(target, 'Checkout target')
+    return
   }
+  validateRefName(repoPath, target)
 }
 
 export async function createBranch(
@@ -767,24 +1313,29 @@ export async function createBranch(
   track = false
 ): Promise<void> {
   validateRefName(repoPath, name)
+  const start = startPoint ? revision(startPoint, 'Start point') : undefined
   if (checkout) {
+    await assertWorktree(repoPath, 'checking out a new branch')
     const args = ['switch', '-c', name]
-    if (track && startPoint) args.push('--track')
-    if (startPoint) args.push(startPoint)
+    if (track && start) args.push('--track')
+    if (start) args.push(start)
     await runGit(args, { cwd: repoPath })
     return
   }
   const args = ['branch', name]
-  if (startPoint) args.push(startPoint)
+  if (start) args.push(start)
   await runGit(args, { cwd: repoPath })
 }
 
 export async function renameBranch(repoPath: string, from: string, to: string): Promise<void> {
+  validateRefName(repoPath, from)
   validateRefName(repoPath, to)
   await runGit(['branch', '-m', from, to], { cwd: repoPath })
+  invalidateRepoDiscovery(repoPath)
 }
 
 export async function deleteBranch(repoPath: string, name: string, force = false): Promise<void> {
+  validateRefName(repoPath, name)
   await runGit(['branch', force ? '-D' : '-d', name], { cwd: repoPath })
 }
 
@@ -795,29 +1346,39 @@ export async function deleteRemoteBranch(
   ctx: GitAuthContext
 ): Promise<void> {
   const { args, env } = contextArgs(ctx)
+  validateRemoteName(remote)
+  validateRefName(repoPath, branch)
   await runGit([...args, 'push', remote, '--delete', branch], { cwd: repoPath, env })
 }
 
 export async function setUpstream(repoPath: string, branch: string, upstream: string): Promise<void> {
+  validateRefName(repoPath, branch)
+  validateRefName(repoPath, upstream)
   await runGit(['branch', `--set-upstream-to=${upstream}`, branch], { cwd: repoPath })
 }
 
-export async function mergeBranch(input: MergeInput, ctx: GitAuthContext): Promise<{ output: string }> {
+export async function mergeBranch(input: MergeInput, ctx: GitAuthContext): Promise<GitOperationResult> {
+  await assertWorktree(input.repoPath, 'merging')
   const { args, env } = contextArgs(ctx)
   const mergeArgs = [...args, 'merge']
   if (input.ffOnly) mergeArgs.push('--ff-only')
   else if (input.noFf) mergeArgs.push('--no-ff')
   if (input.squash) mergeArgs.push('--squash')
   if (input.message) mergeArgs.push('-m', input.message)
-  mergeArgs.push(input.branch)
+  mergeArgs.push('--end-of-options', revision(input.branch, 'Merge target'))
   const result = await runGit(mergeArgs, { cwd: input.repoPath, env, allowFailure: true })
-  return { output: result.stdout + result.stderr }
+  return buildOperationResult(input.repoPath, result)
 }
 
-export async function rebaseBranch(repoPath: string, onto: string, ctx: GitAuthContext): Promise<{ output: string }> {
+export async function rebaseBranch(repoPath: string, onto: string, ctx: GitAuthContext): Promise<GitOperationResult> {
+  await assertWorktree(repoPath, 'rebasing')
   const { args, env } = contextArgs(ctx)
-  const result = await runGit([...args, 'rebase', onto], { cwd: repoPath, env, allowFailure: true })
-  return { output: result.stdout + result.stderr }
+  const result = await runGit([...args, 'rebase', '--end-of-options', revision(onto, 'Rebase base')], {
+    cwd: repoPath,
+    env,
+    allowFailure: true
+  })
+  return buildOperationResult(repoPath, result)
 }
 
 /**
@@ -837,22 +1398,25 @@ export function validateCommitShas(value: unknown): string[] {
   return [...new Set(shas)]
 }
 
-export async function cherryPick(repoPath: string, shas: string[], ctx: GitAuthContext): Promise<{ output: string; exitCode: number }> {
+export async function cherryPick(repoPath: string, shas: string[], ctx: GitAuthContext): Promise<GitOperationResult> {
+  await assertWorktree(repoPath, 'cherry-picking')
   const { args, env } = contextArgs(ctx)
   const commits = validateCommitShas(shas)
   const result = await runGit([...args, 'cherry-pick', ...commits], { cwd: repoPath, env, allowFailure: true })
-  return { output: result.stdout + result.stderr, exitCode: result.exitCode }
+  return buildOperationResult(repoPath, result)
 }
 
-export async function revertCommit(repoPath: string, shas: string[], ctx: GitAuthContext): Promise<{ output: string; exitCode: number }> {
+export async function revertCommit(repoPath: string, shas: string[], ctx: GitAuthContext): Promise<GitOperationResult> {
+  await assertWorktree(repoPath, 'reverting')
   const { args, env } = contextArgs(ctx)
   const commits = validateCommitShas(shas)
   const result = await runGit([...args, 'revert', '--no-edit', ...commits], { cwd: repoPath, env, allowFailure: true })
-  return { output: result.stdout + result.stderr, exitCode: result.exitCode }
+  return buildOperationResult(repoPath, result)
 }
 
 export async function resetTo(repoPath: string, commit: string, mode: ResetInput['mode']): Promise<void> {
-  await runGit(['reset', `--${mode}`, commit], { cwd: repoPath })
+  await assertWorktree(repoPath, 'resetting')
+  await runGit(['reset', `--${mode}`, '--end-of-options', revision(commit, 'Commit')], { cwd: repoPath })
 }
 
 export async function abortOperation(repoPath: string): Promise<void> {
@@ -881,14 +1445,22 @@ export async function abortOperation(repoPath: string): Promise<void> {
   }
 }
 
+/** Extra configuration and environment a resumed operation needs from the rebase bridge. */
+export interface OperationResumeContext {
+  args?: string[]
+  env?: NodeJS.ProcessEnv
+}
+
 export async function continueOperation(
   repoPath: string,
   ctx: GitAuthContext,
-  extraEnv: NodeJS.ProcessEnv = {}
-): Promise<{ output: string }> {
+  resume: OperationResumeContext = {}
+): Promise<GitOperationResult> {
   const state = await getOperationState(repoPath)
+  if (state === 'clean') throw new Error('No operation in progress')
   const { args, env } = contextArgs(ctx)
-  const runEnv = { ...env, ...extraEnv }
+  const runArgs = [...args, ...(resume.args ?? [])]
+  const runEnv = { ...env, ...resume.env }
   // GIT_EDITOR is forced non-interactive by the runner unless the rebase bridge
   // installs its message editor for a still-running interactive rebase.
   const command =
@@ -902,40 +1474,58 @@ export async function continueOperation(
             ? 'am'
             : 'merge'
   if (state === 'merging') {
-    await runGit([...args, 'commit', '--no-edit'], { cwd: repoPath, env: runEnv })
-    return { output: 'Merge commit created' }
+    const result = await runGit([...runArgs, 'commit', '--no-edit'], {
+      cwd: repoPath,
+      env: runEnv,
+      allowFailure: true
+    })
+    const outcome = await buildOperationResult(repoPath, result)
+    if (outcome.status === 'ok' && !outcome.output) outcome.output = 'Merge commit created'
+    return outcome
   }
-  const result = await runGit([...args, command, '--continue'], {
+  const result = await runGit([...runArgs, command, '--continue'], {
     cwd: repoPath,
     env: runEnv,
     allowFailure: true
   })
-  return { output: result.stdout + result.stderr }
+  return buildOperationResult(repoPath, result)
 }
 
-export async function skipOperation(repoPath: string, extraEnv: NodeJS.ProcessEnv = {}): Promise<void> {
+export async function skipOperation(
+  repoPath: string,
+  ctx: GitAuthContext = {},
+  resume: OperationResumeContext = {}
+): Promise<GitOperationResult> {
   const state = await getOperationState(repoPath)
-  if (state === 'rebasing') await runGit(['rebase', '--skip'], { cwd: repoPath, env: extraEnv })
-  else if (state === 'cherry-picking') await runGit(['cherry-pick', '--skip'], { cwd: repoPath, env: extraEnv })
-  else if (state === 'reverting') await runGit(['revert', '--skip'], { cwd: repoPath, env: extraEnv })
-  else if (state === 'applying') await runGit(['am', '--skip'], { cwd: repoPath, env: extraEnv })
-  else throw new Error('Nothing to skip')
+  const { args, env } = contextArgs(ctx)
+  const runArgs = [...args, ...(resume.args ?? [])]
+  const runEnv = { ...env, ...resume.env }
+  const options = { cwd: repoPath, env: runEnv, allowFailure: true }
+  if (state === 'rebasing') return buildOperationResult(repoPath, await runGit([...runArgs, 'rebase', '--skip'], options))
+  if (state === 'cherry-picking')
+    return buildOperationResult(repoPath, await runGit([...runArgs, 'cherry-pick', '--skip'], options))
+  if (state === 'reverting') return buildOperationResult(repoPath, await runGit([...runArgs, 'revert', '--skip'], options))
+  if (state === 'applying') return buildOperationResult(repoPath, await runGit([...runArgs, 'am', '--skip'], options))
+  throw new Error('Nothing to skip')
 }
 
 export async function createTag(input: TagCreateInput, ctx: GitAuthContext): Promise<void> {
   validateRefName(input.repoPath, input.name)
   const args = input.message ? ['tag', '-a', input.name, '-m', input.message] : ['tag', input.name]
-  if (input.commit) args.push(input.commit)
+  if (input.commit) args.push('--end-of-options', revision(input.commit, 'Commit'))
   const { args: identArgs, env } = contextArgs(ctx)
   await runGit([...identArgs, ...args], { cwd: input.repoPath, env })
   if (input.push) {
-    await runGit([...identArgs, 'push', input.remote || 'origin', input.name], { cwd: input.repoPath, env })
+    const remote = input.remote ? remoteName(input.remote) : 'origin'
+    await runGit([...identArgs, 'push', remote, input.name], { cwd: input.repoPath, env })
   }
 }
 
 export async function deleteTag(repoPath: string, name: string, remote?: string, ctx?: GitAuthContext): Promise<void> {
+  validateRefName(repoPath, name)
   await runGit(['tag', '-d', name], { cwd: repoPath })
   if (remote) {
+    validateRemoteName(remote)
     const { args, env } = contextArgs(ctx ?? {})
     await runGit([...args, 'push', remote, `:refs/tags/${name}`], { cwd: repoPath, env })
   }
@@ -947,17 +1537,20 @@ export async function addWorktree(input: WorktreeAddInput): Promise<{ path: stri
   const repo = await resolveRepo(input.repoPath)
   if (isInside(repo.root, target)) throw new Error('Worktree must be outside the main repository folder')
   await fs.mkdir(path.dirname(target), { recursive: true })
-  validateRefName(input.repoPath, input.branch)
+  const startPoint = input.startPoint ? revision(input.startPoint, 'Start point') : undefined
+  if (!input.detach) validateRefName(input.repoPath, input.branch)
   const args = ['worktree', 'add']
   if (input.detach) {
-    args.push('--detach', target, input.startPoint || input.branch)
+    args.push('--detach', target, revision(startPoint || input.branch, 'Worktree target'))
   } else if (input.createBranch) {
     args.push('-b', input.branch, target)
-    if (input.startPoint) args.push(input.startPoint)
+    if (startPoint) args.push(startPoint)
   } else {
     args.push(target, input.branch)
   }
   await runGit(args, { cwd: repo.root })
+  // The new checkout has its own git dir and worktree facts.
+  invalidateRepoDiscovery(target)
   return { path: target }
 }
 
@@ -969,6 +1562,7 @@ export async function removeWorktree(repoPath: string, worktreePath: string, for
   if (force) args.push('--force')
   args.push(target)
   await runGit(args, { cwd: repo.path })
+  invalidateRepoDiscovery(target, repo.path)
 }
 
 export async function pruneWorktrees(repoPath: string): Promise<void> {
@@ -992,6 +1586,7 @@ export async function stashPush(
   includeUntracked: boolean,
   ctx: GitAuthContext
 ): Promise<void> {
+  await assertWorktree(repoPath, 'stashing changes')
   const { args, env } = contextArgs(ctx)
   const stashArgs = [...args, 'stash', 'push']
   if (includeUntracked) stashArgs.push('-u')
@@ -999,24 +1594,32 @@ export async function stashPush(
   await runGit(stashArgs, { cwd: repoPath, env })
 }
 
+function stashIndex(index: number): string {
+  if (!Number.isInteger(index) || index < 0 || index > 100_000) throw new Error('Invalid stash index')
+  return `stash@{${index}}`
+}
+
 export async function stashApply(repoPath: string, index: number, pop: boolean): Promise<void> {
-  await runGit(['stash', pop ? 'pop' : 'apply', `stash@{${index}}`], { cwd: repoPath })
+  await assertWorktree(repoPath, 'applying a stash')
+  await runGit(['stash', pop ? 'pop' : 'apply', stashIndex(index)], { cwd: repoPath })
 }
 
 export async function stashDrop(repoPath: string, index: number): Promise<void> {
-  await runGit(['stash', 'drop', `stash@{${index}}`], { cwd: repoPath })
+  await runGit(['stash', 'drop', stashIndex(index)], { cwd: repoPath })
 }
 
 export async function addRemote(repoPath: string, name: string, url: string): Promise<void> {
-  if (!/^[A-Za-z0-9._-]+$/.test(name)) throw new Error('Invalid remote name')
+  validateRemoteName(name)
   await runGit(['remote', 'add', name, url], { cwd: repoPath })
 }
 
 export async function removeRemote(repoPath: string, name: string): Promise<void> {
+  validateRemoteName(name)
   await runGit(['remote', 'remove', name], { cwd: repoPath })
 }
 
 export async function setRemoteUrl(repoPath: string, name: string, url: string, push = false): Promise<void> {
+  validateRemoteName(name)
   const args = ['remote', 'set-url']
   if (push) args.push('--push')
   args.push(name, url)
@@ -1024,17 +1627,23 @@ export async function setRemoteUrl(repoPath: string, name: string, url: string, 
 }
 
 export function validateRefName(repoPath: string, name: string): void {
-  if (!name || name.length > 240 || name.includes('..') || name.startsWith('-') || /[\s~^:?*\[\]\\]/.test(name)) {
-    throw new Error(`Invalid branch or tag name: ${name}`)
-  }
+  refName(name, 'Branch or tag name')
   // git check-ref-format is synchronous-free but we validate conservatively here.
   void repoPath
+}
+
+function validateRemoteName(name: string): void {
+  remoteName(name)
 }
 
 function validateFiles(files: string[]): string[] {
   if (!files.length) throw new Error('No files selected')
   return files.map((file) => {
-    if (path.isAbsolute(file) || file.split(/[\\/]/).includes('..')) {
+    if (!file || file.includes('\0') || path.isAbsolute(file)) {
+      throw new Error(`Invalid repository path: ${file}`)
+    }
+    const segments = file.split(/[\\/]/)
+    if (segments.includes('..') || segments.includes('.')) {
       throw new Error(`Invalid repository path: ${file}`)
     }
     return file

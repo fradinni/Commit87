@@ -26,7 +26,7 @@ import {
   X
 } from 'lucide-react'
 import type { Commit, DiffResult } from '@shared/types'
-import { activeIdentity, useStore } from '../store'
+import { operationNotice, selectedIdentityId, useStore } from '../store'
 import { call } from '../lib/ipc'
 import { buildGraph, classifyRefs, GRAPH_PADDING, LANE_GAP } from '../lib/graph'
 import type { ClassifiedRef } from '../lib/graph'
@@ -87,11 +87,19 @@ export function GraphView() {
   const notify = useStore((state) => state.notify)
   const notifyError = useStore((state) => state.notifyError)
   const currentBranch = useStore((state) => state.status?.branch ?? state.currentRepo?.currentBranch ?? null)
-  const headSha = useStore((state) => state.status?.headSha ?? null)
-  const [query, setQuery] = [useStore((state) => state.graphQuery), useStore((state) => state.setGraphQuery)]
-  const [branch, setBranch] = [useStore((state) => state.graphBranch), useStore((state) => state.setGraphBranch)]
+  const headSha = useStore((state) => state.status?.headSha ?? state.currentRepo?.headSha ?? null)
+  const appliedQuery = useStore((state) => state.graphQuery)
+  const appliedBranch = useStore((state) => state.graphBranch)
+  const setGraphQuery = useStore((state) => state.setGraphQuery)
+  const setGraphBranch = useStore((state) => state.setGraphBranch)
+  // Draft controls are local; only an explicit submit writes the applied
+  // filter, so a refresh cannot overwrite what the user is still editing.
+  const [draftQuery, setDraftQuery] = useState(appliedQuery)
+  const [draftBranch, setDraftBranch] = useState(appliedBranch)
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  const queryRequest = useRef(0)
+  const loadingRef = useRef(false)
   const [detail, setDetail] = useState<Commit | null>(null)
   const [diff, setDiff] = useState<DiffResult | null>(null)
   const [diffLoading, setDiffLoading] = useState(false)
@@ -150,26 +158,38 @@ export function GraphView() {
     Boolean(detail && detail.sha === selectedCommit && detail.parents.length > 1)
 
   const runQuery = useCallback(
-    async (append = false) => {
-      if (!repo) return
+    async (append: boolean, criteria: { query: string; branch: string }) => {
+      const repoPath = repo?.path
+      if (!repoPath) return
+      if (append && loadingRef.current) return
+      const generation = ++queryRequest.current
+      loadingRef.current = true
       if (append) setLoadingMore(true)
       else setLoading(true)
       try {
         const limit = config?.maxCommits ?? 500
+        const skip = append ? useStore.getState().commits.length : 0
         const fresh = await call('git.log', {
-          repoPath: repo.path,
+          repoPath,
           limit: append ? 200 : limit,
-          skip: append ? commits.length : 0,
-          branch: branch || undefined,
-          all: !branch,
-          search: query.trim() || undefined
+          skip,
+          branch: criteria.branch || undefined,
+          all: !criteria.branch,
+          search: criteria.query || undefined
         })
-        const next = append ? [...commits, ...fresh.filter((item) => !commits.some((existing) => existing.sha === item.sha))] : fresh
-        useStore.getState().updateTab(repo.path, { commits: next })
-        if (!append && useStore.getState().currentRepo?.path === repo.path) {
+        // A newer filter, page or tab wins; this response is just history.
+        if (generation !== queryRequest.current) return
+        const state = useStore.getState()
+        if (state.currentRepo?.path !== repoPath) return
+        if (state.graphQuery.trim() !== criteria.query || state.graphBranch !== criteria.branch) return
+        const base = append ? state.commits : []
+        const next = append
+          ? [...base, ...fresh.filter((item) => !base.some((existing) => existing.sha === item.sha))]
+          : fresh
+        useStore.getState().updateTab(repoPath, { commits: next })
+        if (!append) {
           // A refresh or filter keeps whatever part of the selection is still
           // listed (and its active commit); otherwise it selects the newest one.
-          const state = useStore.getState()
           const order = next.map((item) => item.sha)
           const kept = normalizeCommitSelection(order, state.selectedCommits)
           if (kept.length) {
@@ -181,13 +201,39 @@ export function GraphView() {
           }
         }
       } catch (error) {
-        notifyError(error)
+        if (generation === queryRequest.current) notifyError(error)
       } finally {
-        setLoading(false)
-        setLoadingMore(false)
+        if (generation === queryRequest.current) {
+          loadingRef.current = false
+          setLoading(false)
+          setLoadingMore(false)
+        }
       }
     },
-    [branch, commits, config?.maxCommits, notifyError, query, repo, selectCommit, selectCommits]
+    [config?.maxCommits, notifyError, repo?.path, selectCommit, selectCommits]
+  )
+
+  // Draft values follow an applied filter that changed outside this view (for
+  // example a refresh falling back after its branch disappeared).
+  useEffect(() => {
+    setDraftQuery(appliedQuery)
+  }, [appliedQuery])
+  useEffect(() => {
+    setDraftBranch(appliedBranch)
+  }, [appliedBranch])
+
+  const applyFilters = useCallback(
+    (nextQuery: string, nextBranch: string): void => {
+      // A new filter supersedes a load in flight; the button itself is disabled
+      // while loading so a plain refresh cannot pile up.
+      const query = nextQuery.trim()
+      setGraphQuery(query)
+      setGraphBranch(nextBranch)
+      setDraftQuery(query)
+      setDraftBranch(nextBranch)
+      void runQuery(false, { query, branch: nextBranch })
+    },
+    [runQuery, setGraphBranch, setGraphQuery]
   )
 
   useEffect(() => {
@@ -316,7 +362,7 @@ export function GraphView() {
         name: formName.trim(),
         message: formMessage.trim() || undefined,
         commit: tagTarget.sha,
-        identityId: activeIdentity()?.id
+        identityId: selectedIdentityId()
       })
       await useStore.getState().refreshTags(repo.path)
       notify(`Tag ${formName.trim()} created`, 'success')
@@ -347,25 +393,22 @@ export function GraphView() {
 
   const runHistoryAction = async (action: 'cherry-pick' | 'revert', shas: string[]): Promise<void> => {
     if (!shas.length) return
+    const label = action === 'cherry-pick' ? 'Cherry-pick' : 'Revert'
     const result =
       action === 'cherry-pick'
-        ? await call('git.cherryPick', { path: repo.path, shas, identityId: activeIdentity()?.id })
-        : await call('git.revert', { path: repo.path, shas, identityId: activeIdentity()?.id })
+        ? await call('git.cherryPick', { path: repo.path, shas, identityId: selectedIdentityId() })
+        : await call('git.revert', { path: repo.path, shas, identityId: selectedIdentityId() })
     // A conflict or a hook stop leaves the repository mid-operation; refresh so
-    // the status bar offers Continue, Skip and Abort, and report it as an error.
+    // the status bar offers Continue, Skip and Abort, and report the outcome
+    // truthfully instead of calling a conflict a completed action.
     await useStore.getState().refreshAll(repo.path)
-    const output = result.output.trim()
-    if (result.exitCode !== 0) {
-      notify(output || `${action === 'cherry-pick' ? 'Cherry-pick' : 'Revert'} did not finish`, 'error')
+    const fallback = shas.length > 1 ? `${label}ed ${shas.length} commits` : `${label}ed`
+    const notice = operationNotice(result, fallback, label)
+    if (result.status !== 'ok') {
+      notify(notice.message, notice.kind)
       return
     }
-    const fallback =
-      shas.length > 1
-        ? `${action === 'cherry-pick' ? 'Cherry-picked' : 'Reverted'} ${shas.length} commits`
-        : action === 'cherry-pick'
-          ? 'Cherry-picked'
-          : 'Reverted'
-    notify(output || fallback, 'success')
+    notify(fallback, notice.kind)
   }
 
   const confirmHistory = (action: 'cherry-pick' | 'revert'): void => {
@@ -535,7 +578,7 @@ export function GraphView() {
             title: 'Check out this commit?',
             message: `This detaches HEAD at ${shortSha(single.sha)}. Your branch will not move.`,
             run: async () => {
-              await call('git.checkout', { repoPath: repo.path, branch: single.sha })
+              await call('git.checkout', { repoPath: repo.path, branch: single.sha, detach: true })
               await useStore.getState().refreshAll(repo.path)
               notify(`Checked out ${shortSha(single.sha)} (detached)`, 'success')
             }
@@ -618,28 +661,44 @@ export function GraphView() {
           <h2>Commit graph</h2>
           <Badge tone="neutral">{commits.length} loaded</Badge>
           {selectionCount > 1 ? <Badge tone="blue">{selectionCount} selected</Badge> : null}
-          {query || branch ? <Badge tone="blue">filtered</Badge> : null}
+          {appliedQuery || appliedBranch ? <Badge tone="blue">filtered</Badge> : null}
         </div>
         <div className="toolbar-actions">
           <form
             className="search-box"
             onSubmit={(event) => {
               event.preventDefault()
-              void runQuery()
+              applyFilters(draftQuery, draftBranch)
             }}
           >
             <Search size={14} />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search commits…" spellCheck={false} />
-            {query ? (
-              <button type="button" onClick={() => setQuery('')} aria-label="Clear search">
+            <input
+              value={draftQuery}
+              onChange={(event) => setDraftQuery(event.target.value)}
+              placeholder="Search commits…"
+              spellCheck={false}
+            />
+            {draftQuery ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setDraftQuery('')
+                  applyFilters('', draftBranch)
+                }}
+                aria-label="Clear search"
+              >
                 <X size={12} />
               </button>
             ) : null}
           </form>
-          <Select value={branch} onChange={(event) => setBranch(event.target.value)} title="Filter by branch">
+          <Select
+            value={draftBranch}
+            onChange={(event) => applyFilters(draftQuery, event.target.value)}
+            title="Filter by branch"
+          >
             <option value="">All branches</option>
-            {branch && !localBranches.some((item) => item.name === branch) ? (
-              <option value={branch}>{branch.replace(/^refs\/(heads|remotes|tags)\//, '')}</option>
+            {draftBranch && !localBranches.some((item) => item.name === draftBranch) ? (
+              <option value={draftBranch}>{draftBranch.replace(/^refs\/(heads|remotes|tags)\//, '')}</option>
             ) : null}
             {localBranches.map((item) => (
               <option key={item.name} value={item.name}>
@@ -648,7 +707,14 @@ export function GraphView() {
               </option>
             ))}
           </Select>
-          <Button size="sm" variant="outline" icon={<RotateCcw size={14} />} onClick={() => void runQuery()} loading={loading}>
+          <Button
+            size="sm"
+            variant="outline"
+            icon={<RotateCcw size={14} />}
+            onClick={() => applyFilters(draftQuery, draftBranch)}
+            loading={loading}
+            disabled={loading}
+          >
             Refresh
           </Button>
         </div>
@@ -661,13 +727,13 @@ export function GraphView() {
               icon={<GitCommitHorizontal size={22} />}
               title="No commits to show"
               description={
-                query || branch
+                appliedQuery || appliedBranch
                   ? 'No commits match this filter.'
                   : 'This repository has no commits yet. Stage files and create the first commit from Files & staging.'
               }
               action={
-                query || branch ? (
-                  <Button size="sm" variant="outline" onClick={() => { setQuery(''); setBranch('') }}>
+                appliedQuery || appliedBranch ? (
+                  <Button size="sm" variant="outline" onClick={() => applyFilters('', '')}>
                     Clear filters
                   </Button>
                 ) : (
@@ -794,7 +860,13 @@ export function GraphView() {
                   })}
                 </div>
                 <div className="commit-load-more">
-                  <Button variant="ghost" size="sm" loading={loadingMore} icon={<ArrowDownToLine size={14} />} onClick={() => void runQuery(true)}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    loading={loadingMore}
+                    icon={<ArrowDownToLine size={14} />}
+                    onClick={() => void runQuery(true, { query: appliedQuery.trim(), branch: appliedBranch })}
+                  >
                     Load more commits
                   </Button>
                 </div>
@@ -921,7 +993,7 @@ export function GraphView() {
                         title: 'Check out this commit?',
                         message: `This detaches HEAD at ${shortSha(detail.sha)}. Your branch will not move.`,
                         run: async () => {
-                          await call('git.checkout', { repoPath: repo.path, branch: detail.sha })
+                          await call('git.checkout', { repoPath: repo.path, branch: detail.sha, detach: true })
                           await useStore.getState().refreshAll(repo.path)
                           notify(`Checked out ${shortSha(detail.sha)} (detached)`, 'success')
                         }

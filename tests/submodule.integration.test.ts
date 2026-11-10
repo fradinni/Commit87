@@ -25,23 +25,105 @@ const identity: GitIdentity = {
 }
 
 let root = ''
-let remotePath = ''
-let repoPath = ''
-let submodulePath = ''
-let firstSha = ''
-let secondSha = ''
 const savedEnv = {
   count: process.env.GIT_CONFIG_COUNT,
   key: process.env.GIT_CONFIG_KEY_0,
   value: process.env.GIT_CONFIG_VALUE_0
 }
 
-async function commit(file: string, content: string, message: string): Promise<string> {
-  await fs.writeFile(path.join(remotePath, file), content)
-  await runGit(['add', '.'], { cwd: remotePath })
-  await runGit(['commit', '-m', message], { cwd: remotePath })
-  const head = await runGit(['rev-parse', 'HEAD'], { cwd: remotePath })
+async function commitIn(dir: string, file: string, content: string, message: string): Promise<string> {
+  await fs.writeFile(path.join(dir, file), content)
+  await runGit(['add', '.'], { cwd: dir })
+  await runGit(['commit', '-m', message], { cwd: dir })
+  const head = await runGit(['rev-parse', 'HEAD'], { cwd: dir })
   return head.stdout.trim()
+}
+
+async function initRepo(dir: string): Promise<void> {
+  await fs.mkdir(dir, { recursive: true })
+  await runGit(['init', '-b', 'main'], { cwd: dir })
+  await runGit(['config', 'user.name', identity.name], { cwd: dir })
+  await runGit(['config', 'user.email', identity.email], { cwd: dir })
+}
+
+interface AppFixture {
+  remotePath: string
+  repoPath: string
+  submodulePath: string
+  firstSha: string
+  secondSha: string
+}
+
+/** An application repository plus the local library repository it can add as a submodule. */
+async function createAppFixture(label: string): Promise<AppFixture> {
+  const base = path.join(root, label)
+  const remote = path.join(base, 'remote-lib')
+  const app = path.join(base, 'app')
+  await initRepo(remote)
+  const first = await commitIn(remote, 'lib.txt', 'one\n', 'First library commit')
+  const second = await commitIn(remote, 'lib.txt', 'two\n', 'Second library commit')
+
+  await initRepo(app)
+  await fs.writeFile(path.join(app, 'README.md'), '# App\n')
+  await runGit(['add', '.'], { cwd: app })
+  await runGit(['commit', '-m', 'Initial app commit'], { cwd: app })
+  return {
+    remotePath: remote,
+    repoPath: app,
+    submodulePath: path.join(app, 'vendor', 'lib'),
+    firstSha: first,
+    secondSha: second
+  }
+}
+
+/** A fixture with the library already added and committed at `vendor/lib`. */
+async function createInitializedFixture(label: string): Promise<AppFixture> {
+  const fixture = await createAppFixture(label)
+  await addSubmodule(
+    { repoPath: fixture.repoPath, url: fixture.remotePath, path: 'vendor/lib', branch: 'main' },
+    { identity }
+  )
+  await runGit(['add', '.'], { cwd: fixture.repoPath })
+  await runGit(['commit', '-m', 'Add library submodule'], { cwd: fixture.repoPath })
+  return fixture
+}
+
+/** A superproject with one committed `lib` submodule cloned from a local repository. */
+async function createFixture(label: string): Promise<{ remote: string; superRepo: string }> {
+  const base = path.join(root, label)
+  const remote = path.join(base, 'remote')
+  const superRepo = path.join(base, 'super')
+  await fs.mkdir(remote, { recursive: true })
+  await runGit(['init', '-b', 'main'], { cwd: remote })
+  await runGit(['config', 'user.name', identity.name], { cwd: remote })
+  await runGit(['config', 'user.email', identity.email], { cwd: remote })
+  await fs.writeFile(path.join(remote, 'lib.txt'), 'one\n')
+  await runGit(['add', '.'], { cwd: remote })
+  await runGit(['commit', '-m', 'lib'], { cwd: remote })
+
+  await fs.mkdir(superRepo)
+  await runGit(['init', '-b', 'main'], { cwd: superRepo })
+  await runGit(['config', 'user.name', identity.name], { cwd: superRepo })
+  await runGit(['config', 'user.email', identity.email], { cwd: superRepo })
+  await fs.writeFile(path.join(superRepo, 'README.md'), '# Super\n')
+  await runGit(['add', '.'], { cwd: superRepo })
+  await runGit(['commit', '-m', 'super'], { cwd: superRepo })
+  await addSubmodule({ repoPath: superRepo, url: remote, path: 'lib' }, { identity })
+  await runGit(['add', '.'], { cwd: superRepo })
+  await runGit(['commit', '-m', 'submodule'], { cwd: superRepo })
+  return { remote, superRepo }
+}
+
+/** Make a commit that never reaches the submodule's remote and record it in the superproject. */
+async function recordUnpublishedCommit(superRepo: string): Promise<string> {
+  const checkout = path.join(superRepo, 'lib')
+  await fs.writeFile(path.join(checkout, 'unpublished.txt'), 'local only\n')
+  await runGit(['add', '.'], { cwd: checkout })
+  await runGit(['commit', '-m', 'Unpublished local commit'], { cwd: checkout })
+  const sha = (await runGit(['rev-parse', 'HEAD'], { cwd: checkout })).stdout.trim()
+  await runGit(['add', 'lib'], { cwd: superRepo })
+  await runGit(['commit', '-m', 'Record local submodule commit'], { cwd: superRepo })
+  return sha
 }
 
 beforeAll(async () => {
@@ -52,24 +134,6 @@ beforeAll(async () => {
   process.env.GIT_CONFIG_VALUE_0 = 'always'
 
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'commit87-submodule-'))
-  remotePath = path.join(root, 'remote-lib')
-  repoPath = path.join(root, 'app')
-  submodulePath = path.join(repoPath, 'vendor', 'lib')
-
-  await fs.mkdir(remotePath)
-  await runGit(['init', '-b', 'main'], { cwd: remotePath })
-  await runGit(['config', 'user.name', identity.name], { cwd: remotePath })
-  await runGit(['config', 'user.email', identity.email], { cwd: remotePath })
-  firstSha = await commit('lib.txt', 'one\n', 'First library commit')
-  secondSha = await commit('lib.txt', 'two\n', 'Second library commit')
-
-  await fs.mkdir(repoPath)
-  await runGit(['init', '-b', 'main'], { cwd: repoPath })
-  await runGit(['config', 'user.name', identity.name], { cwd: repoPath })
-  await runGit(['config', 'user.email', identity.email], { cwd: repoPath })
-  await fs.writeFile(path.join(repoPath, 'README.md'), '# App\n')
-  await runGit(['add', '.'], { cwd: repoPath })
-  await runGit(['commit', '-m', 'Initial app commit'], { cwd: repoPath })
 })
 
 afterAll(async () => {
@@ -84,6 +148,7 @@ afterAll(async () => {
 
 describe('submodule service', () => {
   it('adds a submodule and joins status with the .gitmodules configuration', async () => {
+    const { repoPath, remotePath, submodulePath, secondSha } = await createAppFixture('add-case')
     await addSubmodule(
       { repoPath, url: remotePath, path: 'vendor/lib', branch: 'main' },
       { identity }
@@ -111,6 +176,7 @@ describe('submodule service', () => {
   })
 
   it('reports local changes inside an initialized checkout', async () => {
+    const { repoPath, submodulePath } = await createInitializedFixture('dirty-check-case')
     await fs.writeFile(path.join(submodulePath, 'scratch.txt'), 'temporary\n')
     const dirty = await getSubmodules(repoPath)
     expect(dirty[0].dirty).toBe(true)
@@ -119,6 +185,7 @@ describe('submodule service', () => {
   })
 
   it('removes untracked files when a forced reset asks for a clean checkout', async () => {
+    const { repoPath, submodulePath } = await createInitializedFixture('forced-reset-case')
     await fs.writeFile(path.join(submodulePath, 'build-artifact.tmp'), 'temporary\n')
     expect((await getSubmodules(repoPath))[0].dirty).toBe(true)
 
@@ -134,6 +201,7 @@ describe('submodule service', () => {
   })
 
   it('detects an out-of-sync checkout and updates it to the recorded commit', async () => {
+    const { repoPath, submodulePath, firstSha, secondSha } = await createInitializedFixture('drift-case')
     await runGit(['checkout', firstSha], { cwd: submodulePath })
     const modified = await getSubmodules(repoPath)
     expect(modified[0].state).toBe('modified')
@@ -150,6 +218,7 @@ describe('submodule service', () => {
   })
 
   it('reports and reinitializes a deinitialized submodule', async () => {
+    const { repoPath, secondSha } = await createInitializedFixture('deinit-case')
     await runGit(['submodule', 'deinit', '--', 'vendor/lib'], { cwd: repoPath })
     const uninitialized = await getSubmodules(repoPath)
     expect(uninitialized[0]).toMatchObject({
@@ -165,7 +234,8 @@ describe('submodule service', () => {
   })
 
   it('updates a branch-tracking submodule to the remote tip', async () => {
-    const thirdSha = await commit('lib.txt', 'three\n', 'Third library commit')
+    const { repoPath, remotePath } = await createInitializedFixture('remote-tip-case')
+    const thirdSha = await commitIn(remotePath, 'lib.txt', 'three\n', 'Third library commit')
     await updateSubmodules(
       { repoPath, submodulePath: 'vendor/lib', init: true, remote: true }
     )
@@ -175,6 +245,7 @@ describe('submodule service', () => {
   })
 
   it('syncs a changed submodule URL into the module configuration', async () => {
+    const { repoPath, remotePath, submodulePath } = await createInitializedFixture('sync-url-case')
     const syncedUrl = `${remotePath}-synced`
     await runGit(['config', '-f', '.gitmodules', 'submodule.vendor/lib.url', syncedUrl], { cwd: repoPath })
     await syncSubmodules(repoPath, 'vendor/lib')
@@ -185,41 +256,70 @@ describe('submodule service', () => {
     await syncSubmodules(repoPath)
   })
 
-  it('removes a submodule, its module directory and an empty .gitmodules', async () => {
-    await removeSubmodule(repoPath, 'vendor/lib', true)
+  it('retains the module clone aside when ordinary removal drops the checkout', async () => {
+    const { superRepo } = await createFixture('removal-case')
+    const unpublished = await recordUnpublishedCommit(superRepo)
 
-    expect(await getSubmodules(repoPath)).toHaveLength(0)
-    await expect(fs.stat(submodulePath)).rejects.toThrow()
-    await expect(fs.stat(path.join(repoPath, '.gitmodules'))).rejects.toThrow()
-    await expect(fs.stat(path.join(repoPath, '.git', 'modules', 'vendor', 'lib'))).rejects.toThrow()
+    const { retainedPath } = await removeSubmodule(superRepo, 'lib')
+    expect(retainedPath).toBeTruthy()
+    if (!retainedPath) throw new Error('Ordinary removal reported no retained module clone')
 
-    const status = await getStatus(repoPath)
+    await expect(fs.stat(path.join(superRepo, 'lib'))).rejects.toThrow()
+    await expect(fs.stat(path.join(superRepo, '.gitmodules'))).rejects.toThrow()
+    await expect(fs.stat(path.join(superRepo, '.git', 'modules', 'lib'))).rejects.toThrow()
+
+    const status = await getStatus(superRepo)
     expect(status.files.some((file) => file.path === '.gitmodules' && file.stage === 'staged')).toBe(true)
-    expect(status.files.some((file) => file.path === 'vendor/lib' && file.stage === 'staged')).toBe(true)
+    expect(status.files.some((file) => file.path === 'lib' && file.stage === 'staged')).toBe(true)
+
+    expect((await fs.stat(retainedPath)).isDirectory()).toBe(true)
+    const objectCheck = await runGit(['cat-file', '-e', unpublished], { cwd: retainedPath, allowFailure: true })
+    expect(objectCheck.exitCode).toBe(0)
+    const moduleLog = await runGit(['log', '--all', '--format=%H'], { cwd: retainedPath })
+    expect(moduleLog.stdout).toContain(unpublished)
+  })
+
+  it('re-adds the same submodule URL at the same path after removal', async () => {
+    const { remote, superRepo } = await createFixture('readd-case')
+    await recordUnpublishedCommit(superRepo)
+    const { retainedPath } = await removeSubmodule(superRepo, 'lib')
+    expect(retainedPath).toBeTruthy()
+
+    // Re-adding the old URL at the old path only works because the module
+    // clone was moved aside instead of left at <git-dir>/modules/lib.
+    await addSubmodule({ repoPath: superRepo, url: remote, path: 'lib' }, { identity })
+
+    const readded = await getSubmodules(superRepo)
+    expect(readded).toHaveLength(1)
+    expect(readded[0]).toMatchObject({ path: 'lib', url: remote, state: 'initialized', initialized: true })
+    expect(await fs.readFile(path.join(superRepo, 'lib', 'lib.txt'), 'utf8')).toBe('one\n')
+    expect((await runGit(['status', '--porcelain'], { cwd: path.join(superRepo, 'lib') })).stdout.trim()).toBe('')
+    // The recovery copy and the fresh clone coexist.
+    if (retainedPath) expect((await fs.stat(retainedPath)).isDirectory()).toBe(true)
+  })
+
+  it('keeps the object database when a forced removal discards local changes', async () => {
+    const { superRepo } = await createFixture('forced-case')
+    const unpublished = await recordUnpublishedCommit(superRepo)
+    await fs.writeFile(path.join(superRepo, 'lib', 'scratch.txt'), 'temporary\n')
+    await fs.writeFile(path.join(superRepo, 'lib', 'lib.txt'), 'changed\n')
+    expect((await getSubmodules(superRepo))[0].dirty).toBe(true)
+
+    const { retainedPath } = await removeSubmodule(superRepo, 'lib', true)
+    expect(retainedPath).toBeTruthy()
+    if (!retainedPath) throw new Error('Forced removal reported no retained module clone')
+
+    await expect(fs.stat(path.join(superRepo, 'lib'))).rejects.toThrow()
+    const objectCheck = await runGit(['cat-file', '-e', unpublished], { cwd: retainedPath, allowFailure: true })
+    expect(objectCheck.exitCode).toBe(0)
+    // The discarded working-tree edits are not and never were commits.
+    const retainedLog = await runGit(['log', '--all', '--format=%H'], { cwd: retainedPath })
+    expect(retainedLog.stdout).toContain(unpublished)
   })
 
   it('keeps the main checkout intact when removing from a linked worktree', async () => {
-    const base = path.join(root, 'linked-case')
-    const remote = path.join(base, 'remote')
-    const superRepo = path.join(base, 'super')
-    await fs.mkdir(remote, { recursive: true })
-    await runGit(['init', '-b', 'main'], { cwd: remote })
-    await runGit(['config', 'user.name', identity.name], { cwd: remote })
-    await runGit(['config', 'user.email', identity.email], { cwd: remote })
-    await fs.writeFile(path.join(remote, 'lib.txt'), 'one\n')
-    await runGit(['add', '.'], { cwd: remote })
-    await runGit(['commit', '-m', 'lib'], { cwd: remote })
-
-    await fs.mkdir(superRepo)
-    await runGit(['init', '-b', 'main'], { cwd: superRepo })
-    await runGit(['config', 'user.name', identity.name], { cwd: superRepo })
-    await runGit(['config', 'user.email', identity.email], { cwd: superRepo })
-    await fs.writeFile(path.join(superRepo, 'README.md'), '# Super\n')
-    await runGit(['add', '.'], { cwd: superRepo })
-    await runGit(['commit', '-m', 'super'], { cwd: superRepo })
-    await addSubmodule({ repoPath: superRepo, url: remote, path: 'lib' }, { identity })
-    await runGit(['add', '.'], { cwd: superRepo })
-    await runGit(['commit', '-m', 'submodule'], { cwd: superRepo })
+    const { superRepo } = await createFixture('linked-case')
+    const base = path.dirname(superRepo)
 
     const linked = path.join(base, 'linked')
     await runGit(['worktree', 'add', '-b', 'linked', linked], { cwd: superRepo })
@@ -230,15 +330,67 @@ describe('submodule service', () => {
     expect((await fs.stat(mainModule)).isDirectory()).toBe(true)
     expect((await fs.stat(linkedModule)).isDirectory()).toBe(true)
 
-    await removeSubmodule(linked, 'lib', true)
+    // A commit that only exists in the linked checkout's module clone.
+    const linkedCheckout = path.join(linked, 'lib')
+    await fs.writeFile(path.join(linkedCheckout, 'local-only.txt'), 'local\n')
+    await runGit(['add', '.'], { cwd: linkedCheckout })
+    await runGit(['commit', '-m', 'Local only commit'], { cwd: linkedCheckout })
+    const unpublished = (await runGit(['rev-parse', 'HEAD'], { cwd: linkedCheckout })).stdout.trim()
+
+    const { retainedPath } = await removeSubmodule(linked, 'lib', true)
+    expect(retainedPath).toBeTruthy()
+    if (!retainedPath) throw new Error('Linked-worktree removal reported no retained module clone')
+    expect(normalizePath(retainedPath).startsWith(`${normalizePath(linkedModule)}.removed-`)).toBe(true)
 
     // Git reports canonical paths with its own separators and casing.
     expect(normalizePath((await resolveRepo(superRepo)).path)).toBe(normalizePath(await fs.realpath(superRepo)))
     expect((await fs.stat(path.join(superRepo, 'lib'))).isDirectory()).toBe(true)
     expect((await fs.stat(mainModule)).isDirectory()).toBe(true)
     expect((await getSubmodules(superRepo)).map((submodule) => submodule.path)).toEqual(['lib'])
+    // The linked worktree's own clone moved aside; the main worktree's clone is untouched.
     await expect(fs.stat(linkedModule)).rejects.toThrow()
+    expect((await fs.stat(path.join(superRepo, '.git', 'modules', 'lib'))).isDirectory()).toBe(true)
+    const objectCheck = await runGit(['cat-file', '-e', unpublished], { cwd: retainedPath, allowFailure: true })
+    expect(objectCheck.exitCode).toBe(0)
     await expect(fs.stat(path.join(linked, 'lib'))).rejects.toThrow()
+  })
+
+  it('reports a retained path inside the Git directory that is not the live module path', async () => {
+    const { superRepo } = await createFixture('retained-path-case')
+    const liveModule = path.join(superRepo, '.git', 'modules', 'lib')
+    const gitDirOutput = (await runGit(['rev-parse', '--git-dir'], { cwd: superRepo })).stdout.trim()
+    const gitDir = path.resolve(superRepo, gitDirOutput)
+
+    const { retainedPath } = await removeSubmodule(superRepo, 'lib')
+    if (!retainedPath) throw new Error('Removal reported no retained module clone')
+
+    const insideGitDir = path.relative(gitDir, retainedPath)
+    expect(insideGitDir.startsWith('..')).toBe(false)
+    expect(path.isAbsolute(insideGitDir)).toBe(false)
+    expect(path.dirname(retainedPath)).toBe(path.dirname(liveModule))
+    expect(normalizePath(retainedPath)).not.toBe(normalizePath(liveModule))
+    expect(retainedPath.startsWith(`${liveModule}.removed-`)).toBe(true)
+    expect((await fs.stat(retainedPath)).isDirectory()).toBe(true)
+    await expect(fs.stat(liveModule)).rejects.toThrow()
+  })
+
+  it('reuses the retained clone when the old module layout is restored', async () => {
+    const { superRepo } = await createFixture('restore-case')
+    const unpublished = await recordUnpublishedCommit(superRepo)
+    const { retainedPath } = await removeSubmodule(superRepo, 'lib')
+    if (!retainedPath) throw new Error('Removal reported no retained module clone')
+
+    // Go back to the state that still records the gitlink, put the retained
+    // clone back where Git looks for it, and let Git check it out again.
+    await runGit(['reset', '--hard', 'HEAD'], { cwd: superRepo })
+    await fs.rename(retainedPath, path.join(superRepo, '.git', 'modules', 'lib'))
+    await updateSubmodules({ repoPath: superRepo, submodulePath: 'lib', init: true })
+
+    expect((await getSubmodules(superRepo))[0]).toMatchObject({ path: 'lib', state: 'initialized' })
+    const restored = path.join(superRepo, 'lib')
+    const objectCheck = await runGit(['cat-file', '-e', unpublished], { cwd: restored, allowFailure: true })
+    expect(objectCheck.exitCode).toBe(0)
+    expect((await runGit(['log', '--all', '--format=%H'], { cwd: restored })).stdout).toContain(unpublished)
   })
 
   it('does not fail listing when a gitlink has no .gitmodules mapping', async () => {
@@ -379,6 +531,7 @@ describe('submodule service', () => {
   })
 
   it('rejects paths that escape the repository or hit Git metadata', async () => {
+    const { repoPath, remotePath } = await createAppFixture('path-validation-case')
     await expect(
       addSubmodule({ repoPath, url: remotePath, path: '../escape' }, { identity })
     ).rejects.toThrow(/escapes the repository/)
@@ -387,6 +540,6 @@ describe('submodule service', () => {
         addSubmodule({ repoPath, url: remotePath, path: badPath }, { identity })
       ).rejects.toThrow(/Git metadata/)
     }
-    await expect(removeSubmodule(repoPath, 'vendor/lib')).rejects.toThrow(/Not a tracked submodule/)
+    await expect(removeSubmodule(repoPath, 'vendor/missing')).rejects.toThrow(/Not a tracked submodule/)
   })
 })

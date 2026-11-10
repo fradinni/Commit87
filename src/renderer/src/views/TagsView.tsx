@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { CloudUpload, GitCommitHorizontal, Plus, RefreshCw, Rocket, Search, Tag, Trash2 } from 'lucide-react'
 import type { TagInfo } from '@shared/types'
-import { activeIdentity, useStore } from '../store'
+import { selectedIdentityId, useStore } from '../store'
 import { call } from '../lib/ipc'
 import { formatDate, formatRelativeTime } from '../lib/format'
 import { Badge, Button, ConfirmDialog, Field, IconButton, Modal, Select, TextInput, TextArea, EmptyState } from '../components/ui'
@@ -59,7 +59,7 @@ export function TagsView() {
         commit: target || undefined,
         push,
         remote: push ? remote : undefined,
-        identityId: activeIdentity()?.id
+        identityId: selectedIdentityId()
       })
       setCreateOpen(false)
       setName('')
@@ -88,7 +88,7 @@ export function TagsView() {
         path: repo.path,
         name: pushTag.name,
         remote: pushRemote,
-        identityId: activeIdentity()?.id,
+        identityId: selectedIdentityId(),
         accountId: detection.accountId
       })
       setPushTag(null)

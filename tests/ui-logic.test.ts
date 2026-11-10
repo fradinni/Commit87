@@ -150,17 +150,45 @@ describe('git console safety', () => {
 
   it('allows normal git commands', () => {
     expect(validateConsoleCommand('git status')).toEqual(['status'])
+    expect(validateConsoleCommand('git status --short --branch')).toEqual(['status', '--short', '--branch'])
     expect(validateConsoleCommand('git log --oneline -n 10')).toEqual(['log', '--oneline', '-n', '10'])
+    expect(validateConsoleCommand('git remote -v')).toEqual(['remote', '-v'])
+    expect(validateConsoleCommand('git worktree list')).toEqual(['worktree', 'list'])
+    expect(validateConsoleCommand('git stash list')).toEqual(['stash', 'list'])
     expect(validateConsoleCommand('git config --get user.email')).toEqual(['config', '--get', 'user.email'])
+    expect(validateConsoleCommand('git config --local --get user.email')).toEqual([
+      'config',
+      '--local',
+      '--get',
+      'user.email'
+    ])
+    expect(validateConsoleCommand('git log -5 --oneline')).toEqual(['log', '-5', '--oneline'])
+    expect(validateConsoleCommand('git log --pretty=%s -n 3')).toEqual(['log', '--pretty=%s', '-n', '3'])
+    expect(validateConsoleCommand('git rm src/old.ts')).toEqual(['rm', 'src/old.ts'])
+    expect(validateConsoleCommand('git rm --cached src/old.ts')).toEqual(['rm', '--cached', 'src/old.ts'])
+    expect(validateConsoleCommand('git worktree remove wt-copy')).toEqual(['worktree', 'remove', 'wt-copy'])
   })
 
   it('rejects shell escape hatches and global overrides', () => {
     expect(() => validateConsoleCommand('rm -rf /')).toThrow()
     expect(() => validateConsoleCommand('git -c core.pager=cat status')).toThrow()
+    expect(() => validateConsoleCommand('git -C /tmp status')).toThrow()
     expect(() => validateConsoleCommand('git config alias.x "!rm -rf /"')).toThrow()
     expect(() => validateConsoleCommand('git config --local user.name x')).toThrow()
+    expect(() => validateConsoleCommand('git config --file /tmp/config --get user.name')).toThrow()
     expect(() => validateConsoleCommand('git submodule foreach rm -rf')).toThrow()
     expect(() => validateConsoleCommand('git rebase --exec "rm -rf /" main')).toThrow()
+    expect(() => validateConsoleCommand('git rebase -x "rm -rf /" main')).toThrow()
+    expect(() => validateConsoleCommand('git fetch --upload-pack=/tmp/x')).toThrow()
+    expect(() => validateConsoleCommand('git worktree add /tmp/x main')).toThrow()
+    // A value-taking option must not swallow an option-shaped token.
+    expect(() => validateConsoleCommand('git log --pretty --output=/tmp/x')).toThrow()
+    expect(() => validateConsoleCommand('git show --pretty --output=/tmp/x')).toThrow()
+    expect(() => validateConsoleCommand('git diff --unified --output=/tmp/x')).toThrow()
+    expect(() => validateConsoleCommand('git config --get --file=/etc/passwd root')).toThrow()
+    // Push may not be redirected away from the configured remote.
+    expect(() => validateConsoleCommand('git push --repo=/tmp/other.git --mirror')).toThrow()
+    expect(() => validateConsoleCommand('git push --mirror')).toThrow()
   })
 })
 

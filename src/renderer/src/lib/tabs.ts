@@ -2,6 +2,61 @@ export interface TabLike {
   id: string
 }
 
+/** A field a refresh can own. Overlapping requests for different fields coexist. */
+export type RequestField = 'repo' | 'commits' | 'branches' | 'tags' | 'worktrees' | 'stashes' | 'submodules' | 'detection'
+
+export interface RequestToken {
+  key: string
+  lifetime: number
+  generations: Partial<Record<RequestField, number>>
+}
+
+/**
+ * Async ownership for repository refreshes. A tab open/close bumps its
+ * lifetime, which voids every request captured before it. Within one lifetime
+ * the newest request for a field wins, so a status poll cannot be overwritten
+ * by an older full refresh and a collection refresh does not cancel one it
+ * does not write.
+ */
+export class RequestScope {
+  private readonly lifetimes = new Map<string, number>()
+  private readonly generations = new Map<string, number>()
+  private sequence = 0
+
+  lifetime(key: string): number {
+    return this.lifetimes.get(key) ?? 0
+  }
+
+  /** A tab for this key was opened or closed: earlier requests are void. */
+  restart(key: string): number {
+    const next = this.lifetime(key) + 1
+    this.lifetimes.set(key, next)
+    return next
+  }
+
+  begin(key: string, fields: readonly RequestField[]): RequestToken {
+    const generations: Partial<Record<RequestField, number>> = {}
+    for (const field of fields) {
+      const value = ++this.sequence
+      this.generations.set(`${key}\u0000${field}`, value)
+      generations[field] = value
+    }
+    return { key, lifetime: this.lifetime(key), generations }
+  }
+
+  /** True while the tab lifetime that started this request is still open. */
+  isCurrent(token: RequestToken): boolean {
+    return this.lifetime(token.key) === token.lifetime
+  }
+
+  /** True when this request may still write `field`. */
+  owns(token: RequestToken, field: RequestField): boolean {
+    if (!this.isCurrent(token)) return false
+    const issued = token.generations[field]
+    return issued !== undefined && this.generations.get(`${token.key}\u0000${field}`) === issued
+  }
+}
+
 /**
  * Repository paths are compared the way the usual host filesystem does:
  * case-sensitive on Linux and case-insensitive on Windows and macOS. Trailing separators are ignored so
@@ -174,7 +229,11 @@ export const REPO_TAB_KEYS = [
   'selectionAnchor',
   'graphQuery',
   'graphBranch',
-  'consoleLines'
+  'consoleLines',
+  'commitMessage',
+  'commitAmend',
+  'commitSignoff',
+  'conflictDrafts'
 ] as const
 
 export type RepoTabKey = (typeof REPO_TAB_KEYS)[number]

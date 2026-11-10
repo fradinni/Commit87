@@ -15,8 +15,11 @@
   },
   "private": false,
   "scripts": {
+    "predev": "node scripts/ensure-electron.mjs",
     "dev": "electron-vite dev",
+    "prestart": "node scripts/ensure-electron.mjs",
     "start": "electron-vite preview",
+    "ensure:electron": "node scripts/ensure-electron.mjs",
     "build": "npm run typecheck && electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",

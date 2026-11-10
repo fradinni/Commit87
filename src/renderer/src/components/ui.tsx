@@ -1,4 +1,4 @@
-import { useEffect, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
+import { useEffect, useId, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
 import { X } from 'lucide-react'
 
 type ButtonVariant = 'primary' | 'outline' | 'ghost' | 'danger' | 'subtle'
@@ -86,6 +86,118 @@ export function Select({ className = '', children, ...props }: SelectHTMLAttribu
   )
 }
 
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+/**
+ * Open dialogs, oldest first. Only the last one reacts to Escape, so a nested
+ * confirmation never closes the dialog that opened it.
+ */
+const dialogStack: symbol[] = []
+
+function ModalDialog({
+  title,
+  subtitle,
+  onClose,
+  children,
+  footer,
+  width
+}: {
+  title: string
+  subtitle?: ReactNode
+  onClose: () => void
+  children: ReactNode
+  footer?: ReactNode
+  width: number
+}) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const titleId = useId()
+  const token = useRef(Symbol('dialog'))
+  // Inline onClose callbacks change identity every render; the listeners below
+  // must be installed once per open dialog, not re-installed on each render.
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    const id = token.current
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    dialogStack.push(id)
+
+    const focusables = (): HTMLElement[] =>
+      dialog ? [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((element) => element.tabIndex >= 0) : []
+
+    const frame = window.requestAnimationFrame(() => {
+      const target = dialog?.querySelector<HTMLElement>('[autofocus]') ?? focusables()[0]
+      target?.focus()
+    })
+
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (dialogStack[dialogStack.length - 1] !== id) return
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeRef.current()
+        return
+      }
+      if (event.key !== 'Tab' || !dialog) return
+      const items = focusables()
+      if (!items.length) {
+        event.preventDefault()
+        dialog.focus()
+        return
+      }
+      const first = items[0]
+      const last = items[items.length - 1]
+      const active = document.activeElement
+      const inside = active instanceof Node && dialog.contains(active)
+      if (event.shiftKey) {
+        if (!inside || active === first) {
+          event.preventDefault()
+          last.focus()
+        }
+      } else if (!inside || active === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      document.removeEventListener('keydown', onKeyDown)
+      const index = dialogStack.indexOf(id)
+      if (index >= 0) dialogStack.splice(index, 1)
+      if (previous?.isConnected) previous.focus()
+    }
+  }, [])
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && closeRef.current()}>
+      <div
+        ref={dialogRef}
+        className="modal"
+        style={{ width }}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+      >
+        <header className="modal-header">
+          <div>
+            <h2 id={titleId}>{title}</h2>
+            {subtitle ? <p>{subtitle}</p> : null}
+          </div>
+          <IconButton label="Close" onClick={() => closeRef.current()}>
+            <X size={16} />
+          </IconButton>
+        </header>
+        <div className="modal-body">{children}</div>
+        {footer ? <footer className="modal-footer">{footer}</footer> : null}
+      </div>
+    </div>
+  )
+}
+
 export function Modal({
   open,
   title,
@@ -103,32 +215,11 @@ export function Modal({
   footer?: ReactNode
   width?: number
 }) {
-  useEffect(() => {
-    if (!open) return undefined
-    const handler = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [open, onClose])
-
   if (!open) return null
   return (
-    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="modal" style={{ width }} role="dialog" aria-modal="true" aria-label={title}>
-        <header className="modal-header">
-          <div>
-            <h2>{title}</h2>
-            {subtitle ? <p>{subtitle}</p> : null}
-          </div>
-          <IconButton label="Close" onClick={onClose}>
-            <X size={16} />
-          </IconButton>
-        </header>
-        <div className="modal-body">{children}</div>
-        {footer ? <footer className="modal-footer">{footer}</footer> : null}
-      </div>
-    </div>
+    <ModalDialog title={title} subtitle={subtitle} onClose={onClose} footer={footer} width={width}>
+      {children}
+    </ModalDialog>
   )
 }
 

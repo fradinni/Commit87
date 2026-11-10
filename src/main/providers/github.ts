@@ -4,13 +4,16 @@ import type {
   CreatePullRequestInput,
   CreateReleaseInput,
   IntegrationAccount,
-  PullRequest,
+  PagedResult,
+  ProviderCapabilities,
   ProviderRepo,
+  PullRequest,
   Release
 } from '@shared/types'
-import { apiRequest, ensureSuffix } from './http'
+import { providerCapabilities } from '@shared/types'
+import { apiRequest, apiRequestWithHeaders, ensureSuffix, joinUrl, nextPageFromLink, positiveInt } from './http'
 import type { ProviderClient } from './types'
-import { requireToken, toEpoch } from './types'
+import { pageOf, requireToken, toEpoch } from './types'
 
 interface GithubRepo {
   id: number
@@ -26,6 +29,12 @@ interface GithubRepo {
   updated_at?: string
 }
 
+interface GithubPullHead {
+  ref: string
+  sha?: string
+  repo?: { full_name?: string } | null
+}
+
 interface GithubPull {
   id: number
   number: number
@@ -33,11 +42,12 @@ interface GithubPull {
   state: string
   draft?: boolean
   user?: { login: string }
-  head: { ref: string }
+  head: GithubPullHead
   base: { ref: string }
   html_url: string
   created_at: string
   updated_at: string
+  merged_at?: string | null
   additions?: number
   deletions?: number
   mergeable?: boolean | null
@@ -86,9 +96,14 @@ function apiBase(account: IntegrationAccount): string {
   return ensureSuffix(base, '/api/v3')
 }
 
+function pageQuery(page: string | undefined): number | undefined {
+  return positiveInt(page)
+}
+
 export class GithubClient implements ProviderClient {
   readonly provider = 'github'
   readonly account: IntegrationAccount
+  readonly capabilities: ProviderCapabilities = providerCapabilities('github')
   private readonly token: string
   private readonly base: string
 
@@ -98,8 +113,15 @@ export class GithubClient implements ProviderClient {
     this.base = apiBase(account)
   }
 
-  private request<T>(path: string, options: { method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'; query?: Record<string, string | number | boolean | undefined>; body?: unknown } = {}): Promise<T> {
-    return apiRequest<T>(`${this.base}${path}`, {
+  private request<T>(
+    path: string,
+    options: {
+      method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+      query?: Record<string, string | number | boolean | undefined>
+      body?: unknown
+    } = {}
+  ): Promise<T> {
+    return apiRequest<T>(joinUrl(this.base, path), {
       ...options,
       token: this.token,
       provider: this.provider,
@@ -134,11 +156,28 @@ export class GithubClient implements ProviderClient {
       }))
   }
 
-  async listPullRequests(owner: string, repo: string, state: 'open' | 'closed' | 'all'): Promise<PullRequest[]> {
-    const pulls = await this.request<GithubPull[]>(`/repos/${owner}/${repo}/pulls`, {
-      query: { state, per_page: 50, sort: 'updated', direction: 'desc' }
+  async getPullRequest(owner: string, repo: string, number: number): Promise<PullRequest> {
+    const pull = await this.request<GithubPull>(`/repos/${owner}/${repo}/pulls/${number}`)
+    return this.mapPull(pull)
+  }
+
+  async listPullRequests(
+    owner: string,
+    repo: string,
+    state: 'open' | 'closed' | 'all',
+    page?: string
+  ): Promise<PagedResult<PullRequest>> {
+    const response = await apiRequestWithHeaders<GithubPull[]>(joinUrl(this.base, `/repos/${owner}/${repo}/pulls`), {
+      query: { state, per_page: 50, sort: 'updated', direction: 'desc', page: pageQuery(page) },
+      token: this.token,
+      provider: this.provider,
+      username: this.account.username
     })
-    return pulls.map((pull) => this.mapPull(pull))
+    const pulls = Array.isArray(response.data) ? response.data : []
+    return pageOf(
+      pulls.map((pull) => this.mapPull(pull)),
+      nextPageFromLink(response.headers.get('link'))
+    )
   }
 
   async createPullRequest(owner: string, repo: string, input: CreatePullRequestInput): Promise<PullRequest> {
@@ -155,22 +194,29 @@ export class GithubClient implements ProviderClient {
     return this.mapPull(pull)
   }
 
-  async listReleases(owner: string, repo: string): Promise<Release[]> {
-    const releases = await this.request<GithubRelease[]>(`/repos/${owner}/${repo}/releases`, {
-      query: { per_page: 50 }
+  async listReleases(owner: string, repo: string, page?: string): Promise<PagedResult<Release>> {
+    const response = await apiRequestWithHeaders<GithubRelease[]>(joinUrl(this.base, `/repos/${owner}/${repo}/releases`), {
+      query: { per_page: 50, page: pageQuery(page) },
+      token: this.token,
+      provider: this.provider,
+      username: this.account.username
     })
-    return releases.map((release) => ({
-      id: String(release.id),
-      tagName: release.tag_name,
-      name: release.name || release.tag_name,
-      draft: release.draft,
-      prerelease: release.prerelease,
-      createdAt: toEpoch(release.created_at),
-      publishedAt: release.published_at ? toEpoch(release.published_at) : undefined,
-      webUrl: release.html_url,
-      author: release.author?.login,
-      body: release.body
-    }))
+    const releases = Array.isArray(response.data) ? response.data : []
+    return pageOf(
+      releases.map((release) => ({
+        id: String(release.id),
+        tagName: release.tag_name,
+        name: release.name || release.tag_name,
+        draft: release.draft,
+        prerelease: release.prerelease,
+        createdAt: toEpoch(release.created_at),
+        publishedAt: release.published_at ? toEpoch(release.published_at) : undefined,
+        webUrl: release.html_url,
+        author: release.author?.login,
+        body: release.body
+      })),
+      nextPageFromLink(response.headers.get('link'))
+    )
   }
 
   async createRelease(owner: string, repo: string, input: CreateReleaseInput): Promise<Release> {
@@ -202,19 +248,27 @@ export class GithubClient implements ProviderClient {
     await this.request(`/repos/${owner}/${repo}/releases/${id}`, { method: 'DELETE' })
   }
 
-  async listWorkflows(owner: string, repo: string): Promise<ActionWorkflow[]> {
-    const data = await this.request<{ workflows: GithubWorkflow[] }>(`/repos/${owner}/${repo}/actions/workflows`, {
-      query: { per_page: 100 }
-    })
-    return (data.workflows ?? []).map((workflow) => ({
-      id: String(workflow.id),
-      name: workflow.name,
-      path: workflow.path,
-      disabled: workflow.state === 'disabled_manually' || workflow.state === 'disabled_inactivity'
-    }))
+  async listWorkflows(owner: string, repo: string, page?: string): Promise<PagedResult<ActionWorkflow>> {
+    const data = await this.request<{ total_count?: number; workflows?: GithubWorkflow[] }>(
+      `/repos/${owner}/${repo}/actions/workflows`,
+      { query: { per_page: 100, page: pageQuery(page) } }
+    )
+    const workflows = data.workflows ?? []
+    const current = pageQuery(page) ?? 1
+    const total = data.total_count
+    const hasMore = typeof total === 'number' ? current * 100 < total : workflows.length === 100
+    return pageOf(
+      workflows.map((workflow) => ({
+        id: String(workflow.id),
+        name: workflow.name,
+        path: workflow.path,
+        disabled: workflow.state === 'disabled_manually' || workflow.state === 'disabled_inactivity'
+      })),
+      hasMore ? String(current + 1) : undefined
+    )
   }
 
-  async listRuns(owner: string, repo: string, workflowId?: string): Promise<ActionRun[]> {
+  async listRuns(owner: string, repo: string, workflowId?: string, page?: string): Promise<PagedResult<ActionRun>> {
     let path = `/repos/${owner}/${repo}/actions/runs`
     if (workflowId) {
       if (/^\d+$/.test(workflowId)) {
@@ -223,22 +277,31 @@ export class GithubClient implements ProviderClient {
         path = `/repos/${owner}/${repo}/actions/workflows/${encodeURIComponent(workflowId)}/runs`
       }
     }
-    const data = await this.request<{ workflow_runs: GithubRun[] }>(path, { query: { per_page: 40 } })
-    return (data.workflow_runs ?? []).map((run) => ({
-      id: String(run.id),
-      workflowId: String(run.workflow_id),
-      workflowName: run.name || 'Workflow',
-      number: run.run_number,
-      status: run.status,
-      conclusion: run.conclusion,
-      branch: run.head_branch,
-      sha: run.head_sha,
-      event: run.event,
-      createdAt: toEpoch(run.created_at),
-      updatedAt: toEpoch(run.updated_at),
-      webUrl: run.html_url,
-      actor: run.actor?.login
-    }))
+    const data = await this.request<{ total_count?: number; workflow_runs?: GithubRun[] }>(path, {
+      query: { per_page: 40, page: pageQuery(page) }
+    })
+    const runs = data.workflow_runs ?? []
+    const current = pageQuery(page) ?? 1
+    const total = data.total_count
+    const hasMore = typeof total === 'number' ? current * 40 < total : runs.length === 40
+    return pageOf(
+      runs.map((run) => ({
+        id: String(run.id),
+        workflowId: String(run.workflow_id),
+        workflowName: run.name || 'Workflow',
+        number: run.run_number,
+        status: run.status,
+        conclusion: run.conclusion,
+        branch: run.head_branch,
+        sha: run.head_sha,
+        event: run.event,
+        createdAt: toEpoch(run.created_at),
+        updatedAt: toEpoch(run.updated_at),
+        webUrl: run.html_url,
+        actor: run.actor?.login
+      })),
+      hasMore ? String(current + 1) : undefined
+    )
   }
 
   async triggerAction(
@@ -260,11 +323,13 @@ export class GithubClient implements ProviderClient {
       id: String(pull.id),
       number: pull.number,
       title: pull.title,
-      state: pull.state === 'open' ? (pull.draft ? 'draft' : 'open') : (pull as { merged_at?: string }).merged_at ? 'merged' : 'closed',
+      state: pull.state === 'open' ? (pull.draft ? 'draft' : 'open') : pull.merged_at ? 'merged' : 'closed',
       draft: Boolean(pull.draft),
       author: pull.user?.login ?? '',
-      sourceBranch: pull.head.ref,
-      targetBranch: pull.base.ref,
+      sourceBranch: pull.head?.ref ?? '',
+      sourceRepo: pull.head?.repo?.full_name,
+      headSha: pull.head?.sha ?? '',
+      targetBranch: pull.base?.ref ?? '',
       webUrl: pull.html_url,
       createdAt: toEpoch(pull.created_at),
       updatedAt: toEpoch(pull.updated_at),

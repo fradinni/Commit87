@@ -8,19 +8,34 @@ import type {
   GitIdentity,
   IdentityInput,
   IntegrationAccount,
+  IntegrationAuthority,
   IntegrationInput,
   ProviderId,
   RecentRepo,
   RepoDefaults
 } from '@shared/types'
-import { normalizeBaseUrl } from './providers/remote'
+import {
+  accountMatchesDestination,
+  baseUrlAuthority,
+  integrationAuthority,
+  isLoopbackHost,
+  normalizeBaseUrl,
+  type GitDestination
+} from './providers/remote'
 import { PROVIDERS } from '@shared/types'
 import { setGitBinary, tryRunGit } from './git/runner'
 
+interface StoredSecret {
+  /** Encrypted or plain token value, depending on `encrypted`. */
+  value: string
+  /** Authority fingerprint the token was issued for. */
+  fingerprint: string
+}
+
 interface SecretsFile {
-  version: 1
+  version: 2
   encrypted: boolean
-  tokens: Record<string, string>
+  tokens: Record<string, StoredSecret>
 }
 
 const DEFAULT_CONFIG: AppConfig = {
@@ -90,10 +105,13 @@ async function migrateLegacyProfile(dir: string): Promise<void> {
 
 export class AppStore {
   private config: AppConfig = createDefaultConfig()
-  private secrets: SecretsFile = { version: 1, encrypted: false, tokens: {} }
+  private secrets: SecretsFile = { version: 2, encrypted: false, tokens: {} }
   private loaded = false
   private configPath = ''
   private secretsPath = ''
+  private authorityBackfilled = false
+  /** False when config.json could not be read, so secrets must not be pruned. */
+  private configTrusted = true
   private writeQueues = new Map<string, Promise<void>>()
 
   async init(): Promise<void> {
@@ -104,6 +122,7 @@ export class AppStore {
     this.secretsPath = path.join(dir, 'secrets.json')
     await this.loadConfig()
     await this.loadSecrets()
+    if (this.authorityBackfilled) await this.saveConfig()
     setGitBinary(this.config.gitBinary || null)
     this.loaded = true
     // Discovering the global Git identity shells out to git. Do not block the
@@ -160,26 +179,47 @@ export class AppStore {
     return this.getConfig()
   }
 
+  /**
+   * Release a token only when it is still bound to the account's current
+   * authority. A token saved for one endpoint must never be sent to another
+   * after the integration's base URL changed.
+   */
   async getToken(accountId: string): Promise<string | null> {
     const stored = this.secrets.tokens[accountId]
     if (!stored) return null
-    if (!this.secrets.encrypted) return stored
+    const account = this.integrationById(accountId)
+    if (!account) return null
+    if (!this.tokenMatchesAuthority(account, stored)) {
+      throw new Error(
+        `The saved token for ${account.label} was issued for a different server. Save the token again in Settings → Integrations.`
+      )
+    }
+    if (!this.secrets.encrypted) return stored.value
     try {
-      return safeStorage.decryptString(Buffer.from(stored, 'base64'))
+      return safeStorage.decryptString(Buffer.from(stored.value, 'base64'))
     } catch {
       return null
     }
   }
 
   hasToken(accountId: string): boolean {
-    return Boolean(this.secrets.tokens[accountId])
+    const stored = this.secrets.tokens[accountId]
+    if (!stored) return false
+    const account = this.integrationById(accountId)
+    if (!account) return false
+    return this.tokenMatchesAuthority(account, stored)
+  }
+
+  private tokenMatchesAuthority(account: IntegrationAccount, stored: StoredSecret): boolean {
+    const fingerprint = account.authority?.fingerprint
+    return Boolean(fingerprint) && stored.fingerprint === fingerprint
   }
 
   get secretsEncrypted(): boolean {
     return this.secrets.encrypted && safeStorage.isEncryptionAvailable()
   }
 
-  private async setToken(accountId: string, token: string): Promise<void> {
+  private async setToken(accountId: string, token: string, fingerprint: string): Promise<void> {
     if (!token) {
       delete this.secrets.tokens[accountId]
       await this.saveSecrets()
@@ -187,10 +227,13 @@ export class AppStore {
     }
     if (safeStorage.isEncryptionAvailable()) {
       this.secrets.encrypted = true
-      this.secrets.tokens[accountId] = safeStorage.encryptString(token).toString('base64')
+      this.secrets.tokens[accountId] = {
+        value: safeStorage.encryptString(token).toString('base64'),
+        fingerprint
+      }
     } else {
       this.secrets.encrypted = false
-      this.secrets.tokens[accountId] = token
+      this.secrets.tokens[accountId] = { value: token, fingerprint }
     }
     await this.saveSecrets()
   }
@@ -295,21 +338,35 @@ export class AppStore {
     const provider = input.provider
     if (!PROVIDERS[provider]) throw new Error('Unknown provider')
     const baseUrl = normalizeBaseUrl(provider, input.baseUrl)
+    const base = baseUrlAuthority(baseUrl)
+    if (!base) throw new Error('Base URL is not a valid URL')
+    if (base.protocol === 'http' && !isLoopbackHost(base.host)) {
+      throw new Error('Integration base URLs must use https (plain http is only allowed for loopback addresses)')
+    }
     const label = input.label.trim() || PROVIDERS[provider].name
+    const existing = input.id ? this.config.integrations.find((item) => item.id === input.id) : undefined
+    if (input.id && !existing) throw new Error('Integration not found')
+    // An explicit empty value clears a previously configured clone host; an
+    // omitted value keeps it.
+    const cloneHost =
+      input.cloneHost === undefined ? existing?.authority?.cloneHost : input.cloneHost.trim() || undefined
+    const authority = integrationAuthority(provider, baseUrl, cloneHost)
+    if (!authority) throw new Error('Base URL is not a valid URL')
+    // Moving the endpoint to another provider/host/port invalidates the token
+    // that was issued for the old authority. Label, username and identity-only
+    // edits keep the same fingerprint and therefore keep the token.
+    const authorityChanged = Boolean(existing) && existing?.authority?.fingerprint !== authority.fingerprint
+
     let account: IntegrationAccount
-    if (input.id) {
-      const existing = this.config.integrations.find((item) => item.id === input.id)
-      if (!existing) throw new Error('Integration not found')
+    if (existing) {
       account = {
         ...existing,
         provider,
         label,
         username: input.username.trim(),
         baseUrl,
+        authority,
         identityId: input.identityId || undefined
-      }
-      if (input.token !== undefined && input.token !== '') {
-        await this.setToken(account.id, input.token)
       }
     } else {
       account = {
@@ -318,12 +375,19 @@ export class AppStore {
         label,
         username: input.username.trim(),
         baseUrl,
+        authority,
         identityId: input.identityId || undefined,
         hasToken: false,
         createdAt: Date.now()
       }
-      if (input.token) await this.setToken(account.id, input.token)
     }
+
+    if (input.token !== undefined && input.token !== '') {
+      await this.setToken(account.id, input.token, authority.fingerprint)
+    } else if (authorityChanged) {
+      await this.deleteToken(account.id)
+    }
+
     const index = this.config.integrations.findIndex((item) => item.id === account.id)
     if (index >= 0) this.config.integrations[index] = account
     else this.config.integrations.push(account)
@@ -407,33 +471,50 @@ export class AppStore {
     return this.identityById(identityId) ?? this.defaultIdentity()
   }
 
-  resolveAccount(repoPath: string, provider?: ProviderId, host?: string): IntegrationAccount | undefined {
-    const defaults = this.getRepoDefaults(repoPath)
-    if (provider && defaults.integrationByProvider[provider]) {
-      const account = this.integrationById(defaults.integrationByProvider[provider])
-      if (account) return account
-    }
-    const hostLower = host?.toLowerCase()
-    if (hostLower) {
-      for (const account of this.config.integrations) {
-        if (provider && account.provider !== provider) continue
-        try {
-          const accountHost = new URL(account.baseUrl.includes('://') ? account.baseUrl : `https://${account.baseUrl}`).hostname.toLowerCase()
-          if (accountHost === hostLower) return account
-          if (account.provider === 'github' && accountHost === 'api.github.com' && hostLower === 'github.com') return account
-          if (account.provider === 'bitbucket' && accountHost === 'api.bitbucket.org' && hostLower === 'bitbucket.org') return account
-        } catch {
-          // ignore
-        }
+  /**
+   * The single authorization path for credentials.
+   *
+   * - An explicitly requested `accountId` is a user choice, so it must belong
+   *   to the destination or the call fails with an actionable error.
+   * - Automatic selection prefers the repository's pinned account for the
+   *   suggested provider, but every candidate must still match the exact
+   *   destination. There is no sole-account fallback and no pinned-account
+   *   shortcut: a host that matches nothing stays anonymous.
+   */
+  authorizeAccount(
+    repoPath: string | null | undefined,
+    provider: ProviderId | undefined,
+    destination: GitDestination | null,
+    accountId?: string,
+    mode: 'strict' | 'prefer' = 'strict'
+  ): IntegrationAccount | undefined {
+    if (accountId) {
+      const explicit = this.integrationById(accountId)
+      if (!explicit) throw new Error('Unknown integration account')
+      if (!destination) {
+        if (mode === 'strict') throw new Error('Credentials need a remote URL with a network host')
+        return undefined
+      }
+      if (accountMatchesDestination(explicit, destination)) return explicit
+      // Automatic flows pass the account detected for the repository, which
+      // may belong to a different remote. That is a preference, not a grant:
+      // fall through to destination matching instead of failing the command.
+      if (mode === 'strict') {
+        throw new Error(
+          `Integration account "${explicit.label}" is not authorized for ${destination.host}. Choose an account for that host or add one in Settings → Integrations.`
+        )
       }
     }
-    if (provider) {
-      const accounts = this.config.integrations.filter((account) => account.provider === provider)
-      if (accounts.length === 1) return accounts[0]
-      const byDefault = accounts.find((account) => account.id === this.config.repoDefaults[repoKey(repoPath)]?.integrationByProvider[provider])
-      if (byDefault) return byDefault
-    }
-    return undefined
+    if (!destination) return undefined
+
+    const matching = this.config.integrations.filter((account) => accountMatchesDestination(account, destination))
+    if (!matching.length) return undefined
+    // The hostname's provider is a suggestion for choosing among accounts that
+    // already match the destination; it can never add or remove authorization.
+    const sameProvider = provider ? matching.filter((account) => account.provider === provider) : matching
+    const candidates = sameProvider.length ? sameProvider : matching
+    const pinned = repoPath ? this.getRepoDefaults(repoPath).integrationByProvider[provider ?? candidates[0].provider] : undefined
+    return candidates.find((account) => account.id === pinned) ?? candidates[0]
   }
 
   async setGitBinary(binary: string): Promise<AppConfig> {
@@ -485,6 +566,7 @@ export class AppStore {
         repoDefaults: parsed.repoDefaults && typeof parsed.repoDefaults === 'object' ? parsed.repoDefaults : {},
         recentRepos: Array.isArray(parsed.recentRepos) ? parsed.recentRepos : []
       }
+      this.authorityBackfilled = this.backfillAuthorities()
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -500,6 +582,7 @@ export class AppStore {
         () => true,
         () => false
       )
+      this.configTrusted = false
       const note = kept ? ` (copy kept at ${backup})` : ' (left in place)'
       console.warn(`[commit87] could not read ${this.configPath}: ${detail}${note}`)
       this.config = createDefaultConfig()
@@ -509,15 +592,88 @@ export class AppStore {
   }
 
   private async loadSecrets(): Promise<void> {
+    let parsed: unknown
     try {
-      const raw = await fs.readFile(this.secretsPath, 'utf8')
-      const parsed = JSON.parse(raw) as SecretsFile
-      if (parsed && parsed.version === 1 && parsed.tokens && typeof parsed.tokens === 'object') {
-        this.secrets = { version: 1, encrypted: Boolean(parsed.encrypted), tokens: parsed.tokens }
-      }
+      parsed = JSON.parse(await fs.readFile(this.secretsPath, 'utf8'))
     } catch {
-      this.secrets = { version: 1, encrypted: false, tokens: {} }
+      this.secrets = { version: 2, encrypted: false, tokens: {} }
+      return
     }
+    const file = parsed as { version?: unknown; encrypted?: unknown; tokens?: unknown } | null
+    if (!file || typeof file !== 'object' || !file.tokens || typeof file.tokens !== 'object') {
+      this.secrets = { version: 2, encrypted: false, tokens: {} }
+      return
+    }
+    const encrypted = Boolean(file.encrypted)
+    if (!this.configTrusted) {
+      // The account list could not be read. Keep secrets.json untouched rather
+      // than pruning every token as unattributable.
+      this.secrets = { version: 2, encrypted, tokens: {} }
+      return
+    }
+    const tokens: Record<string, StoredSecret> = {}
+    let changed = false
+    for (const [id, value] of Object.entries(file.tokens as Record<string, unknown>)) {
+      const account = this.integrationById(id)
+      // A token with no account is not attributable to any authority: drop it.
+      if (!account) {
+        changed = true
+        continue
+      }
+      const fingerprint = account.authority?.fingerprint
+      if (!fingerprint) {
+        changed = true
+        continue
+      }
+      if (file.version === 2 && value && typeof value === 'object') {
+        const stored = value as { value?: unknown; fingerprint?: unknown }
+        if (typeof stored.value !== 'string' || typeof stored.fingerprint !== 'string') {
+          changed = true
+          continue
+        }
+        // Keep the recorded fingerprint: if it no longer matches the account,
+        // getToken refuses it rather than silently re-binding the secret.
+        tokens[id] = { value: stored.value, fingerprint: stored.fingerprint }
+      } else if (typeof value === 'string') {
+        // Version 1 stored `tokens: Record<id, string>` with no authority, and
+        // it kept a token across base-URL edits. The server it was issued for
+        // is unknowable, so the safe migration is to drop it and ask for it
+        // again rather than re-binding it to today's endpoint.
+        changed = true
+      } else {
+        changed = true
+      }
+    }
+    this.secrets = { version: 2, encrypted, tokens }
+    if (changed || file.version !== 2) await this.saveSecrets()
+  }
+
+  /** Attach the current authority to accounts stored by earlier releases. */
+  private backfillAuthorities(): boolean {
+    let changed = false
+    const integrations = this.config.integrations.map((account) => {
+      if (!account || !PROVIDERS[account.provider]) return account
+      const authority: IntegrationAuthority | undefined = integrationAuthority(
+        account.provider,
+        account.baseUrl,
+        account.authority?.cloneHost
+      )
+      if (!authority) return account
+      const current = account.authority
+      if (
+        current?.fingerprint === authority.fingerprint &&
+        current.provider === authority.provider &&
+        current.host === authority.host &&
+        current.port === authority.port &&
+        current.cloneHost === authority.cloneHost
+      ) {
+        return account
+      }
+      changed = true
+      return { ...account, authority }
+    })
+    this.config.integrations = integrations
+    return changed
   }
 
   private saveConfig(): Promise<void> {

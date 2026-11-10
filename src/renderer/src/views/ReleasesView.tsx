@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUpRight, Calendar, Plus, RefreshCw, Rocket, Tag, Trash2 } from 'lucide-react'
 import type { Release } from '@shared/types'
+import { providerCapabilities } from '@shared/types'
 import { useStore } from '../store'
 import { call } from '../lib/ipc'
 import { formatDate, formatRelativeTime } from '../lib/format'
@@ -16,6 +17,10 @@ export function ReleasesView() {
   const setView = useStore((state) => state.setView)
   const [releases, setReleases] = useState<Release[]>([])
   const [loading, setLoading] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const [nextPage, setNextPage] = useState<string | undefined>(undefined)
+  const [hasMore, setHasMore] = useState(false)
   const [busy, setBusy] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [tagName, setTagName] = useState('')
@@ -29,25 +34,52 @@ export function ReleasesView() {
     () => config?.integrations.find((item) => item.id === detection.accountId),
     [config?.integrations, detection.accountId]
   )
-  const supported = account && account.provider !== 'bitbucket'
+  const caps = detection.capabilities?.releases ?? (account ? providerCapabilities(account.provider).releases : undefined)
+  const supported = account && Boolean(caps?.list)
+  // Only the newest request may write state; a slow "Load more" response must
+  // not land after a refresh replaced the list.
+  const requestGeneration = useRef(0)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (page?: string): Promise<void> => {
     if (!detection.accountId || !detection.owner || !detection.repo || !supported) return
-    setLoading(true)
+    const generation = requestGeneration.current + 1
+    requestGeneration.current = generation
+    const appending = Boolean(page)
+    if (appending) {
+      setLoadingMore(true)
+      setLoading(false)
+    } else {
+      setLoading(true)
+      setLoadingMore(false)
+    }
     try {
-      setReleases(await call('provider.releases', {
+      const result = await call('provider.releases', {
         accountId: detection.accountId,
         owner: detection.owner,
-        repo: detection.repo
-      }))
+        repo: detection.repo,
+        page
+      })
+      if (generation !== requestGeneration.current) return
+      setReleases((previous) => (appending ? mergeReleases(previous, result.items) : result.items))
+      setNextPage(result.nextPage)
+      setHasMore(result.hasMore && Boolean(result.nextPage))
+      setFailed(false)
     } catch (error) {
+      if (generation !== requestGeneration.current) return
+      setFailed(true)
       notifyError(error)
     } finally {
-      setLoading(false)
+      // Clear this request's own flag even when a newer request superseded it.
+      if (appending) setLoadingMore(false)
+      else setLoading(false)
     }
   }, [detection.accountId, detection.owner, detection.repo, notifyError, supported])
 
   useEffect(() => {
+    setReleases([])
+    setNextPage(undefined)
+    setHasMore(false)
+    setLoadingMore(false)
     void load()
   }, [load])
 
@@ -58,11 +90,11 @@ export function ReleasesView() {
       <div className="view releases-view">
         <EmptyState
           icon={<Rocket size={22} />}
-          title={account?.provider === 'bitbucket' ? 'Releases are not supported by Bitbucket Cloud' : 'Connect a forge to manage releases'}
+          title={account?.provider === 'bitbucket' ? 'Releases are not supported by Bitbucket Cloud' : 'Releases are not available for this account'}
           description={
             account?.provider === 'bitbucket'
               ? 'Bitbucket uses tags and downloadable files instead. Create tags from the Tags view, or connect GitHub, GitLab or Gitea for release notes.'
-              : 'Add a GitHub, GitLab, Gitea or Bitbucket account in Settings, then map it to this repository remote.'
+              : 'This provider does not expose a releases API. Use tags, or connect an account that supports releases.'
           }
           action={
             <div className="row-gap">
@@ -86,7 +118,13 @@ export function ReleasesView() {
         accountId: account.id,
         owner: detection.owner!,
         repo: detection.repo!,
-        input: { tagName: tagName.trim(), name: name.trim(), body, draft, prerelease }
+        input: {
+          tagName: tagName.trim(),
+          name: name.trim(),
+          body,
+          draft: caps?.draft ? draft : false,
+          prerelease: caps?.prerelease ? prerelease : false
+        }
       })
       notify(`Release ${tagName.trim()} created`, 'success')
       setCreateOpen(false)
@@ -137,19 +175,28 @@ export function ReleasesView() {
           <Button size="sm" variant="ghost" icon={<RefreshCw size={13} />} onClick={() => void load()} loading={loading}>
             Refresh
           </Button>
-          <Button size="sm" variant="primary" icon={<Plus size={14} />} onClick={() => { setTagName(tags[0]?.name ?? ''); setName(tags[0]?.name ?? ''); setCreateOpen(true) }}>
+          <Button size="sm" variant="primary" icon={<Plus size={14} />} onClick={() => { setTagName(tags[0]?.name ?? ''); setName(tags[0]?.name ?? ''); setCreateOpen(true) }} disabled={!caps?.create}>
             New release
           </Button>
         </div>
       </div>
 
       {releases.length === 0 && !loading ? (
-        <EmptyState
-          icon={<Rocket size={22} />}
-          title="No releases yet"
-          description="Create a release from an existing tag, or publish a new tag and attach release notes."
-          action={<Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>Create release</Button>}
-        />
+        failed ? (
+          <EmptyState
+            icon={<Rocket size={22} />}
+            title="Could not load releases"
+            description="The forge request failed. Check the account token and try again."
+            action={<Button variant="outline" size="sm" onClick={() => void load()}>Retry</Button>}
+          />
+        ) : (
+          <EmptyState
+            icon={<Rocket size={22} />}
+            title="No releases yet"
+            description="Create a release from an existing tag, or publish a new tag and attach release notes."
+            action={caps?.create ? <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>Create release</Button> : undefined}
+          />
+        )
       ) : (
         <div className="release-list">
           {releases.map((release) => (
@@ -184,12 +231,21 @@ export function ReleasesView() {
                 >
                   Open
                 </Button>
-                <IconButton label="Delete release" danger onClick={() => setDel(release)}>
-                  <Trash2 size={14} />
-                </IconButton>
+                {caps?.delete ? (
+                  <IconButton label="Delete release" danger onClick={() => setDel(release)}>
+                    <Trash2 size={14} />
+                  </IconButton>
+                ) : null}
               </div>
             </article>
           ))}
+          {hasMore ? (
+            <div className="list-load-more">
+              <Button size="sm" variant="outline" loading={loadingMore} onClick={() => void load(nextPage)}>
+                Load more releases
+              </Button>
+            </div>
+          ) : null}
         </div>
       )}
 
@@ -228,14 +284,18 @@ export function ReleasesView() {
           <TextArea value={body} onChange={(event) => setBody(event.target.value)} rows={6} placeholder="What is in this release?" />
         </Field>
         <div className="form-inline">
-          <label className="checkbox-row">
-            <input type="checkbox" checked={draft} onChange={(event) => setDraft(event.target.checked)} />
-            Draft
-          </label>
-          <label className="checkbox-row">
-            <input type="checkbox" checked={prerelease} onChange={(event) => setPrerelease(event.target.checked)} />
-            Pre-release
-          </label>
+          {caps?.draft ? (
+            <label className="checkbox-row">
+              <input type="checkbox" checked={draft} onChange={(event) => setDraft(event.target.checked)} />
+              Draft
+            </label>
+          ) : null}
+          {caps?.prerelease ? (
+            <label className="checkbox-row">
+              <input type="checkbox" checked={prerelease} onChange={(event) => setPrerelease(event.target.checked)} />
+              Pre-release
+            </label>
+          ) : null}
         </div>
       </Modal>
 
@@ -251,4 +311,9 @@ export function ReleasesView() {
       />
     </div>
   )
+}
+
+function mergeReleases(existing: Release[], incoming: Release[]): Release[] {
+  const seen = new Set(existing.map((release) => release.id))
+  return [...existing, ...incoming.filter((release) => !seen.has(release.id))]
 }

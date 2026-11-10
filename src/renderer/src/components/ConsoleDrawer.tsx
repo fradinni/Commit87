@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ChevronUp, Trash2, X } from 'lucide-react'
-import { useStore, activeIdentity } from '../store'
+import { useStore, selectedIdentityId } from '../store'
 import { call, errorMessage } from '../lib/ipc'
 import { IconButton } from './ui'
 
@@ -50,7 +50,7 @@ export function ConsoleDrawer() {
       await call('git.console', {
         repoPath: repo.path,
         command: value,
-        identityId: activeIdentity()?.id,
+        identityId: selectedIdentityId(),
         accountId: detection.accountId
       })
     } catch (error) {
