@@ -4,6 +4,91 @@ All notable changes to Commit87 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.7] — 2026-11-10
+
+Readiness milestone: protect existing work, make the documented boundaries real, and make
+setup, release and packaging reproducible. See `docs/remediation-2026-11-10.md` for the
+finding-by-finding status.
+
+### Added
+
+- Staging now shows both the staged and the worktree side of a partially staged file, with
+  the action scope for each side and a preview that reloads after staging changes.
+- Commit messages and conflict resolutions are kept per repository, and conflict drafts per
+  file and content baseline, so switching views or tabs no longer discards them.
+- Changed-file rows are keyboard-navigable (arrow keys, Home/End, Enter/Space) and their
+  actions are visible on focus; dialogs move focus inside, trap Tab, close on Escape only
+  for the top-most dialog and restore focus.
+- A native picker chooses the Git executable, and repository/worktree access is recorded as
+  an explicit grant when the user picks, opens, clones, initialises or creates it.
+- Provider lists (pull requests, releases, pipelines) load more pages, and a reloaded window
+  restores running and recently finished tasks from a bounded main-process snapshot.
+- First-success and recovery guides (`docs/getting-started.md`, `docs/recovery.md`).
+
+### Changed
+
+- One identity precedence in main: explicit pick, repository default, the identity Git
+  resolves for that repository (including `includeIf`), then the application default.
+  Continue and other continuations no longer commit as the wrong person, and signing
+  settings are not forced onto repository-authored work.
+- Credentials are authorized per operation destination before a helper is scoped to it;
+  provider-name guesses can no longer release a token, and changing an integration endpoint
+  invalidates the stored secret.
+- Bare clones open with graph, branches, tags and remotes, and worktree-only actions report
+  that they need a working tree instead of failing with a Git fatal.
+- Fresh dependency installation starts `npm run dev` without a manual Electron install step.
+- Releases resolve one validated version and channel for tag and manual runs, verify channel
+  metadata, architectures and artifacts before publishing, and keep Windows/macOS grouped.
+- Optional Flatpak, Snap and fallback pacman recipes are architecture-aware and covered by a
+  static recipe check; support tiers are documented as supported, buildable or experimental.
+- Repository discovery is cached for stable facts only; a status poll now spawns about three
+  Git processes instead of about fifteen, while branch, status and operation state stay live.
+
+### Fixed
+
+- Selected filenames no longer act as patterns: staging, unstaging and discarding
+  `notes[1].txt` leaves `notes1.txt` untouched, and unstaging a staged rename clears both
+  sides of it.
+- Checking out a ref never falls back to restoring a same-named tracked file, and multiline
+  tag messages no longer create phantom tags; a tag and a branch with the same name no
+  longer collide.
+- Removing a submodule keeps its module clone (moved aside and reported), so unpublished
+  commits and stashes stay recoverable, and re-adding the same submodule works.
+- Conflict saves are rejected when the file changed since it was loaded, keeping the newer
+  bytes and the user's edit.
+- In-place updates are bound to the AppImage mount that contains the running executable and
+  revalidated before download and install; unpacked, extracted, Snap, Flatpak and loop
+  mounted runs fail closed.
+- Pull-request checkout fetches and verifies the forge-reported head for every provider, so a
+  fork branch named like the destination branch can no longer check out the wrong commit.
+- A draft release requested for GitLab is rejected before any write instead of being
+  published as an ordinary release; unsupported controls are hidden per provider.
+- Merge, rebase, continue, skip, cherry-pick, revert and discard return a machine-readable
+  outcome built from the real exit status, so a refusal, hook failure or conflict is never
+  announced as success, and a signalled or timed-out Git process keeps its null exit code.
+- An interrupted rebase keeps the comment character it chose, so a reword subject starting
+  with `#` survives Continue or a restart.
+- JSON provider requests send `Content-Type: application/json`; Gitea task runs decode the
+  documented envelope; Bitbucket uses correct state queries and continuation links.
+- Stale refresh results can no longer overwrite newer data, and console output for a closed
+  repository tab never appears in another tab.
+- Keyword: repeated full repository discovery, unbounded task output and stale pagination
+  no longer grow without bound.
+
+### Security
+
+- File and ref operations execute with literal path semantics and validated operands, and
+  the console accepts only a bounded command grammar rather than a spelling deny-list.
+- The IPC boundary decodes every payload strictly (real booleans, known enums, validated
+  revisions and paths) and pins each handler result to its declared response type.
+- Repository roots, linked worktrees and custom Git executables are authorized by
+  main-owned grants; file reads resolve the authorized root and never follow symlinks.
+- Credential tokens stay in the child environment, scoped to one exact origin, and are bound
+  to the authority they were issued for. Tokens saved by earlier versions carry no authority
+  and must be entered once more.
+- Release jobs run read-only by default, write only in the prepare and publish jobs, do not
+  persist checkout credentials, scope signing secrets to their platform and pin actions.
+
 ## [0.2.0-beta.6] — 2026-11-09
 
 ### Fixed
