@@ -82,6 +82,12 @@ export function App() {
         void useStore.getState().openRepo(event.repoPath).catch((error) => useStore.getState().notifyError(error))
       }
     })
+    // Subscribing first and reconciling afterwards means a completion can
+    // arrive either way without being lost; the store deduplicates by task id
+    // and against the completions the previous renderer already announced.
+    void call('tasks.snapshot', undefined)
+      .then((snapshot) => useStore.getState().reconcileTasks(snapshot))
+      .catch(() => undefined)
     const unsubscribeUpdates = window.commit87.onUpdateStatus((status) => {
       const previous = useStore.getState().updateStatus
       useStore.getState().setUpdateStatus(status)
@@ -225,6 +231,8 @@ export function App() {
         (item) => item.repoPath && repoPathKey(item.repoPath, window.commit87.platform) === activeId
       )
       if (document.visibilityState === 'visible' && !activeBusy) {
+        // Only status and the cheap repository facts are refreshed here; the
+        // commit graph, collections and forge detection are not re-read.
         void state.refreshStatus()
       }
     }, 5000)

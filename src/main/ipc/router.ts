@@ -614,6 +614,7 @@ export class Router {
 
       // ---------------------------------------------------------------------
       // Tasks
+      'tasks.snapshot': async () => this.tasks.snapshot(),
       'git.fetch': async (payload) => this.fetchRepository(payload),
       'git.pull': async (payload) => this.pullRepository(payload),
       'git.push': async (payload) => this.pushRepository(payload),
@@ -833,6 +834,7 @@ export class Router {
       secrets: [token],
       onExit: async (code) => {
         if (code !== 0) return
+        repoOps.invalidateRepoDiscovery(target)
         try {
           const info = await repoOps.resolveRepo(target)
           await this.grants.grantRepo(info)
@@ -870,6 +872,9 @@ export class Router {
     if (!(await isGitRepo(target))) {
       await runGit(['init', '-b', refName(branch, 'Default branch')], { cwd: target })
     }
+    // A folder can have been resolved before it became a repository (or been
+    // re-initialized); stale stable facts must not survive this call.
+    repoOps.invalidateRepoDiscovery(target)
     const identity = this.store.resolveIdentity(input.identityId)
     if (identity) {
       await runGit(['config', '--local', 'user.name', identity.name], { cwd: target })
@@ -1776,6 +1781,7 @@ const DECODERS: DecoderTable = {
     }
   },
 
+  'tasks.snapshot': noPayload,
   'git.fetch': (value): FetchInput => {
     const source = objectPayload(value)
     return {

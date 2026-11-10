@@ -1,8 +1,16 @@
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import type { TaskEvent, TaskHandle } from '@shared/types'
+import type { ChildProcess } from 'node:child_process'
+import type { TaskEvent, TaskHandle, TaskSnapshot, TaskSnapshotEntry } from '@shared/types'
 import { assertGitBinaryUsable, getGitBinary, gitBaseArgs, redact } from './git/runner'
 import { refName, relPath, revision, word } from './ipc/validate'
+
+/** Bytes of redacted output retained per task (the snapshot tail and exit text). */
+export const TASK_TAIL_BYTES = 16 * 1024
+/** Longest line delivered to the renderer before it is split. */
+export const TASK_LINE_BYTES = 4 * 1024
+/** Finished tasks kept for a reconnecting renderer. */
+export const TASK_RECENT_LIMIT = 20
 
 export interface TaskSpec {
   kind: TaskEvent['kind']
@@ -21,19 +29,151 @@ export interface TaskResult {
   output: string
 }
 
+/**
+ * Splits a Git stream into lines while keeping memory bounded. A line that
+ * never ends (progress output without newlines, a very long path) is flushed
+ * in `lineBytes` pieces instead of growing forever, and only the last
+ * `tailBytes` of the task are retained for exit text and reconnection.
+ */
+export class TaskOutputBuffer {
+  private buffer = ''
+  private tailText = ''
+
+  constructor(
+    private readonly tailBytes = TASK_TAIL_BYTES,
+    private readonly lineBytes = TASK_LINE_BYTES,
+    private readonly sanitize: (text: string) => string = (text) => text
+  ) {}
+
+  get tail(): string {
+    return this.tailText
+  }
+
+  push(chunk: string): string[] {
+    this.buffer += chunk
+    const lines = this.buffer.split(/\r\n|\n|\r/)
+    this.buffer = lines.pop() ?? ''
+    const emitted: string[] = []
+    for (const line of lines) {
+      // Git progress and blank separators: keep the existing blank-line
+      // behaviour instead of filling the console with empty rows.
+      if (line.trim()) emitted.push(...this.record(line))
+    }
+    // A newline-free stream must not accumulate without limit: emit it in
+    // bounded pieces so the renderer still sees progress.
+    while (this.buffer.length > this.lineBytes) {
+      const piece = this.takePiece()
+      if (piece.trim()) emitted.push(...this.record(piece))
+    }
+    return emitted
+  }
+
+  /** Emit the unterminated remainder when the child closes. */
+  finish(): string[] {
+    const rest = this.buffer
+    this.buffer = ''
+    return rest.trim() ? this.record(rest) : []
+  }
+
+  /** Cut a bounded piece without splitting a surrogate pair. */
+  private takePiece(): string {
+    let end = this.lineBytes
+    const code = this.buffer.charCodeAt(end - 1)
+    if (code >= 0xd800 && code <= 0xdbff) end -= 1
+    const piece = this.buffer.slice(0, end)
+    this.buffer = this.buffer.slice(end)
+    return piece
+  }
+
+  private record(line: string): string[] {
+    const text = this.sanitize(line)
+    // The tail keeps the *end* of long output (what a failure usually needs);
+    // every emitted line stays within the console's per-line budget, and a
+    // terminated line longer than that budget is emitted as several pieces
+    // rather than silently truncated.
+    this.tailText = `${this.tailText}${text}\n`.slice(-this.tailBytes)
+    if (text.length <= this.lineBytes) return text ? [text] : []
+    const pieces: string[] = []
+    let rest = text
+    while (rest.length > this.lineBytes) {
+      const end =
+        rest.charCodeAt(this.lineBytes - 1) >= 0xd800 && rest.charCodeAt(this.lineBytes - 1) <= 0xdbff
+          ? this.lineBytes - 1
+          : this.lineBytes
+      pieces.push(rest.slice(0, end))
+      rest = rest.slice(end)
+    }
+    if (rest) pieces.push(rest)
+    return pieces
+  }
+}
+
+interface TaskRecord {
+  taskId: string
+  kind: TaskEvent['kind']
+  title: string
+  repoPath?: string
+  phase: 'running' | 'end' | 'error'
+  startedAt: number
+  endedAt?: number
+  exitCode?: number
+  error?: string
+  output: TaskOutputBuffer
+}
+
 export class TaskManager {
   private readonly emit: (event: TaskEvent) => void
+  /** Running tasks, keyed by id, in start order. */
+  private readonly running = new Map<string, TaskRecord>()
+  /** Finished tasks, oldest first, capped at TASK_RECENT_LIMIT. */
+  private readonly recent: TaskRecord[] = []
 
   constructor(emit: (event: TaskEvent) => void) {
     this.emit = emit
   }
 
+  /** Running and recently finished tasks for a renderer that just reloaded. */
+  snapshot(): TaskSnapshot {
+    const entry = (record: TaskRecord): TaskSnapshotEntry => ({
+      taskId: record.taskId,
+      kind: record.kind,
+      title: record.title,
+      repoPath: record.repoPath,
+      phase: record.phase,
+      startedAt: record.startedAt,
+      endedAt: record.endedAt,
+      exitCode: record.exitCode,
+      error: record.error,
+      output: record.output.tail
+    })
+    return {
+      running: [...this.running.values()].map(entry),
+      recent: this.recent.map(entry)
+    }
+  }
+
+  private rememberFinished(record: TaskRecord): void {
+    this.recent.push(record)
+    if (this.recent.length > TASK_RECENT_LIMIT) this.recent.splice(0, this.recent.length - TASK_RECENT_LIMIT)
+  }
+
   start(spec: TaskSpec): TaskHandle {
     const taskId = randomUUID()
     const secrets = spec.secrets ?? []
-    let buffer = ''
-    let fullOutput = ''
     let finished = false
+
+    const record: TaskRecord = {
+      taskId,
+      kind: spec.kind,
+      // The title can contain the console command line; redact it once so the
+      // reconnection snapshot cannot reintroduce a secret the live event hid.
+      title: redact(spec.title, secrets),
+      repoPath: spec.repoPath,
+      phase: 'running',
+      startedAt: Date.now(),
+      output: new TaskOutputBuffer(TASK_TAIL_BYTES, TASK_LINE_BYTES, (text) => redact(text, secrets))
+    }
+    this.running.set(taskId, record)
 
     const send = (event: TaskEvent): void => {
       event.repoPath = spec.repoPath
@@ -44,30 +184,44 @@ export class TaskManager {
 
     send({ taskId, kind: spec.kind, phase: 'start', text: spec.title })
 
-    const binary = getGitBinary()
-    assertGitBinaryUsable(binary)
-    const child = spawn(binary, [...gitBaseArgs(), ...spec.args], {
-      cwd: spec.cwd,
-      env: {
-        ...process.env,
-        ...spec.env,
-        GIT_TERMINAL_PROMPT: '0',
-        GIT_PAGER: 'cat',
-        GIT_EDITOR: 'true',
-        GIT_SEQUENCE_EDITOR: 'true',
-        LC_ALL: 'C'
-      },
-      windowsHide: true,
-      shell: false
-    })
+    const settle = (phase: 'end' | 'error', exitCode?: number, error?: string): void => {
+      record.phase = phase
+      record.endedAt = Date.now()
+      record.exitCode = exitCode
+      record.error = error ? redact(error, secrets) : error
+      this.running.delete(taskId)
+      this.rememberFinished(record)
+    }
+
+    let child: ChildProcess
+    try {
+      const binary = getGitBinary()
+      assertGitBinaryUsable(binary)
+      child = spawn(binary, [...gitBaseArgs(), ...spec.args], {
+        cwd: spec.cwd,
+        env: {
+          ...process.env,
+          ...spec.env,
+          GIT_TERMINAL_PROMPT: '0',
+          GIT_PAGER: 'cat',
+          GIT_EDITOR: 'true',
+          GIT_SEQUENCE_EDITOR: 'true',
+          LC_ALL: 'C'
+        },
+        windowsHide: true,
+        shell: false
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      settle('error', undefined, message)
+      // Tell the renderer too: otherwise its task chip would stay running and
+      // keep the status poll paused until a reload.
+      send({ taskId, kind: spec.kind, phase: 'error', error: message })
+      throw error
+    }
 
     const flush = (chunk: string, stream: 'stdout' | 'stderr'): void => {
-      buffer += chunk
-      const lines = buffer.split(/\r\n|\n|\r/)
-      buffer = lines.pop() ?? ''
-      for (const line of lines) {
-        if (!line.trim()) continue
-        fullOutput += `${line}\n`
+      for (const line of record.output.push(chunk)) {
         send({ taskId, kind: spec.kind, phase: 'output', text: line, stream })
       }
     }
@@ -80,37 +234,41 @@ export class TaskManager {
     child.on('error', (error) => {
       if (finished) return
       finished = true
+      settle('error', undefined, error.message)
       send({ taskId, kind: spec.kind, phase: 'error', error: error.message })
     })
 
     child.on('close', (code) => {
       if (finished) return
       finished = true
-      if (buffer.trim()) {
-        fullOutput += `${buffer}\n`
-        send({ taskId, kind: spec.kind, phase: 'output', text: buffer, stream: 'stdout' })
+      for (const line of record.output.finish()) {
+        send({ taskId, kind: spec.kind, phase: 'output', text: line, stream: 'stdout' })
       }
       void (async () => {
         // Post-run bookkeeping (such as recording a clone in the recent list)
         // must land before the completion event, so the renderer does not
         // refresh lists that are not written yet.
         try {
-          await spec.onExit?.(code, fullOutput)
+          await spec.onExit?.(code, record.output.tail)
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error)
           console.warn(`[commit87] task bookkeeping failed after "${spec.title}": ${detail}`)
         }
+        const tail = record.output.tail.slice(-4000)
         if (code !== 0) {
+          const error = spec.kind === 'console' ? 'Command failed' : `${spec.title} failed (exit code ${code ?? 'unknown'})`
+          settle('error', code ?? undefined, error)
           send({
             taskId,
             kind: spec.kind,
             phase: 'error',
             exitCode: code ?? undefined,
-            error: spec.kind === 'console' ? 'Command failed' : `${spec.title} failed (exit code ${code ?? 'unknown'})`,
-            text: fullOutput.slice(-4000)
+            error,
+            text: tail
           })
         } else {
-          send({ taskId, kind: spec.kind, phase: 'end', exitCode: 0, text: fullOutput.slice(-4000) })
+          settle('end', 0)
+          send({ taskId, kind: spec.kind, phase: 'end', exitCode: 0, text: tail })
         }
       })()
     })

@@ -5,6 +5,7 @@ import type {
   CreateReleaseInput,
   IntegrationAccount,
   PagedResult,
+  RepoInfo,
   ProviderConnection,
   ProviderDetection,
   ProviderRepo,
@@ -30,6 +31,15 @@ import { assertReleaseIntent } from './release'
 import { AppStore } from '../store'
 
 export class ProviderService {
+  /**
+   * Detection is derived from the repository's remotes, the account list and
+   * the repository defaults. A matching signature may reuse the last answer;
+   * any of those inputs changing produces a new one. The key is the canonical
+   * path, never a refreshed object identity.
+   */
+  private readonly detections = new Map<string, { signature: string; value: ProviderDetection }>()
+  private readonly detecting = new Map<string, Promise<ProviderDetection>>()
+
   constructor(private readonly store: AppStore) {}
 
   connections(): ProviderConnection[] {
@@ -64,6 +74,48 @@ export class ProviderService {
 
   async detect(repoPath: string): Promise<ProviderDetection> {
     const repo = await resolveRepo(repoPath)
+    const key = repo.canonicalPath
+    const signature = this.detectionSignature(repo)
+    const cached = this.detections.get(key)
+    if (cached?.signature === signature) return cached.value
+    const pendingKey = `${key}\u0000${signature}`
+    const pending = this.detecting.get(pendingKey)
+    if (pending) return pending
+    const started = Promise.resolve(this.resolveDetection(repo))
+      .then((value) => {
+        this.detections.set(key, { signature, value })
+        if (this.detections.size > 100) {
+          const oldest = this.detections.keys().next().value
+          if (oldest) this.detections.delete(oldest)
+        }
+        return value
+      })
+      .finally(() => {
+        if (this.detecting.get(pendingKey) === started) this.detecting.delete(pendingKey)
+      })
+    this.detecting.set(pendingKey, started)
+    return started
+  }
+
+  private detectionSignature(repo: RepoInfo): string {
+    const accounts = this.store.listIntegrations().map((account) => [
+      account.id,
+      account.provider,
+      account.authority?.host ?? '',
+      account.authority?.port ?? '',
+      account.authority?.cloneHost ?? '',
+      account.authority?.fingerprint ?? ''
+    ])
+    const defaults = this.store.getRepoDefaults(repo.path).integrationByProvider
+    return JSON.stringify({
+      path: repo.path,
+      remotes: repo.remotes.map((remote) => [remote.name, remote.fetchUrl, remote.pushUrl, remote.provider ?? '']),
+      accounts,
+      defaults
+    })
+  }
+
+  private resolveDetection(repo: RepoInfo): ProviderDetection {
     for (const remote of repo.remotes) {
       const parsed = parseRemoteUrl(remote.fetchUrl)
       const destination = destinationFromUrl(remote.fetchUrl)

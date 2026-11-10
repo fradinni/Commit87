@@ -246,6 +246,40 @@ rather than a Git fatal or a fabricated clean tree. Commit and commit-range diff
 object reads and still work. Bare clones are opened as
 repositories, not given a separate worktree-style interface.
 
+### Repository discovery and the poll
+
+`resolveRepo` separates facts that belong to the checkout from facts that change without
+Git noticing:
+
+| Reused (until invalidated or a directory disappears) | Read on every call |
+| --- | --- |
+| canonical path, root, git dir, common dir, name, bare flag, linked-worktree flag | branch, HEAD, status, upstream/ahead/behind, remotes, pending operation |
+
+Stable facts are cached by canonical path after two `rev-parse` calls, and are reused only
+while the root, canonical root and git dir still exist. The cache is dropped by
+`invalidateRepoDiscovery` on init, clone completion, worktree add/remove and branch
+rename; a deleted or re-created folder therefore re-discovers itself. Nothing dynamic is
+cached: an external `git switch`, commit, merge or `git rebase` is visible on the next
+read, which is what the tests assert.
+
+Reads that only need the live dynamic part are also cheaper. `git.status` output already
+carries branch, HEAD, upstream and ahead/behind, so a resolve no longer spends two extra
+`rev-parse` calls on them, the pending-operation markers cost one `rev-parse --git-path`
+call, and concurrent identical reads of the same checkout share one in-flight promise
+(two overlapping resolves, or the 5 s poll's `git.status` and `repo.info`) instead of
+running the same processes twice.
+
+Measured with a Git wrapper that logs every invocation, on a small local repository
+(unpacked, one commit, one remote), counting processes for one call:
+
+| Work | Before | After (cold / cached) |
+| --- | --- | --- |
+| `resolveRepo` | 14 | 5 / 3 |
+| `repo.info` + `git.status` together (one poll) | 15 | 3 / 3 |
+
+`tests/repo-discovery.test.ts` keeps the cached numbers under a bound so a future change
+cannot quietly reintroduce full discovery on every refresh.
+
 ### Parsers
 
 Everything user-visible is parsed from stable porcelain formats:
@@ -284,9 +318,24 @@ needs subjects; the body is fetched on demand by `git.commitDetail`.
 set it to the repository they run in, and a clone sets it to the target folder, so the
 renderer can refresh and stream into the right tab even when the user has switched away.
 
+Output is bounded in main, independent of the UI: streamed text stops at
+`TASK_TAIL_BYTES` (16 KiB) per task, a line that never ends is flushed in
+`TASK_LINE_BYTES` (4 KiB) pieces instead of growing, blank lines are still skipped, and
+redaction runs on the way into the console *and* into the retained tail. The first line
+of a chunk is emitted as soon as it is complete, so streaming is unchanged.
+
+Main also keeps a bounded inventory: every running task plus the last
+`TASK_RECENT_LIMIT` (20) finished ones, each with its redacted tail. `tasks.snapshot`
+returns `{ running, recent }` (`TaskSnapshotEntry`); the renderer subscribes to live
+events first and then reconciles the snapshot on boot, so a task that finishes during a
+renderer reload is reported once — the store deduplicates by `taskId` and only replays a
+console tail whose live stream it never saw. Main knows nothing about tabs.
+
 The UI shows progress in the title bar and a persistent task chip in the status bar. On
 exit the store refreshes status, branches and, after clones, the recent repository list,
-targeting the tab that started the task.
+targeting the tab that started the task. Console lines are addressed to the tab that owns
+the `repoPath`; output for a repository that no longer has an open tab is dropped rather
+than shown in whichever tab is active.
 
 ### Git console grammar
 
@@ -519,6 +568,17 @@ remote; every fetch uses the same origin-scoped helper as other operations.
   target record. Global state (config, toasts, sidebar/palette/dialogs) stays outside the
   tab record. Views remount on a tab switch, so component-local dialog state cannot leak
   into another repository.
+- **Request ownership**: every repository-scoped refresh captures a token from a
+  `RequestScope` (`src/renderer/src/lib/tabs.ts`) holding the tab lifetime and a per-field
+  generation. Opening or closing a tab bumps the lifetime, voiding requests started for an
+  earlier tab at the same path; within one lifetime the newest request for a field wins,
+  and a result is written per field (repo/status, detection, each collection, commits). A
+  stale refresh therefore cannot overwrite a newer status poll, and it never clears a
+  draft commit-graph filter: the graph keeps draft search/branch controls separate from
+  the applied filter, submits on an explicit action, and reloads from page zero when the
+  applied criteria change. The 5 s poll only refreshes status and repository facts.
+  `PullsView` keys its effects on `repo.path` plus the account/owner/repo/state strings,
+  so a refreshed object does not re-request forge data.
 - **Repository tabs**: the strip above the sidebar shows the branch and a dirty dot per
   repository, supports drag reorder, middle-click close and `Ctrl+Tab`, `Ctrl/Cmd+1…9`
   and `Ctrl/Cmd+W`. Opening a path that is already open activates its tab instead of
@@ -670,7 +730,10 @@ workflow instead of publishing a channel file no client requests.
 - Provider failures include status and a remediation hint; a missing token is reported
   before any network call.
 - Status polling every 5 s keeps the working tree indicator fresh without re-reading
-  history; it pauses while a task runs and is skipped entirely for a bare repository.
+  history or forge detection; it reuses repository discovery, pauses while a task runs and
+  is skipped entirely for a bare repository. After a renderer reload it also reconciles
+  `tasks.snapshot`, so a task that finished while no window was listening is reported
+  once instead of disappearing.
 
 ## Packaging
 

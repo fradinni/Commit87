@@ -19,11 +19,22 @@ import type {
   SubmoduleInfo,
   TagInfo,
   TaskEvent,
+  TaskSnapshot,
   UpdateStatus,
   WorktreeInfo
 } from '@shared/types'
 import type { IpcMethods, IpcRequest } from '@shared/ipc'
-import { applyRepoTabPatch, closeTabRecord, cycleTabId, insertTabInGroup, moveTabInGroups, repoGroupKey, repoPathKey } from './lib/tabs'
+import {
+  RequestScope,
+  applyRepoTabPatch,
+  closeTabRecord,
+  cycleTabId,
+  insertTabInGroup,
+  moveTabInGroups,
+  repoGroupKey,
+  repoPathKey
+} from './lib/tabs'
+import type { RequestField, RequestToken } from './lib/tabs'
 import { commit87Bridge } from './lib/bridge'
 
 type IpcRequestMap = { [K in keyof IpcMethods]: IpcMethods[K]['request'] }
@@ -259,6 +270,7 @@ interface StoreState {
   dismissToast: (id: string) => void
   setLoading: (key: string, value: boolean) => void
   handleTaskEvent: (event: TaskEvent) => void
+  reconcileTasks: (snapshot: TaskSnapshot) => void
   finishTask: (taskId: string) => void
   updateTabConsole: (event: TaskEvent, reset?: boolean) => void
   toggleConsole: (open?: boolean) => void
@@ -343,6 +355,158 @@ function tabForPath(tabs: RepoTab[], repoPath: string): RepoTab | undefined {
 /** A repository and its linked worktrees share one group key. */
 function groupKeyOf(tab: RepoTab): string {
   return repoGroupKey(tab.currentRepo, commit87Bridge().platform)
+}
+
+/**
+ * Console tails restored from main before any tab for their repository exists.
+ * They are replayed when that repository is opened, so a reload never loses
+ * output and never shows it in another tab.
+ */
+const pendingConsoleTails = new Map<string, string[]>()
+
+/** Replay a tail queued before its repository tab existed. */
+function replayPendingConsole(repoPath: string): void {
+  const key = pathKey(repoPath)
+  const lines = pendingConsoleTails.get(key)
+  if (!lines?.length) return
+  pendingConsoleTails.delete(key)
+  const state = useStore.getState()
+  for (const text of lines) {
+    state.updateTabConsole({
+      taskId: `replay-${key}`,
+      kind: 'console',
+      phase: 'output',
+      repoPath,
+      text
+    })
+  }
+}
+
+/** Owner key for async requests: the canonical checkout, never a display path. */
+function requestKey(tab: RepoTab): string {
+  return pathKey(tab.currentRepo.canonicalPath || tab.currentRepo.path)
+}
+
+const requests = new RequestScope()
+const inFlightRefreshes = new Map<string, Promise<void>>()
+const completedTaskIds: string[] = []
+const completedTaskSet = new Set<string>()
+/** Tasks whose live event stream this renderer has already seen. */
+const observedTasks = new Set<string>()
+const COMPLETED_TASK_LIMIT = 200
+const CONSOLE_LINE_LIMIT = 800
+const ANNOUNCED_TASKS_KEY = 'commit87.announced-tasks'
+
+/** Share one in-flight read for the same repository and kind (poll + refresh). */
+function coalescedRefresh(key: string, run: () => Promise<void>): Promise<void> {
+  const pending = inFlightRefreshes.get(key)
+  if (pending) return pending
+  const started = run().finally(() => {
+    if (inFlightRefreshes.get(key) === started) inFlightRefreshes.delete(key)
+  })
+  inFlightRefreshes.set(key, started)
+  return started
+}
+
+/** A tab was opened or closed: void its requests and any shared read waiting on them. */
+function restartLifetime(tab: RepoTab): void {
+  const key = requestKey(tab)
+  requests.restart(key)
+  inFlightRefreshes.delete(`status:${key}`)
+}
+
+function beginRefresh(tab: RepoTab, fields: readonly RequestField[]): RequestToken {
+  return requests.begin(requestKey(tab), fields)
+}
+
+/** Assemble the fields this request still owns after its awaits. */
+function ownedPatch(
+  token: RequestToken,
+  entries: ReadonlyArray<readonly [RequestField, RepoTabPatch]>
+): RepoTabPatch | null {
+  if (!requests.isCurrent(token)) return null
+  const patch: RepoTabPatch = {}
+  let has = false
+  for (const [field, value] of entries) {
+    if (!requests.owns(token, field)) continue
+    Object.assign(patch, value)
+    has = true
+  }
+  return has ? patch : null
+}
+
+function rememberCompleted(taskId: string): void {
+  completedTaskSet.add(taskId)
+  completedTaskIds.push(taskId)
+  if (completedTaskIds.length > COMPLETED_TASK_LIMIT) {
+    const oldest = completedTaskIds.shift()
+    if (oldest) completedTaskSet.delete(oldest)
+  }
+}
+
+/**
+ * Completions this window has already announced, kept across a renderer reload
+ * in `sessionStorage`. That is the reconnection record: a retained task that is
+ * absent means the event was delivered while no window was listening, and one
+ * that is present was streamed to the previous renderer and must stay silent.
+ */
+function loadAnnouncedTasks(): void {
+  try {
+    const storage = (globalThis as { sessionStorage?: { getItem(key: string): string | null } }).sessionStorage
+    const raw = storage?.getItem(ANNOUNCED_TASKS_KEY)
+    if (!raw) return
+    const ids: unknown = JSON.parse(raw)
+    if (!Array.isArray(ids)) return
+    for (const id of ids) if (typeof id === 'string') completedTaskSet.add(id)
+  } catch {
+    // sessionStorage is a convenience for reconnection, never a requirement.
+  }
+}
+
+function persistAnnouncedTasks(): void {
+  try {
+    const storage = (globalThis as { sessionStorage?: { setItem(key: string, value: string): void } }).sessionStorage
+    storage?.setItem(ANNOUNCED_TASKS_KEY, JSON.stringify([...completedTaskSet].slice(-COMPLETED_TASK_LIMIT)))
+  } catch {
+    // A quota or disabled storage only costs the reconnection record.
+  }
+}
+
+function markTaskCompleted(taskId: string): boolean {
+  if (completedTaskSet.has(taskId)) return false
+  rememberCompleted(taskId)
+  persistAnnouncedTasks()
+  return true
+}
+
+function consoleLine(event: TaskEvent): ConsoleLine {
+  return {
+    id: `c${++consoleSeq}`,
+    text: event.text ?? '',
+    stream: event.stream ?? 'stdout',
+    at: Date.now()
+  }
+}
+
+/** Append to one tab, active mirror included, never to a different owner. */
+function appendToTab(
+  tab: RepoTab,
+  line: ConsoleLine,
+  activeTabId: string | null,
+  reset: boolean,
+  tabs: RepoTab[],
+  activeLines: ConsoleLine[]
+): { tabs?: RepoTab[]; consoleLines?: ConsoleLine[] } {
+  if (tab.id === activeTabId) {
+    return { consoleLines: reset ? [] : [...activeLines.slice(-CONSOLE_LINE_LIMIT), line] }
+  }
+  return {
+    tabs: tabs.map((item) =>
+      item.id === tab.id
+        ? { ...item, consoleLines: reset ? [] : [...item.consoleLines.slice(-CONSOLE_LINE_LIMIT), line] }
+        : item
+    )
+  }
 }
 
 function tabToStore(tab: RepoTab): Partial<StoreState> {
@@ -495,6 +659,7 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
     const existing = tabForPath(get().tabs, path)
     if (existing) {
       get().activateTab(existing.id)
+      replayPendingConsole(existing.currentRepo.path)
       if (standalone) {
         // The OS opened a repository that is already a tab: still let the main
         // process record it (a linked worktree belongs in the recents here).
@@ -558,9 +723,13 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
       if (duplicate) {
         if (request === openSeq) get().activateTab(duplicate.id)
         set({ repoLoading: false })
+        replayPendingConsole(duplicate.currentRepo.path)
         await get().loadRecent()
         return
       }
+      // A tab for this checkout is (re)born: every request captured for an
+      // earlier tab at the same path is void from here on.
+      restartLifetime(tab)
       if (request === openSeq) {
         set({ tabs: insertTabInGroup(get().tabs, tab, groupKeyOf), activeTabId: tab.id, ...tabToStore(tab), repoLoading: false })
       } else {
@@ -570,6 +739,7 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
         set({ tabs: insertTabInGroup(get().tabs, tab, groupKeyOf), repoLoading: false })
         if (needsActive) get().activateTab(tab.id, false)
       }
+      replayPendingConsole(repo.path)
       await get().loadRecent()
     } catch (error) {
       set({ repoLoading: false })
@@ -605,8 +775,11 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
     const state = get()
     const targetId = id ?? state.activeTabId
     if (!targetId) return
+    const closing = state.tabs.find((tab) => tab.id === targetId)
     const result = closeTabRecord(state.tabs, state.activeTabId, targetId)
     if (result.tabs === state.tabs) return
+    // Output and results for a closed tab must never reach another one.
+    if (closing) restartLifetime(closing)
     if (!result.activeId) {
       // Closing an inactive tab while the launchpad is showing must not discard
       // the remaining tabs.
@@ -624,10 +797,14 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
     const keepId = id ?? state.activeTabId
     const keep = state.tabs.find((tab) => tab.id === keepId)
     if (!keep) return
+    for (const tab of state.tabs) {
+      if (tab.id !== keep.id) restartLifetime(tab)
+    }
     set({ tabs: [keep], activeTabId: keep.id, ...tabToStore(keep) })
   },
 
   closeAllTabs() {
+    for (const tab of get().tabs) restartLifetime(tab)
     set({ tabs: [], activeTabId: null, ...emptyRepoSlice })
   },
 
@@ -663,139 +840,195 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
   async refreshTab(repoPath, silent = true) {
     const tab = tabForPath(get().tabs, repoPath)
     if (!tab) return
+    const target = tab.currentRepo.path
+    const token = beginRefresh(tab, ['repo', 'detection', 'branches', 'tags', 'worktrees', 'stashes', 'submodules', 'commits'])
     try {
       const [info, status, detection, branches, tags, worktrees, stashes, submodules] = await Promise.all([
-        call('repo.info', { path: repoPath }),
+        call('repo.info', { path: target }),
         // A bare repository has no working tree; refreshing its collections must
         // not run a worktree-only command or fabricate a clean status.
-        tab.currentRepo.isBare ? Promise.resolve(null) : call('git.status', { path: repoPath }),
-        call('provider.detect', { path: repoPath }),
-        call('git.branches', { path: repoPath }),
-        call('git.tags', { path: repoPath }),
-        call('git.worktrees', { path: repoPath }),
-        tab.currentRepo.isBare ? Promise.resolve([]) : call('git.stashes', { path: repoPath }),
-        call('git.submodules', { path: repoPath })
+        tab.currentRepo.isBare ? Promise.resolve(null) : call('git.status', { path: target }),
+        call('provider.detect', { path: target }),
+        call('git.branches', { path: target }),
+        call('git.tags', { path: target }),
+        call('git.worktrees', { path: target }),
+        tab.currentRepo.isBare ? Promise.resolve([]) : call('git.stashes', { path: target }),
+        call('git.submodules', { path: target })
       ])
+      if (!requests.isCurrent(token)) return
+      // Read the *current* tab, not the snapshot taken before the awaits: a
+      // newer draft filter or a branch created meanwhile must not be clobbered.
+      const live = tabForPath(get().tabs, target)
+      if (!live) return
       // A deleted or renamed branch must not block the rest of the refresh.
       // Tags and remote refs are valid graph filters too.
       const branchExists =
-        branches.some((item) => item.name === tab.graphBranch || item.shortName === tab.graphBranch) ||
-        tags.some((tag) => tag.name === tab.graphBranch)
-      const branchFilter = branchExists ? tab.graphBranch : ''
-      const query = tab.graphQuery.trim()
-      get().updateTab(repoPath, {
-        currentRepo: info,
-        status,
-        detection,
-        branches,
-        tags,
-        worktrees,
-        stashes,
-        submodules,
-        ...(branchFilter === tab.graphBranch ? {} : { graphBranch: '' })
-      })
+        branches.some((item) => item.name === live.graphBranch || item.shortName === live.graphBranch) ||
+        tags.some((tag) => tag.name === live.graphBranch)
+      const droppedBranch = Boolean(live.graphBranch) && !branchExists
+      const patch = ownedPatch(token, [
+        ['repo', { currentRepo: info, status }],
+        ['detection', { detection }],
+        ['branches', { branches }],
+        ['tags', { tags }],
+        ['worktrees', { worktrees }],
+        ['stashes', { stashes }],
+        ['submodules', { submodules }],
+        // Clear only the branch value this refresh actually saw disappear.
+        ['branches', droppedBranch ? { graphBranch: '' } : {}]
+      ])
+      if (patch) get().updateTab(target, patch)
+      if (!requests.owns(token, 'commits')) return
+      const current = tabForPath(get().tabs, target)
+      if (!current) return
+      const branchFilter = current.graphBranch
+      const query = current.graphQuery.trim()
       const limit = get().config?.maxCommits ?? 500
       try {
-        const commits = await loadCommits(repoPath, limit, branchFilter, query)
-        get().updateTab(repoPath, { commits })
+        const commits = await loadCommits(target, limit, branchFilter, query)
+        if (!requests.owns(token, 'commits')) return
+        const still = tabForPath(get().tabs, target)
+        // A graph query applied while these commits were loading wins.
+        if (!still || still.graphBranch !== branchFilter || still.graphQuery.trim() !== query) return
+        get().updateTab(target, { commits })
       } catch (error) {
         if (!branchFilter && !query) throw error
+        if (!requests.owns(token, 'commits')) return
+        const failed = tabForPath(get().tabs, target)
+        if (!failed || failed.graphBranch !== branchFilter || failed.graphQuery.trim() !== query) return
         // The filter no longer matches (usually a rewritten history); keep the
         // refreshed collections and fall back to the full commit list.
-        get().updateTab(repoPath, { graphQuery: '', graphBranch: '' })
-        const commits = await loadCommits(repoPath, limit, '', '')
-        get().updateTab(repoPath, { commits })
+        get().updateTab(target, { graphQuery: '', graphBranch: '' })
+        const commits = await loadCommits(target, limit, '', '')
+        const afterClear = tabForPath(get().tabs, target)
+        // A filter applied while the unfiltered retry was loading wins.
+        if (requests.owns(token, 'commits') && afterClear && !afterClear.graphBranch && !afterClear.graphQuery.trim()) {
+          get().updateTab(target, { commits })
+        }
         if (!silent) get().notify('Commit filter no longer matches; showing all commits', 'info')
       }
     } catch (error) {
-      if (!silent) get().notifyError(error)
+      if (!silent && requests.isCurrent(token)) get().notifyError(error)
     }
   },
 
   async refreshRepo(repoPath) {
     const target = repoPath ?? get().currentRepo?.path
     if (!target) return
-    const bare = tabForPath(get().tabs, target)?.currentRepo.isBare ?? false
+    const tab = tabForPath(get().tabs, target)
+    if (!tab) return
+    const token = beginRefresh(tab, ['repo', 'detection'])
     try {
       const [info, status, detection] = await Promise.all([
-        call('repo.info', { path: target }),
-        bare ? Promise.resolve(null) : call('git.status', { path: target }),
-        call('provider.detect', { path: target })
+        call('repo.info', { path: tab.currentRepo.path }),
+        tab.currentRepo.isBare ? Promise.resolve(null) : call('git.status', { path: tab.currentRepo.path }),
+        call('provider.detect', { path: tab.currentRepo.path })
       ])
-      get().updateTab(target, { currentRepo: info, status, detection })
+      const patch = ownedPatch(token, [
+        ['repo', { currentRepo: info, status }],
+        ['detection', { detection }]
+      ])
+      if (patch) get().updateTab(tab.currentRepo.path, patch)
     } catch (error) {
-      get().notifyError(error)
+      if (requests.isCurrent(token)) get().notifyError(error)
     }
   },
 
   async refreshStatus(repoPath) {
     const target = repoPath ?? get().currentRepo?.path
     if (!target) return
-    const bare = tabForPath(get().tabs, target)?.currentRepo.isBare ?? false
-    if (bare) return
-    try {
-      const [status, info] = await Promise.all([
-        call('git.status', { path: target }),
-        call('repo.info', { path: target })
-      ])
-      get().updateTab(target, { status, currentRepo: info })
-    } catch {
-      // status polling must not spam toasts
-    }
+    const tab = tabForPath(get().tabs, target)
+    if (!tab || tab.currentRepo.isBare) return
+    // The 5 s poll and a tab activation often coincide; one shared read keeps
+    // them from running duplicate `git status`/`repo.info` pairs.
+    return coalescedRefresh(`status:${requestKey(tab)}`, async () => {
+      const live = tabForPath(get().tabs, target) ?? tab
+      const token = beginRefresh(live, ['repo'])
+      try {
+        const [status, info] = await Promise.all([
+          call('git.status', { path: live.currentRepo.path }),
+          call('repo.info', { path: live.currentRepo.path })
+        ])
+        const patch = ownedPatch(token, [['repo', { status, currentRepo: info }]])
+        if (patch) get().updateTab(live.currentRepo.path, patch)
+      } catch {
+        // status polling must not spam toasts
+      }
+    })
   },
 
   async refreshBranches(repoPath) {
     const target = repoPath ?? get().currentRepo?.path
     if (!target) return
+    const tab = tabForPath(get().tabs, target)
+    if (!tab) return
+    const token = beginRefresh(tab, ['branches'])
     try {
-      const branches = await call('git.branches', { path: target })
-      get().updateTab(target, { branches })
+      const branches = await call('git.branches', { path: tab.currentRepo.path })
+      const patch = ownedPatch(token, [['branches', { branches }]])
+      if (patch) get().updateTab(tab.currentRepo.path, patch)
     } catch (error) {
-      get().notifyError(error)
+      if (requests.isCurrent(token)) get().notifyError(error)
     }
   },
 
   async refreshTags(repoPath) {
     const target = repoPath ?? get().currentRepo?.path
     if (!target) return
+    const tab = tabForPath(get().tabs, target)
+    if (!tab) return
+    const token = beginRefresh(tab, ['tags'])
     try {
-      const tags = await call('git.tags', { path: target })
-      get().updateTab(target, { tags })
+      const tags = await call('git.tags', { path: tab.currentRepo.path })
+      const patch = ownedPatch(token, [['tags', { tags }]])
+      if (patch) get().updateTab(tab.currentRepo.path, patch)
     } catch (error) {
-      get().notifyError(error)
+      if (requests.isCurrent(token)) get().notifyError(error)
     }
   },
 
   async refreshWorktrees(repoPath) {
     const target = repoPath ?? get().currentRepo?.path
     if (!target) return
+    const tab = tabForPath(get().tabs, target)
+    if (!tab) return
+    const token = beginRefresh(tab, ['worktrees'])
     try {
-      const worktrees = await call('git.worktrees', { path: target })
-      get().updateTab(target, { worktrees })
+      const worktrees = await call('git.worktrees', { path: tab.currentRepo.path })
+      const patch = ownedPatch(token, [['worktrees', { worktrees }]])
+      if (patch) get().updateTab(tab.currentRepo.path, patch)
     } catch (error) {
-      get().notifyError(error)
+      if (requests.isCurrent(token)) get().notifyError(error)
     }
   },
 
   async refreshStashes(repoPath) {
     const target = repoPath ?? get().currentRepo?.path
     if (!target) return
+    const tab = tabForPath(get().tabs, target)
+    if (!tab) return
+    const token = beginRefresh(tab, ['stashes'])
     try {
-      const stashes = await call('git.stashes', { path: target })
-      get().updateTab(target, { stashes })
+      const stashes = await call('git.stashes', { path: tab.currentRepo.path })
+      const patch = ownedPatch(token, [['stashes', { stashes }]])
+      if (patch) get().updateTab(tab.currentRepo.path, patch)
     } catch (error) {
-      get().notifyError(error)
+      if (requests.isCurrent(token)) get().notifyError(error)
     }
   },
 
   async refreshSubmodules(repoPath) {
     const target = repoPath ?? get().currentRepo?.path
     if (!target) return
+    const tab = tabForPath(get().tabs, target)
+    if (!tab) return
+    const token = beginRefresh(tab, ['submodules'])
     try {
-      const submodules = await call('git.submodules', { path: target })
-      get().updateTab(target, { submodules })
+      const submodules = await call('git.submodules', { path: tab.currentRepo.path })
+      const patch = ownedPatch(token, [['submodules', { submodules }]])
+      if (patch) get().updateTab(tab.currentRepo.path, patch)
     } catch (error) {
-      get().notifyError(error)
+      if (requests.isCurrent(token)) get().notifyError(error)
     }
   },
 
@@ -853,7 +1086,16 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
   },
 
   handleTaskEvent(event) {
+    observedTasks.add(event.taskId)
+    // A snapshot reconciliation and a live event can describe the same finish;
+    // only the first one may notify, refresh or open a clone.
+    if (event.phase === 'end' || event.phase === 'error') {
+      if (!markTaskCompleted(event.taskId)) return
+    }
     if (event.phase === 'start') {
+      // Reusing an id (only possible in tests or after a main restart) starts a
+      // new task, so an old completion record must not swallow its end.
+      completedTaskSet.delete(event.taskId)
       const task: TaskState = {
         taskId: event.taskId,
         title: event.text || 'Running…',
@@ -900,29 +1142,99 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
   },
 
   /**
+   * Adopt main's bounded task inventory after a renderer reload. A task that
+   * finished while no renderer was listening is replayed once; a task the live
+   * subscription (or the previous renderer) already reported stays silent.
+   */
+  reconcileTasks(snapshot) {
+    // The previous renderer's completions, if this is a reload of the same window.
+    loadAnnouncedTasks()
+    const state = get()
+    const tasks = { ...state.tasks }
+    let changed = false
+    for (const entry of snapshot.running) {
+      if (tasks[entry.taskId] || completedTaskSet.has(entry.taskId)) continue
+      tasks[entry.taskId] = {
+        taskId: entry.taskId,
+        title: entry.title || 'Running…',
+        kind: entry.kind,
+        repoPath: entry.repoPath ?? null
+      }
+      changed = true
+      // Only a task whose live stream was missed needs the retained tail;
+      // replaying it after the subscription started would duplicate lines.
+      if (!observedTasks.has(entry.taskId) && entry.kind === 'console') {
+        const lines = entry.output.split('\n').filter((text) => text.length > 0)
+        const owner = entry.repoPath ? tabForPath(get().tabs, entry.repoPath) : undefined
+        if (!entry.repoPath || owner) {
+          // Marked observed only once the lines actually have a home.
+          observedTasks.add(entry.taskId)
+          for (const text of lines) {
+            get().updateTabConsole({
+              taskId: entry.taskId,
+              kind: 'console',
+              phase: 'output',
+              repoPath: entry.repoPath,
+              text
+            })
+          }
+        } else if (lines.length) {
+          const key = pathKey(entry.repoPath)
+          const queued = [...(pendingConsoleTails.get(key) ?? []), ...lines]
+          pendingConsoleTails.set(key, queued.slice(-CONSOLE_LINE_LIMIT))
+        }
+      }
+    }
+    if (changed) {
+      const running = Object.values(tasks)
+      set({ tasks, task: running[running.length - 1] ?? null })
+    }
+
+    const refreshedRepos = new Set<string>()
+    for (const entry of snapshot.recent) {
+      // Announced live, or by the renderer that was connected before this one.
+      if (!markTaskCompleted(entry.taskId)) continue
+      get().finishTask(entry.taskId)
+      const target = entry.repoPath ? tabForPath(get().tabs, entry.repoPath) : undefined
+      // A background repository that is not open needs no announcement and no
+      // refresh burst; only what the user can see is reported.
+      if (!entry.repoPath || target) {
+        if (entry.phase === 'error') {
+          get().notify(entry.error || 'Command failed', 'error')
+        } else if (entry.kind === 'clone') {
+          get().notify('Clone finished', 'success')
+        } else if (entry.kind !== 'console') {
+          const label = entry.kind === 'push' ? 'Push' : entry.kind === 'pull' ? 'Pull' : 'Fetch'
+          get().notify(`${label} finished while the window was reconnecting`, 'success')
+        }
+      }
+      if (entry.kind === 'clone') void get().loadRecent()
+      if (entry.repoPath && target) {
+        const key = pathKey(entry.repoPath)
+        if (refreshedRepos.has(key)) continue
+        refreshedRepos.add(key)
+        void get().refreshTab(entry.repoPath)
+      }
+    }
+  },
+
+  /**
    * Console output belongs to the repository that produced it, even when the user
-   * has switched tabs while a long command is still streaming.
+   * has switched tabs while a long command is still streaming. Output for a
+   * closed owner is dropped: it must never appear in whichever tab is active.
    */
   updateTabConsole(event: TaskEvent, reset = false) {
     const state = get()
-    const id = event.repoPath ? tabForPath(state.tabs, event.repoPath)?.id ?? null : state.activeTabId
-    const line: ConsoleLine = {
-      id: `c${++consoleSeq}`,
-      text: event.text ?? '',
-      stream: event.stream ?? 'stdout',
-      at: Date.now()
-    }
-    if (!id || id === state.activeTabId) {
-      set({ consoleLines: reset ? [] : [...state.consoleLines.slice(-800), line] })
+    if (!event.repoPath) {
+      // Repository-less commands have no owner, so the active tab is the only
+      // sensible home for them.
+      set({ consoleLines: reset ? [] : [...state.consoleLines.slice(-CONSOLE_LINE_LIMIT), consoleLine(event)] })
       return
     }
-    set({
-      tabs: state.tabs.map((tab) =>
-        tab.id === id
-          ? { ...tab, consoleLines: reset ? [] : [...tab.consoleLines.slice(-800), line] }
-          : tab
-      )
-    })
+    const owner = tabForPath(state.tabs, event.repoPath)
+    if (!owner) return
+    const next = appendToTab(owner, consoleLine(event), state.activeTabId, reset, state.tabs, state.consoleLines)
+    set(next)
   },
 
   toggleConsole(open) {

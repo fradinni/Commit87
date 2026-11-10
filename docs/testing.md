@@ -13,9 +13,10 @@ npm run typecheck        # strict TS across main, preload, renderer
 | --- | --- |
 | `tests/parsers.test.ts` | porcelain v2 status (including renames, unmerged, initial/detached), log, branches, tags, remotes, worktrees, stashes, submodule status/config, numstat, blame, scoped config |
 | `tests/remote.test.ts` | remote URL parsing (scp, `ssh://` with port, nested groups, Bitbucket Server `scm/`), provider detection, account host matching (including strict credential hosts), web/base URL normalisation |
-| `tests/tabs.test.ts` | repository tab close/cycle/reorder semantics, cross-platform path keys, and active-tab patch mirroring |
-| `tests/repo-store.test.ts` | zustand store with a stubbed preload bridge: open/activate/close tabs, per-tab isolation, failed opens, task completion and console routing by repository, OS/standalone open forwarding, sidebar navigate/refs mode |
-| `tests/task-events.test.ts` | streaming task events carry the originating `repoPath` for every phase, omit it for repository-less tasks, and wait for exit bookkeeping before announcing completion |
+| `tests/tabs.test.ts` | repository tab close/cycle/reorder semantics, cross-platform path keys, active-tab patch mirroring, and `RequestScope` lifetime/field generation ownership |
+| `tests/repo-store.test.ts` | zustand store with a stubbed preload bridge: open/activate/close tabs, per-tab isolation, failed opens, task completion and console routing by repository, newer-wins overlapping refreshes, close/reopen dropping a stale refresh, a newer graph filter surviving a refresh, task snapshot reconciliation, OS/standalone open forwarding, sidebar navigate/refs mode |
+| `tests/task-events.test.ts` | streaming task events carry the originating `repoPath` for every phase, omit it for repository-less tasks, wait for exit bookkeeping before announcing completion; bounded output (tail size, newline-free chunks, partial-line flush, redaction) and the capped running/recent snapshot |
+| `tests/repo-discovery.test.ts` | real `git`: stable discovery reuse with live branch/status/operation reads (external change, external merge abort), cache invalidation and removal, a counting-wrapper process bound, and in-flight sharing of concurrent resolves |
 | `tests/app-store.test.ts` | profile store persistence and recovery: recent repositories survive a restart, writes are serialised, a failed write recovers, default config is not shared between instances, and an unreadable/corrupt profile is kept aside |
 | `tests/recent.test.ts` | recents policy: regular checkouts are recorded, linked worktrees only when the OS opened them standalone, and a failed write is logged instead of failing the open |
 | `tests/launch.test.ts` | OS launch parsing: plain folder argv, `file://` URLs from the Linux file manager, `commit87://` deep links, and rejection of files, flags, relative paths and the app itself |
@@ -32,7 +33,7 @@ npm run typecheck        # strict TS across main, preload, renderer
 | `tests/history.integration.test.ts` | real `git` multi-commit history actions: cherry-pick replays several commits in order and reverting them newest first restores the tree |
 | `tests/submodule.integration.test.ts` | real `git` end-to-end: add, status/config join, dirty detection and forced clean reset (including nested submodules), checkout drift and update, deinit/reinit, tracked-branch update, URL sync, remove (working tree, module dir, `.gitmodules`, config section), uncommitted-add removal and dirty refusal, linked-worktree isolation, orphan gitlinks, unstaged `.gitmodules` refusal and path validation |
 
-Total: 297 tests. The integration suites create temporary repositories under
+Total: 485 tests. The integration suites create temporary repositories under
 `os.tmpdir()` and remove them afterwards; they require `git` on `PATH`.
 
 ## What is asserted, not just executed
@@ -53,6 +54,18 @@ Total: 297 tests. The integration suites create temporary repositories under
   rows that were loaded and then disappeared, and clears a selection whose active commit is
   gone. Multi-commit cherry-pick is replayed oldest first while revert walks newest first,
   proven by a real temporary repository.
+- **Refresh ownership and task retention**: two overlapping refreshes apply newest-wins even
+  when the older one resolves last, a refresh started before a tab was closed and reopened
+  is dropped, a graph filter typed while a refresh is in flight survives it, console output
+  for a closed owner never reaches the active tab, and snapshot reconciliation reports a task
+  that finished during reconnection exactly once (and stays silent about older history).
+  Bounded output is asserted directly: a 50-character line with no newline is emitted in
+  bounded pieces, the retained tail keeps the last lines only, a partial last line is
+  flushed on close, and redaction applies to the retained tail too.
+- **Discovery cache boundaries**: real `git` proves stable facts are reused while branch,
+  status and a pending merge are still read live, that a deleted repository cannot be served
+  from cache, and that a counting Git wrapper sees a bounded number of processes for a
+  cached resolve and a status poll.
 - **Submodule lifecycle**: status flags are joined to normalized `.gitmodules` paths, local
   changes and checkout drift are detected, update restores the recorded commit, `--remote`
   follows the tracked branch, sync copies `.gitmodules` into the module config, and remove

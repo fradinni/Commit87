@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  RequestScope,
   applyRepoTabPatch,
   closeTabRecord,
   cycleTabId,
@@ -164,6 +165,40 @@ describe('repository tab grouping', () => {
     ]
     expect(moveTabInGroups(tabs, 'a1', 2, (item) => item.group).map((item) => item.id)).toEqual(['b1', 'a1', 'a2'])
     expect(moveTabInGroups(tabs, 'b1', 0, (item) => item.group).map((item) => item.id)).toEqual(['b1', 'a1', 'a2'])
+  })
+})
+
+describe('request ownership', () => {
+  it('lets the newest request for a field win', () => {
+    const scope = new RequestScope()
+    const first = scope.begin('/repo', ['repo'])
+    const second = scope.begin('/repo', ['repo'])
+    expect(scope.owns(first, 'repo')).toBe(false)
+    expect(scope.owns(second, 'repo')).toBe(true)
+  })
+
+  it('keeps separate fields independent for overlapping refreshes', () => {
+    const scope = new RequestScope()
+    const full = scope.begin('/repo', ['repo', 'branches'])
+    const poll = scope.begin('/repo', ['repo'])
+    expect(scope.owns(full, 'repo')).toBe(false)
+    expect(scope.owns(full, 'branches')).toBe(true)
+    expect(scope.owns(poll, 'repo')).toBe(true)
+  })
+
+  it('voids everything captured before a close and reopen', () => {
+    const scope = new RequestScope()
+    const before = scope.begin('/repo', ['repo', 'commits'])
+    scope.restart('/repo')
+    const after = scope.begin('/repo', ['repo'])
+    expect(scope.isCurrent(before)).toBe(false)
+    expect(scope.owns(before, 'repo')).toBe(false)
+    expect(scope.owns(before, 'commits')).toBe(false)
+    expect(scope.owns(after, 'repo')).toBe(true)
+    // A different repository is never affected by another tab's lifetime.
+    const other = scope.begin('/other', ['repo'])
+    scope.restart('/repo')
+    expect(scope.owns(other, 'repo')).toBe(true)
   })
 })
 

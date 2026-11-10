@@ -65,7 +65,165 @@ function contextArgs(ctx: GitAuthContext): { args: string[]; env: NodeJS.Process
   return { args: [...ident.args, ...auth.args], env: { ...ident.env, ...auth.env } }
 }
 
+/**
+ * Discovery facts that belong to the repository directory itself. They survive
+ * a refresh and are reused only while every directory still exists; anything
+ * that can change without Git (branch, HEAD, status, remotes, operation state)
+ * is read on every call.
+ */
+interface StableRepoFacts {
+  root: string
+  canonicalRoot: string
+  gitDir: string
+  commonDir: string
+  name: string
+  isBare: boolean
+  worktree: boolean
+  /** `dev:ino` of the Git directory, so a re-created repository is not reused. */
+  gitDirId: string
+}
+
+/** Process counts for the discovery note in `docs/architecture.md` and its test. */
+export const repoDiscoveryMetrics = { calls: 0, spawns: 0, cacheHits: 0 }
+
+const STABLE_DISCOVERY = new Map<string, StableRepoFacts>()
+let discoveryEpoch = 0
+const STABLE_DISCOVERY_PENDING = new Map<string, Promise<StableRepoFacts>>()
+const RESOLVE_PENDING = new Map<string, Promise<RepoInfo>>()
+
+export function resetRepoDiscoveryMetrics(): void {
+  repoDiscoveryMetrics.calls = 0
+  repoDiscoveryMetrics.spawns = 0
+  repoDiscoveryMetrics.cacheHits = 0
+}
+
+/**
+ * Drop cached discovery for a path that was just created, removed, renamed or
+ * re-initialized. Every matching key is removed so a linked worktree and its
+ * common directory cannot keep stale facts.
+ */
+export function invalidateRepoDiscovery(...inputs: string[]): void {
+  discoveryEpoch += 1
+  for (const input of inputs) {
+    const target = path.resolve(input)
+    for (const [key, facts] of STABLE_DISCOVERY) {
+      if (
+        key === target ||
+        path.resolve(facts.root) === target ||
+        path.resolve(facts.canonicalRoot) === target ||
+        path.resolve(facts.gitDir) === target ||
+        path.resolve(facts.commonDir) === target
+      ) {
+        STABLE_DISCOVERY.delete(key)
+        STABLE_DISCOVERY_PENDING.delete(key)
+      }
+    }
+  }
+}
+
+async function stableFactsStillExist(facts: StableRepoFacts): Promise<boolean> {
+  try {
+    const stats = await Promise.all([
+      fs.stat(facts.root),
+      fs.stat(facts.canonicalRoot),
+      fs.stat(facts.gitDir)
+    ])
+    if (!stats.every((stat) => stat.isDirectory())) return false
+    // A folder that was deleted and re-created as a different repository has
+    // the same paths but a different Git directory identity.
+    const identity = await statIdentity(facts.gitDir)
+    return identity !== '' && identity === facts.gitDirId
+  } catch {
+    return false
+  }
+}
+
+async function statIdentity(target: string): Promise<string> {
+  try {
+    const stat = await fs.stat(target)
+    return `${stat.dev}:${stat.ino}`
+  } catch {
+    return ''
+  }
+}
+
+async function discoverStable(candidate: string): Promise<StableRepoFacts> {
+  const cwd = candidate
+  repoDiscoveryMetrics.spawns += 1
+  const bareResult = await tryRunGit(['rev-parse', '--is-bare-repository'], { cwd })
+  if (!bareResult || bareResult.exitCode !== 0) {
+    throw new Error(`${cwd} is not a Git repository`)
+  }
+  const bare = bareResult.stdout.trim() === 'true'
+  // One process for the remaining paths. A bare repository cannot ask for
+  // `--show-toplevel`, so only the non-bare form includes it.
+  const args = bare
+    ? ['rev-parse', '--absolute-git-dir', '--git-common-dir']
+    : ['rev-parse', '--absolute-git-dir', '--show-toplevel', '--git-common-dir']
+  repoDiscoveryMetrics.spawns += 1
+  const paths = await runGit(args, { cwd })
+  const lines = paths.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const gitDir = lines[0]
+  if (!gitDir) throw new Error(`${cwd} is not a Git repository`)
+  // A bare repository has no worktree: its own folder is the repository.
+  const root = !bare && lines[1] ? lines[1] : candidate
+  const commonRaw = bare ? lines[1] : lines[2]
+  const commonDirRaw = commonRaw ? path.resolve(root, commonRaw) : gitDir
+  const canonicalRoot = await fs.realpath(root).catch(() => path.resolve(root))
+  // Symlinked checkouts can reach the same shared Git directory through
+  // different paths; resolve it once so linked worktrees group consistently.
+  const commonDir = await fs.realpath(commonDirRaw).catch(() => commonDirRaw)
+  return {
+    root,
+    canonicalRoot,
+    gitDir,
+    commonDir,
+    name: path.basename(root) || path.basename(candidate),
+    isBare: bare,
+    worktree: path.resolve(commonDirRaw) !== path.resolve(gitDir),
+    gitDirId: await statIdentity(gitDir)
+  }
+}
+
+async function stableFactsFor(candidate: string, canonicalCandidate: string): Promise<StableRepoFacts> {
+  const cached = STABLE_DISCOVERY.get(canonicalCandidate)
+  if (cached) {
+    if (await stableFactsStillExist(cached)) {
+      repoDiscoveryMetrics.cacheHits += 1
+      return cached
+    }
+    STABLE_DISCOVERY.delete(canonicalCandidate)
+  }
+  const pending = STABLE_DISCOVERY_PENDING.get(canonicalCandidate)
+  if (pending) return pending
+  const epoch = discoveryEpoch
+  const started = discoverStable(candidate)
+    .then((facts) => {
+      // An invalidation that happened while discovery was running wins: do not
+      // repopulate the cache with facts that were just declared stale.
+      if (discoveryEpoch === epoch) STABLE_DISCOVERY.set(canonicalCandidate, facts)
+      return facts
+    })
+    .finally(() => {
+      if (STABLE_DISCOVERY_PENDING.get(canonicalCandidate) === started) {
+        STABLE_DISCOVERY_PENDING.delete(canonicalCandidate)
+      }
+    })
+  STABLE_DISCOVERY_PENDING.set(canonicalCandidate, started)
+  return started
+}
+
+/**
+ * Resolve a repository. Stable directory discovery is cached; branch, HEAD,
+ * status, remotes and the pending operation are read live so external Git
+ * activity is always visible. Concurrent calls for the same checkout share
+ * one throwaway read instead of spawning the same commands in parallel.
+ */
 export async function resolveRepo(inputPath: string): Promise<RepoInfo> {
+  repoDiscoveryMetrics.calls += 1
   const candidate = path.resolve(inputPath)
   let stat
   try {
@@ -75,41 +233,47 @@ export async function resolveRepo(inputPath: string): Promise<RepoInfo> {
   }
   if (!stat.isDirectory()) throw new Error(`Not a directory: ${candidate}`)
 
-  const cwd = candidate
-  const bareResult = await tryRunGit(['rev-parse', '--is-bare-repository'], { cwd })
-  if (!bareResult || bareResult.exitCode !== 0) {
-    throw new Error(`${cwd} is not a Git repository`)
+  const canonicalCandidate = await fs.realpath(candidate).catch(() => candidate)
+  const pending = RESOLVE_PENDING.get(canonicalCandidate)
+  if (pending) return pending
+  const started = resolveRepoFresh(candidate, canonicalCandidate)
+  RESOLVE_PENDING.set(canonicalCandidate, started)
+  try {
+    return await started
+  } finally {
+    if (RESOLVE_PENDING.get(canonicalCandidate) === started) RESOLVE_PENDING.delete(canonicalCandidate)
   }
-  const bare = bareResult.stdout.trim() === 'true'
-  const gitDirResult = await runGit(['rev-parse', '--absolute-git-dir'], { cwd })
-  const gitDir = gitDirResult.stdout.trim()
-  // A bare repository has no worktree: `--show-toplevel`, `status` and every
-  // other worktree-only command would fail with a fatal error. Its own folder
-  // is the repository, and the worktree facts stay empty instead of fabricated.
-  let root = candidate
-  if (!bare) {
-    const top = await runGit(['rev-parse', '--show-toplevel'], { cwd })
-    root = top.stdout.trim() || candidate
+}
+
+async function resolveRepoFresh(candidate: string, canonicalCandidate: string): Promise<RepoInfo> {
+  const facts = await stableFactsFor(candidate, canonicalCandidate)
+  const { root, isBare: bare } = facts
+
+  let currentBranch: string | null
+  let headSha: string | null
+  let detached: boolean
+  let status: RepoStatus | null
+  if (bare) {
+    repoDiscoveryMetrics.spawns += 1
+    const branchRaw = await tryRunGit(['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: root })
+    const rawBranch = branchRaw?.stdout.trim() ?? 'HEAD'
+    detached = rawBranch === 'HEAD'
+    currentBranch = detached ? null : rawBranch || null
+    repoDiscoveryMetrics.spawns += 1
+    const headRaw = await tryRunGit(['rev-parse', 'HEAD'], { cwd: root })
+    headSha = headRaw?.stdout.trim() || null
+    status = null
+  } else {
+    // The branch status already carries HEAD, upstream and ahead/behind, so a
+    // second pair of `rev-parse` calls is unnecessary.
+    repoDiscoveryMetrics.spawns += 1
+    status = await getStatus(root)
+    currentBranch = status.branch
+    headSha = status.headSha
+    detached = status.detached
   }
-  const canonicalRoot = await fs.realpath(root).catch(() => path.resolve(root))
-  const commonRaw = await tryRunGit(['rev-parse', '--git-common-dir'], { cwd })
-  const commonDirRaw = commonRaw?.stdout.trim() ? path.resolve(root, commonRaw.stdout.trim()) : gitDir
-  // Symlinked checkouts can reach the same shared Git directory through
-  // different paths; resolve it once so linked worktrees group consistently.
-  const commonDir = await fs.realpath(commonDirRaw).catch(() => commonDirRaw)
-  const linkedWorktree = path.resolve(commonDirRaw) !== path.resolve(gitDir)
 
-  const branchRaw = await tryRunGit(['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: root })
-  const rawBranch = branchRaw?.stdout.trim() ?? 'HEAD'
-  const detached = rawBranch === 'HEAD'
-  const currentBranch = detached ? null : rawBranch || null
-  const headRaw = await tryRunGit(['rev-parse', 'HEAD'], { cwd: root })
-  const headSha = headRaw?.stdout.trim() || null
-
-  const status = bare
-    ? null
-    : parseStatus((await runGit(['status', '--porcelain=v2', '--branch', '-z'], { cwd: root })).stdout)
-
+  repoDiscoveryMetrics.spawns += 1
   const remotesRaw = await runGit(['remote', '-v'], { cwd: root })
   const remotes = parseRemotes(remotesRaw.stdout).map((remote) => {
     const detected = detectProviderFromUrl(remote.fetchUrl) ?? detectProviderFromUrl(remote.pushUrl)
@@ -124,15 +288,17 @@ export async function resolveRepo(inputPath: string): Promise<RepoInfo> {
     }
   })
 
-  const state = await getOperationState(root)
+  const state = await getOperationState(root, () => {
+    repoDiscoveryMetrics.spawns += 1
+  })
 
   return {
     path: root,
-    canonicalPath: canonicalRoot,
+    canonicalPath: facts.canonicalRoot,
     root,
-    gitDir,
-    commonDir,
-    name: path.basename(root) || path.basename(candidate),
+    gitDir: facts.gitDir,
+    commonDir: facts.commonDir,
+    name: facts.name,
     isBare: bare,
     currentBranch,
     headSha,
@@ -143,42 +309,89 @@ export async function resolveRepo(inputPath: string): Promise<RepoInfo> {
     remotes,
     provider: remotes.find((remote) => remote.provider)?.provider,
     state,
-    worktree: linkedWorktree
+    worktree: facts.worktree
   }
 }
 
-export async function getOperationState(repoPath: string): Promise<RepoInfo['state']> {
-  const paths = [
-    ['MERGE_HEAD', 'merging'],
-    ['rebase-merge', 'rebasing'],
-    ['rebase-apply', 'rebasing'],
-    ['CHERRY_PICK_HEAD', 'cherry-picking'],
-    ['REVERT_HEAD', 'reverting'],
-    ['BISECT_LOG', 'bisecting']
-  ] as const
-  for (const [gitPath, state] of paths) {
-    const result = await tryRunGit(['rev-parse', '--git-path', gitPath], { cwd: repoPath })
-    if (!result) continue
-    const resolved = path.resolve(repoPath, result.stdout.trim())
-    try {
-      await fs.access(resolved)
-      if (gitPath === 'rebase-apply') {
-        try {
-          await fs.access(path.join(resolved, 'applying'))
-          return 'applying'
-        } catch {
-          // rebase
-        }
+const OPERATION_MARKERS = [
+  ['MERGE_HEAD', 'merging'],
+  ['rebase-merge', 'rebasing'],
+  ['rebase-apply', 'rebasing'],
+  ['CHERRY_PICK_HEAD', 'cherry-picking'],
+  ['REVERT_HEAD', 'reverting'],
+  ['BISECT_LOG', 'bisecting']
+] as const
+
+async function operationMarkerExists(target: string): Promise<boolean> {
+  try {
+    await fs.access(target)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Read the pending operation from the real git dir. One `rev-parse` prints
+ * every marker path (`--git-path` may be repeated), so this stays a single
+ * process on every supported Git; an older or unusual Git falls back to one
+ * probe per marker. The result is never cached: an external merge or rebase
+ * must be visible on the next poll.
+ */
+export async function getOperationState(repoPath: string, onSpawn?: () => void): Promise<RepoInfo['state']> {
+  onSpawn?.()
+  const args = ['rev-parse', ...OPERATION_MARKERS.flatMap(([marker]) => ['--git-path', marker])]
+  const combined = await tryRunGit(args, { cwd: repoPath })
+  if (combined && combined.exitCode === 0) {
+    const lines = combined.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+    if (lines.length === OPERATION_MARKERS.length) {
+      for (let index = 0; index < OPERATION_MARKERS.length; index += 1) {
+        const [marker, state] = OPERATION_MARKERS[index]
+        const resolved = path.resolve(repoPath, lines[index])
+        if (!(await operationMarkerExists(resolved))) continue
+        if (marker === 'rebase-apply' && (await operationMarkerExists(path.join(resolved, 'applying')))) return 'applying'
+        return state
       }
-      return state
-    } catch {
-      // not present
+      return 'clean'
     }
+  }
+
+  for (const [marker, state] of OPERATION_MARKERS) {
+    onSpawn?.()
+    const result = await tryRunGit(['rev-parse', '--git-path', marker], { cwd: repoPath })
+    if (!result || result.exitCode !== 0) continue
+    const resolved = path.resolve(repoPath, result.stdout.trim())
+    if (!(await operationMarkerExists(resolved))) continue
+    if (marker === 'rebase-apply' && (await operationMarkerExists(path.join(resolved, 'applying')))) return 'applying'
+    return state
   }
   return 'clean'
 }
 
+const STATUS_PENDING = new Map<string, Promise<RepoStatus>>()
+
+/**
+ * `git status` is read live on every call, but the 5 s poll and a refresh
+ * often ask for the same repository at the same moment. They share that
+ * throwaway read instead of running two identical processes.
+ */
 export async function getStatus(repoPath: string): Promise<RepoStatus> {
+  const key = path.resolve(repoPath)
+  const pending = STATUS_PENDING.get(key)
+  if (pending) return pending
+  const started = runStatus(repoPath)
+  STATUS_PENDING.set(key, started)
+  try {
+    return await started
+  } finally {
+    if (STATUS_PENDING.get(key) === started) STATUS_PENDING.delete(key)
+  }
+}
+
+async function runStatus(repoPath: string): Promise<RepoStatus> {
   // Run the status command directly and only probe the bare flag when it fails:
   // that keeps the 5 s poller at one process on a normal checkout while still
   // turning the bare-repository fatal into an explanation.
@@ -1118,6 +1331,7 @@ export async function renameBranch(repoPath: string, from: string, to: string): 
   validateRefName(repoPath, from)
   validateRefName(repoPath, to)
   await runGit(['branch', '-m', from, to], { cwd: repoPath })
+  invalidateRepoDiscovery(repoPath)
 }
 
 export async function deleteBranch(repoPath: string, name: string, force = false): Promise<void> {
@@ -1335,6 +1549,8 @@ export async function addWorktree(input: WorktreeAddInput): Promise<{ path: stri
     args.push(target, input.branch)
   }
   await runGit(args, { cwd: repo.root })
+  // The new checkout has its own git dir and worktree facts.
+  invalidateRepoDiscovery(target)
   return { path: target }
 }
 
@@ -1346,6 +1562,7 @@ export async function removeWorktree(repoPath: string, worktreePath: string, for
   if (force) args.push('--force')
   args.push(target)
   await runGit(args, { cwd: repo.path })
+  invalidateRepoDiscovery(target, repo.path)
 }
 
 export async function pruneWorktrees(repoPath: string): Promise<void> {

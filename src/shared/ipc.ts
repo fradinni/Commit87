@@ -54,6 +54,7 @@ import type {
   TagInfo,
   TaskEvent,
   TaskHandle,
+  TaskSnapshot,
   TriggerActionInput,
   UpdateStatus,
   WorktreeAddInput,
@@ -162,6 +163,8 @@ export interface IpcMethods {
   'git.remoteRemove': { request: { path: string; name: string }; response: void }
   'git.remoteSetUrl': { request: { path: string; name: string; url: string; push?: boolean }; response: void }
 
+  /** Running and recently finished tasks, for a renderer that reconnected. */
+  'tasks.snapshot': { request: void; response: TaskSnapshot }
   'git.fetch': { request: FetchInput; response: TaskHandle }
   'git.pull': { request: PullInput; response: TaskHandle }
   'git.push': { request: PushInput; response: TaskHandle }

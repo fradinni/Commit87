@@ -8,7 +8,9 @@ import { formatRelativeTime } from '../lib/format'
 import { Badge, Button, EmptyState, Field, Modal, Select, TextArea, TextInput } from '../components/ui'
 
 export function PullsView() {
-  const repo = useStore((state) => state.currentRepo)
+  // Stable identifiers only: a status poll replaces `currentRepo` and
+  // `detection` objects, but must not reload the forge list.
+  const repoPath = useStore((state) => state.currentRepo?.path ?? null)
   const detection = useStore((state) => state.detection)
   const branches = useStore((state) => state.branches)
   const status = useStore((state) => state.status)
@@ -41,7 +43,6 @@ export function PullsView() {
   // Accumulated list for "Load more"; the store mirror may be reset by an
   // unrelated refresh, so paging reads its own copy.
   const loadedPulls = useRef<PullRequest[]>([])
-  const repoPath = repo?.path
   // Only the newest request may write state; a slower response for a previous
   // filter or page must not overwrite newer results.
   const requestGeneration = useRef(0)
@@ -100,7 +101,7 @@ export function PullsView() {
     setTarget(localBranches.find((item) => item.shortName === 'main')?.shortName ?? localBranches.find((item) => item.shortName === 'master')?.shortName ?? '')
   }, [createOpen, localBranches, status?.branch])
 
-  if (!repo) return null
+  if (!repoPath) return null
 
   if (!account || !detection.owner || !detection.repo) {
     return (
@@ -145,13 +146,13 @@ export function PullsView() {
   const checkout = async (pull: PullRequest): Promise<void> => {
     try {
       const result = await call('provider.checkoutPullRequest', {
-        path: repo.path,
+        path: repoPath,
         accountId: account.id,
         owner: detection.owner!,
         repo: detection.repo!,
         number: pull.number
       })
-      await useStore.getState().refreshAll(repo.path)
+      await useStore.getState().refreshAll(repoPath)
       notifications(`Checked out ${result.branch}`, 'success')
     } catch (error) {
       notifyError(error)

@@ -10,6 +10,11 @@ interface Call {
 const calls: Call[] = []
 let failOn: { channel: string; path?: string } | null = null
 let delay: { channel: string; path: string; ms: number } | null = null
+/**
+ * Per-call delays, consumed in order, so two same-channel calls can be raced.
+ * An optional `branch` makes that one `git.status` report a distinct result.
+ */
+const queuedDelays: { channel: string; path: string; ms: number; branch?: string }[] = []
 const commonDirs: Record<string, string> = {}
 const barePaths = new Set<string>()
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
@@ -73,6 +78,9 @@ const config: AppConfig = {
   autoUpdateCheck: true
 }
 
+/** Branch reported by the `git.status` call that just resolved, if scheduled. */
+let statusBranch: string | null = null
+
 const handlers: Record<string, (payload: unknown) => unknown> = {
   'app.info': () => ({
     name: 'Commit87',
@@ -93,7 +101,10 @@ const handlers: Record<string, (payload: unknown) => unknown> = {
   'repo.info': (payload) => repoInfo((payload as { path: string }).path),
   'repo.getDefaults': () => ({ integrationByProvider: {} }),
   'provider.detect': () => ({}),
-  'git.status': (payload) => statusFor((payload as { path: string }).path),
+  'git.status': (payload) => {
+    const status = statusFor((payload as { path: string }).path)
+    return statusBranch ? { ...status, branch: statusBranch } : status
+  },
   'git.branches': () => [{ name: 'refs/heads/main', shortName: 'main', type: 'branch', sha: 'abc123' }],
   'git.tags': () => [],
   'git.worktrees': () => [],
@@ -111,22 +122,45 @@ const bridge = {
   invoke: async (channel: string, payload: unknown) => {
     calls.push({ channel, payload })
     const target = payloadPath(payload)
+    const queued = queuedDelays.findIndex((entry) => entry.channel === channel && entry.path === target)
+    const scheduled = queued >= 0 ? queuedDelays.splice(queued, 1)[0] : null
+    if (scheduled) await sleep(scheduled.ms)
+    statusBranch = scheduled?.branch ?? null
     if (delay && delay.channel === channel && delay.path === target) await sleep(delay.ms)
     if (failOn && failOn.channel === channel && (!failOn.path || failOn.path === target)) {
       throw new Error(`${channel} failed`)
     }
     const handler = handlers[channel]
     if (!handler) throw new Error(`unexpected channel ${channel}`)
-    return handler(payload)
+    const result = handler(payload)
+    statusBranch = null
+    return result
   },
   onTaskEvent: () => () => undefined,
   onWindowState: () => () => undefined,
   onMenu: () => () => undefined
 } as unknown as Commit87Bridge
 
+/** Minimal in-memory stand-in for the renderer's sessionStorage. */
+function memoryStorage(): { getItem(key: string): string | null; setItem(key: string, value: string): void; clear(): void } {
+  const values = new Map<string, string>()
+  return {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => {
+      values.set(key, value)
+    },
+    clear: () => values.clear()
+  }
+}
+
 // The store resolves the preload bridge from the global scope at call time.
-const globalScope = globalThis as { commit87?: Commit87Bridge }
+const globalScope = globalThis as {
+  commit87?: Commit87Bridge
+  sessionStorage?: ReturnType<typeof memoryStorage>
+}
 globalScope.commit87 = bridge
+const session = memoryStorage()
+globalScope.sessionStorage = session
 
 const { useStore, conflictDraftKey, operationNotice, discardNotice, selectedIdentityId } = await import(
   '../src/renderer/src/store'
@@ -141,6 +175,9 @@ function reset(): void {
   calls.length = 0
   failOn = null
   delay = null
+  queuedDelays.length = 0
+  statusBranch = null
+  session.clear()
   for (const key of Object.keys(commonDirs)) delete commonDirs[key]
   barePaths.clear()
   useStore.getState().closeAllTabs()
@@ -490,6 +527,30 @@ describe('tab-aware task events', () => {
     expect(useStore.getState().task).toBeNull()
   })
 
+  it('drops output for a closed owner instead of giving it to the active tab', async () => {
+    await useStore.getState().openRepo(A)
+    await useStore.getState().openRepo(B)
+    useStore.getState().handleTaskEvent({ taskId: 'closed-owner', kind: 'console', phase: 'start', repoPath: A })
+    useStore.getState().handleTaskEvent({
+      taskId: 'closed-owner',
+      kind: 'console',
+      phase: 'output',
+      repoPath: A,
+      text: 'before close'
+    })
+    useStore.getState().closeTab(A)
+    useStore.getState().handleTaskEvent({
+      taskId: 'closed-owner',
+      kind: 'console',
+      phase: 'output',
+      repoPath: A,
+      text: 'after close'
+    })
+    expect(useStore.getState().tabs.map((tab) => tab.id)).toEqual([B])
+    expect(useStore.getState().consoleLines).toHaveLength(0)
+    expect(useStore.getState().tabs[0].consoleLines).toHaveLength(0)
+  })
+
   it('styles console errors as stderr on the originating tab', async () => {
     await useStore.getState().openRepo(A)
     useStore.getState().handleTaskEvent({ taskId: 't4', kind: 'console', phase: 'start', repoPath: A })
@@ -502,6 +563,143 @@ describe('tab-aware task events', () => {
     })
     const line = useStore.getState().tabs[0].consoleLines.at(-1)
     expect(line?.stream).toBe('stderr')
+  })
+})
+
+describe('async refresh ownership', () => {
+  it('applies the newest overlapping refresh when the older one resolves last', async () => {
+    await useStore.getState().openRepo(A)
+    queuedDelays.push({ channel: 'git.status', path: A, ms: 40, branch: 'older' })
+    queuedDelays.push({ channel: 'git.status', path: A, ms: 0, branch: 'newer' })
+    const slow = useStore.getState().refreshRepo(A)
+    await sleep(5)
+    const fast = useStore.getState().refreshRepo(A)
+    await Promise.all([slow, fast])
+    expect(useStore.getState().status?.branch).toBe('newer')
+    expect(useStore.getState().tabs.find((tab) => tab.id === A)?.status?.branch).toBe('newer')
+  })
+
+  it('drops a refresh that started before its tab was closed and reopened', async () => {
+    await useStore.getState().openRepo(A)
+    queuedDelays.push({ channel: 'git.status', path: A, ms: 50, branch: 'stale' })
+    const stale = useStore.getState().refreshRepo(A)
+    await sleep(5)
+    useStore.getState().closeTab(A)
+    expect(useStore.getState().tabs).toHaveLength(0)
+    await useStore.getState().openRepo(A)
+    await stale
+    expect(useStore.getState().currentRepo?.path).toBe(A)
+    expect(useStore.getState().status?.branch).toBe('main-alpha')
+  })
+
+  it('does not let an in-flight refresh clear a newer graph filter', async () => {
+    await useStore.getState().openRepo(A)
+    queuedDelays.push({ channel: 'git.branches', path: A, ms: 40 })
+    const refresh = useStore.getState().refreshTab(A)
+    await sleep(5)
+    useStore.getState().setGraphQuery('newer draft')
+    await refresh
+    expect(useStore.getState().graphQuery).toBe('newer draft')
+    expect(useStore.getState().graphBranch).toBe('')
+  })
+})
+
+describe('task snapshot reconciliation', () => {
+  it('adopts a task that was already running when the renderer reloaded', async () => {
+    await useStore.getState().openRepo(A)
+    useStore.getState().reconcileTasks({
+      running: [
+        {
+          taskId: 'snap-running',
+          kind: 'fetch',
+          title: 'Fetching origin',
+          repoPath: A,
+          phase: 'running',
+          startedAt: Date.now(),
+          output: ''
+        }
+      ],
+      recent: []
+    })
+    expect(useStore.getState().task?.taskId).toBe('snap-running')
+    expect(useStore.getState().tasks['snap-running']?.repoPath).toBe(A)
+  })
+
+  it('reports a task that finished during reconnection exactly once', async () => {
+    await useStore.getState().openRepo(A)
+    calls.length = 0
+    useStore.getState().reconcileTasks({
+      running: [],
+      recent: [
+        {
+          taskId: 'snap-finished',
+          kind: 'fetch',
+          title: 'Fetching origin',
+          repoPath: A,
+          phase: 'end',
+          startedAt: Date.now() - 20,
+          endedAt: Date.now(),
+          output: ''
+        }
+      ]
+    })
+    await sleep(0)
+    const reconnectedToasts = () =>
+      useStore.getState().toasts.filter((toast) => toast.message.includes('reconnecting'))
+    expect(reconnectedToasts()).toHaveLength(1)
+    expect(calls.map((entry) => entry.channel)).toContain('git.status')
+
+    // The live end event that raced the snapshot must not report it again.
+    useStore.getState().handleTaskEvent({ taskId: 'snap-finished', kind: 'fetch', phase: 'end', repoPath: A })
+    expect(reconnectedToasts()).toHaveLength(1)
+    expect(useStore.getState().tasks['snap-finished']).toBeUndefined()
+  })
+
+  it('replays a missed console tail only when no live event was seen', async () => {
+    await useStore.getState().openRepo(A)
+    useStore.getState().reconcileTasks({
+      running: [
+        {
+          taskId: 'snap-console',
+          kind: 'console',
+          title: 'git status',
+          repoPath: A,
+          phase: 'running',
+          startedAt: Date.now(),
+          output: 'on branch main\nnothing to commit\n'
+        }
+      ],
+      recent: []
+    })
+    const lines = useStore.getState().tabs.find((tab) => tab.id === A)?.consoleLines ?? []
+    expect(lines.map((line) => line.text)).toEqual(['on branch main', 'nothing to commit'])
+  })
+
+  it('keeps a completion the previous renderer already announced silent', async () => {
+    await useStore.getState().openRepo(A)
+    session.setItem('commit87.announced-tasks', JSON.stringify(['snap-history']))
+    useStore.getState().reconcileTasks({
+      running: [],
+      recent: [
+        {
+          taskId: 'snap-history',
+          kind: 'clone',
+          title: 'Cloning old',
+          phase: 'end',
+          startedAt: Date.now() - 1000,
+          endedAt: Date.now() - 500,
+          output: ''
+        }
+      ]
+    })
+    expect(useStore.getState().toasts.some((toast) => toast.message.includes('Clone finished'))).toBe(false)
+  })
+
+  it('persists every announced completion for the next renderer', async () => {
+    await useStore.getState().openRepo(A)
+    useStore.getState().handleTaskEvent({ taskId: 'live-finish', kind: 'push', phase: 'end', repoPath: A })
+    const persisted = JSON.parse(session.getItem('commit87.announced-tasks') ?? '[]') as string[]
+    expect(persisted).toContain('live-finish')
   })
 })
 

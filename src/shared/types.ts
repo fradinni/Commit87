@@ -677,6 +677,29 @@ export interface TaskHandle {
   taskId: string
 }
 
+/**
+ * One task as main remembers it for renderer reconnection. `output` is a
+ * bounded redacted tail, never the whole stream.
+ */
+export interface TaskSnapshotEntry {
+  taskId: string
+  kind: TaskStart['kind']
+  title: string
+  repoPath?: string
+  phase: 'running' | 'end' | 'error'
+  startedAt: number
+  endedAt?: number
+  exitCode?: number
+  error?: string
+  output: string
+}
+
+/** Running tasks plus a small bounded inventory of recently finished ones. */
+export interface TaskSnapshot {
+  running: TaskSnapshotEntry[]
+  recent: TaskSnapshotEntry[]
+}
+
 export interface PushInput {
   repoPath: string
   remote?: string
