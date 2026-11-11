@@ -6,6 +6,8 @@ All notable changes to Commit87 are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0-beta.10] — 2026-11-11
+
 ### Added
 
 - macOS installs that are not signed with an Apple Developer ID now get real in-place

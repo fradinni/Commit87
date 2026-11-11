@@ -34,6 +34,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.2.0-beta.10" date="2026-11-11">
+      <description>
+        <p>See the changelog for details.</p>
+      </description>
+    </release>
     <release version="0.2.0-beta.9" date="2026-11-11">
       <description>
         <p>See the changelog for details.</p>
