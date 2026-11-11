@@ -665,12 +665,17 @@ packaged AppImages, NSIS installs and macOS app bundles qualify; Flatpak, Snap, 
 and zip Windows builds and distro packages are rejected with a message pointing at their
 real update path. An NSIS install is recognised by its uninstaller next to the executable,
 so an extracted zip build is not offered an installer that would create a second copy.
-macOS builds must also carry a Developer ID Application signature, probed with `codesign`
-by `main/mac-signing.ts`: Squirrel.Mac validates the downloaded bundle against the running
-app's designated requirement, and an ad-hoc signature pins it to the current cdhash, so
-every in-place update would be rejected. `main/updates.ts` owns the state machine (`idle`, `checking`, `up-to-date`,
+The macOS format depends on the signature, probed with `codesign` by `main/mac-signing.ts`:
+Squirrel.Mac validates the downloaded bundle against the running app's designated
+requirement, and an ad-hoc signature pins it to the current cdhash, so Squirrel cannot
+update those builds. A Developer ID bundle therefore uses the `dmg` format and
+electron-updater; an ad-hoc bundle uses the `maczip` format and `main/mac-script-updater.ts`,
+which fetches the newest release from the GitHub API, verifies the downloaded zip's
+SHA-256 against `SHA256SUMS.txt` and its code signature, and swaps the bundle in place from
+a detached helper once the app quits. `main/updates.ts` owns the state machine (`idle`, `checking`, `up-to-date`,
 `available`, `downloading`, `ready`, `error`) and talks to an `UpdateAdapter`, which
-`main/update-adapter.ts` implements over `electron-updater`. The adapter is bundled into
+`main/update-adapter.ts` implements over `electron-updater` (and
+`main/mac-script-updater.ts` for the ad-hoc macOS path). The adapters are bundled into
 the main output, so the packaged ASAR still has no `node_modules` tree.
 
 The replacement target is bound to the running installation before any update work:
@@ -707,7 +712,8 @@ download so it can be cancelled, and installing always requires the explicit
 The renderer only sees sanitized `UpdateStatus` snapshots through `update.*` IPC calls and
 the `commit87:update-status` push channel. It cannot choose a feed URL, version or file:
 the feed comes from the packaged `app-update.yml` produced by electron-builder's `publish`
-configuration. Progress values are clamped, error messages are collapsed to one line and
+configuration, except for ad-hoc macOS builds, whose updater resolves the newest release
+from the GitHub releases API. Progress values are clamped, error messages are collapsed to one line and
 release notes are truncated before they cross the boundary. `update.install` is only
 accepted in the `ready` phase.
 

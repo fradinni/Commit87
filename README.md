@@ -141,7 +141,9 @@ cherry-pick and revert because Git needs an explicit parent.
 ### Updates
 
 - In-place updates for the AppImage, the Windows NSIS installer and the macOS app bundle
-  (installed from the release zip)
+  (installed from the release zip). macOS builds that are ad-hoc signed instead of
+  Developer ID signed get the same flow through a release-zip updater that verifies
+  the download's checksum and code signature before swapping the bundle
 - Stable and beta channels; prerelease tags publish `beta.yml` and never reach stable
   installs
 - Automatic check after launch with background download, on by default, or a manual check
@@ -218,12 +220,28 @@ and CA certificates because their sandbox cannot use the host binaries.
 
 ### Windows and macOS
 
-Download the installer (`.exe` for x64/arm64, `.dmg` for Intel or Apple Silicon) from the
-release page. Portable builds need no installation: the Windows portable `.exe` and the
-macOS `.zip` run in place. When the release was built without the signing secrets,
-`SIGNING-STATUS.txt` says so: the Windows installer is unsigned and shows a SmartScreen
-warning, and the macOS app is ad-hoc signed only, so Gatekeeper blocks the first launch until
-you allow it in System Settings > Privacy & Security > Open Anyway.
+**macOS — recommended:** download `install-macos.sh` from the release page and run it. The
+script detects the machine's architecture, downloads the newest release with `curl` (which
+never attaches the quarantine attribute Gatekeeper enforces), verifies the archive against
+the release `SHA256SUMS.txt`, checks its code signature, installs to `~/Applications` and
+can update an existing copy in place — with no Apple Developer ID, notarization or
+Gatekeeper dance required:
+
+```bash
+bash install-macos.sh                 # install or update
+bash install-macos.sh --check         # what is the newest available version?
+bash install-macos.sh --uninstall     # remove the copy in ~/Applications
+```
+
+After the first install, updates are also offered inside **Settings → Updates**, using the
+same verified release-zip swap. The `.dmg` (mount and drag) and `.zip` (run in place)
+artifacts remain available; a macOS build that was produced without the signing secrets is
+ad-hoc signed only, `SIGNING-STATUS.txt` says so, and Gatekeeper then blocks its first
+launch until you allow it in System Settings > Privacy & Security — the installer script
+above is the way to avoid that step.
+
+Windows installers are unsigned unless the release configured a certificate and then show a
+SmartScreen warning; `SIGNING-STATUS.txt` records what the build actually did.
 
 > macOS packages are built on `macos-15` (Apple Silicon). Both architectures are
 > produced there: arm64 natively and Intel x64 cross-packaged, so no Intel runner is

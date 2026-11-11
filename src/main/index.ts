@@ -17,6 +17,7 @@ import { installMenu } from './menu'
 import { registerAppProtocol, registerAppScheme } from './protocol'
 import { UpdateService, type UpdateAdapter } from './updates'
 import { createElectronUpdater, createInertUpdater } from './update-adapter'
+import { createMacScriptUpdater } from './mac-script-updater'
 import { createAppImageProbe, verifyAppImage } from './appimage-binding'
 import { hasDeveloperIdSignature } from './mac-signing'
 import { safeLog, tolerateBrokenStdio } from './logging'
@@ -245,15 +246,29 @@ app.whenReady().then(() => {
       process.platform === 'darwin' && app.isPackaged
         ? await hasDeveloperIdSignature(path.resolve(path.dirname(process.execPath), '../..'))
         : false
+    // Ad-hoc macOS builds swap the verified release zip into place instead
+    // (scripts/install-macos.sh does the same flow from the command line).
+    const macScriptUpdater =
+      process.platform === 'darwin' && app.isPackaged && !macDeveloperId
+        ? createMacScriptUpdater({
+            owner: 'fradinni',
+            repo: 'Commit87',
+            arch: process.arch === 'arm64' ? 'arm64' : 'x64',
+            currentVersion: APP_VERSION,
+            channel: () => store.getConfig().updateChannel,
+            bundlePath: path.resolve(path.dirname(process.execPath), '../..'),
+            quit: () => app.quit()
+          })
+        : null
     // `APPIMAGE`/`APPDIR` are untrusted hints: bind the replacement target to
     // the kernel mount that actually contains this executable, and fail closed
     // when no such mount exists.
     const appImage = verifyAppImage(createAppImageProbe())
     const updates = new UpdateService({
-      adapter: updaterAdapter ?? createInertUpdater(),
+      adapter: macScriptUpdater ?? updaterAdapter ?? createInertUpdater(),
       environment: {
         platform: process.platform,
-        isPackaged: updaterAdapter ? app.isPackaged : false,
+        isPackaged: macScriptUpdater ? true : updaterAdapter ? app.isPackaged : false,
         appImage: appImage.ok ? appImage.target : null,
         // Only explain AppImage verification when the environment actually
         // claimed to be one; a .deb/.rpm/tar.gz run has no hint and must keep

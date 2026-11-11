@@ -310,14 +310,12 @@ describe('update support detection', () => {
     })
   })
 
-  it('rejects ad-hoc macOS bundles that macOS cannot validate an update against', () => {
-    // Squirrel.Mac checks the new bundle against the running app's designated
-    // requirement. An ad-hoc signature pins the cdhash, so the update always
-    // fails with "code is not compliant with specified code requirements".
+  it('supports ad-hoc macOS builds through the release-zip updater', () => {
+    // Squirrel.Mac cannot validate an ad-hoc build's update (the signature is
+    // pinned to the current cdhash), so ad-hoc macOS bundles are updated by
+    // downloading the release zip and swapping it in place instead.
     const adHoc = detectUpdateSupport({ platform: 'darwin', isPackaged: true, macDeveloperId: false })
-    expect(adHoc.supported).toBe(false)
-    expect(adHoc.format).toBeNull()
-    expect(adHoc.reason).toContain('Developer ID')
+    expect(adHoc).toEqual({ supported: true, format: 'maczip', reason: null })
   })
 
   it('recognises a Developer ID signature from codesign output', () => {

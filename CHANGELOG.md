@@ -4,6 +4,19 @@ All notable changes to Commit87 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- macOS installs that are not signed with an Apple Developer ID now get real in-place
+  updates. `scripts/install-macos.sh` installs a release from the command line without the
+  Gatekeeper step (the archive is downloaded with `curl`, verified against the release
+  `SHA256SUMS.txt` and its code signature, then installed to `~/Applications`), and the
+  in-app updater offers the same verified release-zip swap in Settings → Updates, so ad-hoc
+  builds no longer need the releases page. Developer ID-signed builds keep the
+  Squirrel.Mac updater and the `latest-mac.yml`/`beta-mac.yml` feed.
+- Every macOS release now attaches `install-macos.sh`.
+
 ## [0.2.0-beta.9] — 2026-11-11
 
 ### Fixed

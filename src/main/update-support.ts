@@ -1,6 +1,6 @@
 import type { VerifiedAppImage } from './appimage-binding'
 
-export type UpdateFormat = 'appimage' | 'nsis' | 'dmg'
+export type UpdateFormat = 'appimage' | 'nsis' | 'dmg' | 'maczip'
 
 export interface UpdateEnvironment {
   platform: NodeJS.Platform
@@ -27,12 +27,12 @@ export interface UpdateEnvironment {
   windowsUninstaller?: boolean
   /**
    * True when the running macOS bundle is signed with a Developer ID
-   * Application certificate. Squirrel.Mac validates the downloaded bundle
-   * against the designated requirement of the running app. An ad-hoc
-   * signature pins that requirement to the current cdhash, so every update is
-   * rejected with "code is not compliant with specified code requirements".
-   * Absent means "not capable", so a caller that cannot probe the bundle never
-   * offers an update that macOS is guaranteed to reject.
+   * Application certificate. A Developer ID builds updates with Squirrel.Mac;
+   * ad-hoc builds use the release-zip swap path instead (mac-script-updater),
+   * because Squirrel.Mac validates the downloaded bundle against the running
+   * app's designated requirement and an ad-hoc signature pins that requirement
+   * to the current cdhash, so every update would be rejected with "code is not
+   * compliant with specified code requirements".
    */
   macDeveloperId?: boolean
 }
@@ -84,9 +84,10 @@ export function detectUpdateSupport(env: UpdateEnvironment): UpdateSupport {
   }
   if (env.platform === 'darwin') {
     if (!env.macDeveloperId) {
-      return unsupported(
-        'This build is not signed with an Apple Developer ID certificate, so macOS cannot validate an in-place update. Download the next release from the releases page instead.'
-      )
+      // Ad-hoc builds cannot be updated by Squirrel.Mac, so the release zip is
+      // downloaded, checksum- and signature-verified, and swapped in place by
+      // the mac-script-updater adapter.
+      return { supported: true, format: 'maczip', reason: null }
     }
     return { supported: true, format: 'dmg', reason: null }
   }
