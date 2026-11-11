@@ -174,6 +174,9 @@ interface HelperFixture {
   stagedRoot: string
   incoming: string
   backup: string
+  scriptPath: string
+  logPath: string
+  writeScript: (appPid: number) => Promise<void>
   run: (appPid: number, scenario?: string) => Promise<number>
 }
 
@@ -208,22 +211,28 @@ exec /bin/mv "$@"`
   await Promise.all(Object.entries(commands).map(([name, body]) =>
     writeFile(join(bin, name), `#!/bin/bash\nset -eu\n${body}\n`, { mode: 0o700 })
   ))
+  const logPath = join(root, 'swap.log')
+  // The production adapter writes the helper inside the staging directory, so
+  // the helper deletes its own script during cleanup. Mirror that layout.
+  const scriptPath = join(stagedRoot, 'swap.sh')
+  const writeScript = async (appPid: number): Promise<void> => {
+    await writeFile(scriptPath, buildSwapHelperScript({
+      appPid,
+      targetBundle: bundlePath,
+      stagedApp: incoming,
+      stagedRoot,
+      logPath
+    }))
+  }
   return {
     stagedRoot,
     incoming,
     backup,
+    scriptPath,
+    logPath,
+    writeScript,
     async run(appPid, scenario = 'success') {
-      const logPath = join(root, 'swap.log')
-      // The production adapter writes the helper inside the staging directory,
-      // so the helper deletes its own script during cleanup. Mirror that layout.
-      const scriptPath = join(stagedRoot, 'swap.sh')
-      await writeFile(scriptPath, buildSwapHelperScript({
-        appPid,
-        targetBundle: bundlePath,
-        stagedApp: incoming,
-        stagedRoot,
-        logPath
-      }))
+      await writeScript(appPid)
       try {
         await execFileAsync('/bin/bash', [scriptPath, bundlePath, incoming, stagedRoot, logPath], {
           env: {
@@ -342,6 +351,33 @@ describe.skipIf(process.platform === 'win32')('swap helper script executed in an
     } finally {
       parent.kill()
       await exited
+    }
+  })
+
+  it('removes the staged workspace when terminated before the swap starts', async () => {
+    const helper = await helperFixture()
+    const parent = execFile('/bin/sleep', ['30'])
+    await once(parent, 'spawn')
+    if (!parent.pid) throw new Error('Fixture parent did not get a PID')
+    try {
+      await helper.writeScript(parent.pid)
+      const child = execFile(
+        '/bin/bash',
+        [helper.scriptPath, bundlePath, helper.incoming, helper.stagedRoot, helper.logPath],
+        { env: { ...process.env, PATH: '/usr/bin:/bin' } }
+      )
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      child.kill('SIGTERM')
+      const [code] = await once(child, 'exit')
+
+      expect(code).toBe(1)
+      await expectOriginalBundle()
+      await expectAbsent(helper.stagedRoot)
+      expect(await readFile(helper.logPath, 'utf8')).toContain('interrupted during installation')
+      await expectAbsent(join(root, 'open-args'))
+    } finally {
+      parent.kill()
+      await once(parent, 'exit')
     }
   })
 })

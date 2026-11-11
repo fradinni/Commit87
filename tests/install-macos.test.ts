@@ -476,7 +476,12 @@ describe.skipIf(process.platform !== 'darwin')('macOS installer shell regression
   })
 
   it('filters the channel with the real resolver', () => {
-    const releases = [releaseInfo('0.3.0-beta.2'), releaseInfo('0.2.5')]
+    const releases = [
+      releaseInfo('0.3.0-beta.2'),
+      releaseInfo('0.2.5'),
+      // A beta tag mis-flagged by the API must still stay off the stable channel.
+      releaseInfo('0.4.0-beta.1', { prerelease: false }),
+    ]
     const stable = createFixture('0.1.0', '0.2.0', { realPython: true, releases })
     const beta = createFixture('0.1.0', '0.2.0', { realPython: true, releases })
 
@@ -486,7 +491,7 @@ describe.skipIf(process.platform !== 'darwin')('macOS installer shell regression
     expect(stableResult.status, stableResult.output).toBe(0)
     expect(stableResult.output).toContain('newest 0.2.5')
     expect(betaResult.status, betaResult.output).toBe(0)
-    expect(betaResult.output).toContain('newest 0.3.0-beta.2')
+    expect(betaResult.output).toContain('newest 0.4.0-beta.1')
   })
 
   it('ignores drafts and releases without a build for the running architecture', () => {
@@ -504,10 +509,13 @@ describe.skipIf(process.platform !== 'darwin')('macOS installer shell regression
   it('rejects a missing value and documents every option in --help', () => {
     const fixture = createFixture()
     const missing = fixture.run(['--version'])
+    const badChannel = fixture.run(['--channel', 'nightly'])
     const help = fixture.run(['--help'])
 
-    expect(missing.status, missing.output).toBe(1)
+    expect(missing.status, missing.output).toBe(2)
     expect(missing.output).toContain('--version requires a value')
+    expect(badChannel.status, badChannel.output).toBe(2)
+    expect(badChannel.output).toContain("invalid channel 'nightly'")
     expect(help.status, help.output).toBe(0)
     expect(help.output).toContain('--system')
     expect(help.output).toContain('--keep-work')

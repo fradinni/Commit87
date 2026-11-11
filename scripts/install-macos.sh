@@ -59,6 +59,7 @@ C_BOLD=${C_BOLD:-} C_GREEN=${C_GREEN:-} C_YELLOW=${C_YELLOW:-} C_RED=${C_RED:-} 
 say() { printf '%s\n' "${C_GREEN}==>${C_RESET} $*"; }
 warn() { printf '%s\n' "${C_YELLOW}warning:${C_RESET} $*" >&2; }
 die() { printf '%s\n' "${C_RED}error:${C_RESET} $*" >&2; exit 1; }
+usage_error() { printf '%s\n' "${C_RED}error:${C_RESET} $*" >&2; exit 2; }
 usage() { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
 
 # ---------------------------------------------------------------------------
@@ -66,7 +67,7 @@ usage() { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
 # ---------------------------------------------------------------------------
 
 need_value() {
-  (($# >= 2)) || die "$1 requires a value"
+  (($# >= 2)) || usage_error "$1 requires a value"
 }
 
 MODE=install
@@ -87,14 +88,14 @@ while (($#)); do
     --keep-work) KEEP_WORK=true ;;
     --help | -h) usage ;;
     install | check | uninstall) MODE="$1" ;;
-    *) die "unknown argument: $1" ;;
+    *) usage_error "unknown argument: $1" ;;
   esac
   shift
 done
 
 case "$CHANNEL" in
   stable | beta | latest) ;;
-  *) die "invalid channel '$CHANNEL' (expected stable, beta or latest)" ;;
+  *) usage_error "invalid channel '$CHANNEL' (expected stable, beta or latest)" ;;
 esac
 
 case "$(uname -m)" in
@@ -104,7 +105,7 @@ case "$(uname -m)" in
 esac
 
 if [[ -n "$PINNED_TAG" ]]; then
-  [[ "$PINNED_TAG" =~ $VERSION_REGEX ]] || die "invalid version '$PINNED_TAG' (expected e.g. v0.2.0 or v0.2.0-beta.9)"
+  [[ "$PINNED_TAG" =~ $VERSION_REGEX ]] || usage_error "invalid version '$PINNED_TAG' (expected e.g. v0.2.0 or v0.2.0-beta.9)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -141,11 +142,9 @@ resolve_latest() {
   local out json_file
   # The release list (bodies, assets) can reach hundreds of KB, so the JSON is
   # passed by file name, not argv: macOS ARG_MAX would otherwise break this as
-  # the release history grows.
-  json_file=$(mktemp "${TMPDIR:-/tmp}/commit87-releases.XXXXXX")
-  # An interrupt while python runs must not leave the feed copy in TMPDIR.
-  trap 'rm -f "$json_file"; exit 130' INT
-  trap 'rm -f "$json_file"; exit 143' TERM HUP
+  # the release history grows. The caller creates and removes the file so an
+  # interrupt can clean it even while the command substitution runs.
+  json_file="$FEED_FILE"
   printf '%s' "$json" > "$json_file"
   out=$(CHECK_CHANNEL="$filter" CHECK_ARCH="$ARCH" python3 - "$json_file" <<'PY'
 import json, os, re, sys
@@ -177,10 +176,12 @@ best = None
 for release in data:
     if release.get("draft", False):
         continue
-    if channel == "stable" and release.get("prerelease", False):
-        continue
     key = version_key(release.get("tag_name", ""))
     if key is None:
+        continue
+    # The tag shape, not the API's prerelease flag, decides the channel so both
+    # updaters agree on what a stable release is.
+    if channel == "stable" and key[3] == 0:
         continue
     for asset in release.get("assets", []) or []:
         if pattern.match(asset.get("name", "")):
@@ -203,7 +204,6 @@ PY
     die "failed to resolve the newest release"
   }
   rm -f "$json_file"
-  trap - INT TERM HUP
 
   printf '%s\n' "$out"
 }
@@ -283,7 +283,16 @@ if [[ "$MODE" == uninstall ]]; then
   exit 0
 fi
 
+# The feed copy is created in the main shell so its cleanup traps stay active
+# even while resolve_latest runs inside a command substitution.
+FEED_FILE=$(mktemp "${TMPDIR:-/tmp}/commit87-releases.XXXXXX")
+trap 'rm -f "${FEED_FILE:-}"' EXIT
+trap 'rm -f "${FEED_FILE:-}"; exit 130' INT
+trap 'rm -f "${FEED_FILE:-}"; exit 143' TERM HUP
 RELEASE_INFO=$(resolve_latest)
+rm -f "$FEED_FILE"
+FEED_FILE=
+trap - INT TERM HUP
 LATEST_VERSION=$(printf '%s\n' "$RELEASE_INFO" | sed -n '1p')
 ZIP_NAME=$(printf '%s\n' "$RELEASE_INFO" | sed -n '2p')
 PUBLISHED_AT=$(printf '%s\n' "$RELEASE_INFO" | sed -n '3p')

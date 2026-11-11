@@ -102,9 +102,16 @@ restore_on_signal() {
   log "interrupted during installation"
   if [ "$INSTALL_PENDING" = 1 ] && [ -d "$BACKUP" ]; then
     rm -rf "$TARGET" 2>/dev/null
-    mv "$BACKUP" "$TARGET" 2>/dev/null || log "could not restore the previous app; backup preserved at $BACKUP"
+    if ! mv "$BACKUP" "$TARGET" 2>/dev/null; then
+      log "could not restore the previous app; backup preserved at $BACKUP"
+      notify_failure &
+      exit 1
+    fi
   fi
-  notify_failure
+  rm -rf "$STAGED_ROOT" 2>/dev/null
+  # Only an interrupted swap deserves a dialog, and it must not block the
+  # helper: the app may be waiting for this process to exit.
+  if [ "$INSTALL_PENDING" = 1 ]; then notify_failure & fi
   exit 1
 }
 trap restore_on_signal INT TERM HUP

@@ -1,5 +1,5 @@
 # Dependencies
-node_modules/
+node_modules
 
 # Build output
 out/
@@ -34,6 +34,3 @@ snap/*.snap
 *.pem
 *.p12
 *.pfx
-
-# Symlinked dependency tree (worktrees)
-node_modules

@@ -247,9 +247,9 @@ from Beta to Stable may offer an older stable version. The `.dmg` (mount and dra
 artifacts remain available; a macOS build that was produced without the signing secrets is
 ad-hoc signed only, `SIGNING-STATUS.txt` says so, and Gatekeeper then blocks its first
 launch until you allow it in System Settings > Privacy & Security — the installer script
-above is the way to avoid that step. The in-app updater fetches through Node's HTTP stack
-rather than the system network settings, so a network that requires a system-configured
-proxy or installs a TLS-inspecting root certificate may need the installer script instead.
+above is the way to avoid that step. The in-app updater uses Node's HTTP stack and cannot
+use a proxy configured in the system network settings; on such a network, set `HTTPS_PROXY`
+and use the installer script instead.
 
 Windows installers are unsigned unless the release configured a certificate and then show a
 SmartScreen warning; `SIGNING-STATUS.txt` records what the build actually did.
