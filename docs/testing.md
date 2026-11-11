@@ -132,6 +132,8 @@ under `os.tmpdir()` and remove them afterwards; they require `git` on `PATH`.
 - **Development bootstrap**: a missing, partial or stale Electron runtime is provisioned
   once, a complete runtime triggers no download, and a failed installer gives an actionable
   error.
+- **Diagnostics**: a closed stdio pipe is ignored instead of becoming an uncaught main
+  exception, and a failing log sink cannot abort the caller that was logging.
 - **Provider request shapes**: URL, method, headers and JSON body for dispatch, plus error
   text that includes the HTTP status.
 - **Repository tabs**: the renderer store is exercised with a stubbed preload bridge:

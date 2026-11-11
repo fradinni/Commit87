@@ -19,7 +19,13 @@ import { UpdateService, type UpdateAdapter } from './updates'
 import { createElectronUpdater, createInertUpdater } from './update-adapter'
 import { createAppImageProbe, verifyAppImage } from './appimage-binding'
 import { hasDeveloperIdSignature } from './mac-signing'
+import { safeLog, tolerateBrokenStdio } from './logging'
 import { APP_VERSION } from './version'
+
+// Diagnostics must never be able to crash the app: a launcher or terminal can
+// close the stdio pipe, and the next console write would raise EPIPE.
+tolerateBrokenStdio(process.stdout)
+tolerateBrokenStdio(process.stderr)
 
 app.setName('Commit87')
 if (process.platform === 'win32') {
@@ -66,7 +72,7 @@ async function grantLaunchTarget(target: string): Promise<void> {
     await grants?.grantPath(target)
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
-    console.warn(`[commit87] could not grant the launch target: ${detail}`)
+    safeLog(console, '[commit87]', 'warn', `could not grant the launch target: ${detail}`)
   }
   queueOrDeliver(target)
 }
@@ -212,7 +218,7 @@ app.whenReady().then(() => {
       const granted = await grantStore.isGrantedExecutable(configuredGit)
       const check = granted ? await validateGitExecutable(configuredGit) : { ok: false }
       if (!check.ok) {
-        console.warn('[commit87] ignoring a Git executable that is no longer granted and executable')
+        safeLog(console, '[commit87]', 'warn', 'ignoring a Git executable that is no longer granted and executable')
         await store.setGitBinary('')
       }
     }
@@ -229,7 +235,8 @@ app.whenReady().then(() => {
     try {
       updaterAdapter = createElectronUpdater()
     } catch (error) {
-      console.warn('[commit87:update] disabled:', error instanceof Error ? error.message : String(error))
+      const detail = error instanceof Error ? error.message : String(error)
+      safeLog(console, '[commit87:update]', 'warn', `disabled: ${detail}`)
     }
     // Squirrel.Mac validates an update against the designated requirement of the
     // running bundle. An ad-hoc signature pins that requirement to the current

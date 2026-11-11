@@ -743,6 +743,11 @@ workflow instead of publishing a channel file no client requests.
   is skipped entirely for a bare repository. After a renderer reload it also reconciles
   `tasks.snapshot`, so a task that finished while no window was listening is reported
   once instead of disappearing.
+- Diagnostics are best-effort. A GUI launch can leave stdout and stderr attached to a pipe
+  whose reader has exited (a closed terminal, a launcher that quits), so `main/logging.ts`
+  handles errors on both stdio streams and the updater logger writes through a guarded
+  sink. A closed log pipe no longer surfaces as an uncaught main-process exception from an
+  update check.
 
 ## Packaging
 

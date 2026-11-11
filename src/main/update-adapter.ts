@@ -2,6 +2,7 @@ import { autoUpdater, CancellationToken } from 'electron-updater'
 import type { ProgressInfo, UpdateInfo } from 'electron-updater'
 import type { UpdateChannel, UpdateProgress } from '@shared/types'
 import type { VerifiedAppImage } from './appimage-binding'
+import { safeLog } from './logging'
 import type { UpdateAdapter, UpdateDownloadTask, UpdateInfoSummary } from './updates'
 
 const MAX_NOTES_LENGTH = 6000
@@ -70,11 +71,13 @@ export function createInertUpdater(): UpdateAdapter {
  * installed format) lives in `updates.ts`.
  */
 export function createElectronUpdater(): UpdateAdapter {
+  // The library logs every check and download step through this sink. A broken
+  // stdio pipe must not turn a log line into a failed update check.
   autoUpdater.logger = {
-    info: (message?: unknown) => console.info('[commit87:update]', message),
-    warn: (message?: unknown) => console.warn('[commit87:update]', message),
-    error: (message?: unknown) => console.error('[commit87:update]', message),
-    debug: (message?: unknown) => console.debug('[commit87:update]', message)
+    info: (message?: unknown) => safeLog(console, '[commit87:update]', 'info', message),
+    warn: (message?: unknown) => safeLog(console, '[commit87:update]', 'warn', message),
+    error: (message?: unknown) => safeLog(console, '[commit87:update]', 'error', message),
+    debug: (message?: unknown) => safeLog(console, '[commit87:update]', 'debug', message)
   }
 
   return {

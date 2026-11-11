@@ -4,6 +4,15 @@ All notable changes to Commit87 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- An update check no longer crashes the main process with `write EPIPE` when the app was
+  launched with stdout or stderr attached to a pipe whose reader has exited (a closed
+  terminal or a launcher that quits). Stdio errors are tolerated and the updater's log sink
+  can no longer abort a check.
+
 ## [0.2.0-beta.8] — 2026-11-11
 
 ### Fixed
