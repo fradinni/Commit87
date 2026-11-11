@@ -688,7 +688,7 @@ export class Router {
       'update.check': async () => this.updates.check(),
       'update.download': async () => this.updates.download(),
       'update.install': async () => {
-        this.updates.install()
+        await this.updates.install()
         return undefined
       }
     }

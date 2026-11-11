@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { UpdateChannel, UpdateProgress, UpdateStatus } from '../src/shared/types'
+import type { UpdateChannel, UpdateFailure, UpdateProgress, UpdateStatus } from '../src/shared/types'
 import type { AppImageProbe, VerifiedAppImage } from '../src/main/appimage-binding'
 import { revalidateAppImage, verifyAppImage } from '../src/main/appimage-binding'
 import type { UpdateAdapter, UpdateDownloadTask, UpdateInfoSummary, UpdatePreferences } from '../src/main/updates'
@@ -33,7 +33,7 @@ class FakeAdapter implements UpdateAdapter {
   private readonly notAvailable: Array<() => void> = []
   private readonly progress: Array<(value: UpdateProgress) => void> = []
   private readonly downloaded: Array<(value: UpdateInfoSummary) => void> = []
-  private readonly errors: Array<(error: Error) => void> = []
+  private readonly errors: Array<(error: Error, context?: UpdateFailure) => void> = []
 
   setChannel(channel: UpdateChannel): void {
     this.channel = channel
@@ -145,12 +145,12 @@ class FakeAdapter implements UpdateAdapter {
     this.downloaded.push(listener)
   }
 
-  onError(listener: (error: Error) => void): void {
+  onError(listener: (error: Error, context?: UpdateFailure) => void): void {
     this.errors.push(listener)
   }
 
-  triggerError(error: Error): void {
-    this.errors.forEach((listener) => listener(error))
+  triggerError(error: Error, context?: UpdateFailure): void {
+    this.errors.forEach((listener) => listener(error, context))
   }
 
   triggerProgress(progress: UpdateProgress): void {
@@ -310,14 +310,12 @@ describe('update support detection', () => {
     })
   })
 
-  it('rejects ad-hoc macOS bundles that macOS cannot validate an update against', () => {
-    // Squirrel.Mac checks the new bundle against the running app's designated
-    // requirement. An ad-hoc signature pins the cdhash, so the update always
-    // fails with "code is not compliant with specified code requirements".
+  it('supports ad-hoc macOS builds through the release-zip updater', () => {
+    // Squirrel.Mac cannot validate an ad-hoc build's update (the signature is
+    // pinned to the current cdhash), so ad-hoc macOS bundles are updated by
+    // downloading the release zip and swapping it in place instead.
     const adHoc = detectUpdateSupport({ platform: 'darwin', isPackaged: true, macDeveloperId: false })
-    expect(adHoc.supported).toBe(false)
-    expect(adHoc.format).toBeNull()
-    expect(adHoc.reason).toContain('Developer ID')
+    expect(adHoc).toEqual({ supported: true, format: 'maczip', reason: null })
   })
 
   it('recognises a Developer ID signature from codesign output', () => {
@@ -638,6 +636,77 @@ describe('UpdateService', () => {
     expect(status.progress).toEqual({ percent: 100, transferred: 1000, total: 1000, bytesPerSecond: 0 })
   })
 
+  it('awaits asynchronous install preparation and reports a refusal without quitting', async () => {
+    const { adapter, service } = setup()
+    await service.check()
+    await service.download()
+    vi.spyOn(adapter, 'quitAndInstall').mockImplementation(() =>
+      Promise.reject(new Error('The application folder is read-only'))
+    )
+
+    await expect(service.install()).rejects.toThrow('read-only')
+    expect(service.getStatus()).toMatchObject({
+      phase: 'error',
+      error: 'The application folder is read-only',
+      failedAt: 'install'
+    })
+    expect(adapter.installs).toBe(0)
+  })
+
+  it('shows an installing phase while the adapter prepares the package', async () => {
+    const { adapter, service } = setup()
+    await service.check()
+    await service.download()
+    let finish = (): void => undefined
+    vi.spyOn(adapter, 'quitAndInstall').mockImplementation(() => new Promise<void>((resolve) => {
+      finish = resolve
+    }))
+
+    const installing = service.install()
+    expect(service.getStatus()).toMatchObject({ phase: 'installing', failedAt: null })
+    finish()
+    await installing
+  })
+
+  it('does not let a check disturb an installation in progress', async () => {
+    const { adapter, service } = setup()
+    await service.check()
+    await service.download()
+    let finish = (): void => undefined
+    vi.spyOn(adapter, 'quitAndInstall').mockImplementation(() => new Promise<void>((resolve) => {
+      finish = resolve
+    }))
+    const before = adapter.checks
+    const installing = service.install()
+
+    const status = await service.check()
+
+    expect(status.phase).toBe('installing')
+    expect(adapter.checks).toBe(before)
+    finish()
+    await installing
+  })
+
+  it('does not let a stale install failure demote a new channel package', async () => {
+    const { adapter, service, preferences } = setup()
+    await service.check()
+    await service.download()
+    let rejectInstall = (_error: Error): void => undefined
+    vi.spyOn(adapter, 'quitAndInstall').mockImplementation(() => new Promise<void>((_resolve, reject) => {
+      rejectInstall = reject
+    }))
+    const installing = service.install()
+    preferences.channel = 'beta'
+    service.refreshPreferences()
+    await service.check()
+    await service.download()
+    expect(service.getStatus().phase).toBe('ready')
+
+    rejectInstall(new Error('The old update preparation was cancelled'))
+    await expect(installing).rejects.toThrow('old update preparation')
+    expect(service.getStatus()).toMatchObject({ phase: 'ready', channel: 'beta', error: null })
+  })
+
   it('refuses to download without an available update and to install before ready', async () => {
     const { adapter, service } = setup()
     await expect(service.download()).rejects.toThrow('No update is available')
@@ -735,6 +804,7 @@ describe('UpdateService', () => {
     expect(status.phase).toBe('error')
     expect(status.error).not.toContain('\n')
     expect(status.error?.length).toBe(500)
+    expect(status.failedAt).toBe('check')
     expect(status.channel).toBe('beta')
     expect(preferences.channel).toBe('beta')
   })
@@ -742,7 +812,21 @@ describe('UpdateService', () => {
   it('reacts to adapter error events without throwing', async () => {
     const { adapter, service } = setup()
     adapter.triggerError(new Error('signature mismatch'))
-    expect(service.getStatus()).toMatchObject({ phase: 'error', error: 'signature mismatch' })
+    expect(service.getStatus()).toMatchObject({
+      phase: 'error',
+      error: 'signature mismatch',
+      failedAt: 'check'
+    })
+  })
+
+  it('uses an adapter-provided install context for a helper failure', async () => {
+    const { adapter, service } = setup()
+    adapter.triggerError(new Error('The update helper timed out'), 'install')
+    expect(service.getStatus()).toMatchObject({
+      phase: 'error',
+      error: 'The update helper timed out',
+      failedAt: 'install'
+    })
   })
 
   it('downloads automatically after a check when automatic updates are enabled', async () => {

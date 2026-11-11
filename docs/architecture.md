@@ -665,13 +665,33 @@ packaged AppImages, NSIS installs and macOS app bundles qualify; Flatpak, Snap, 
 and zip Windows builds and distro packages are rejected with a message pointing at their
 real update path. An NSIS install is recognised by its uninstaller next to the executable,
 so an extracted zip build is not offered an installer that would create a second copy.
-macOS builds must also carry a Developer ID Application signature, probed with `codesign`
-by `main/mac-signing.ts`: Squirrel.Mac validates the downloaded bundle against the running
-app's designated requirement, and an ad-hoc signature pins it to the current cdhash, so
-every in-place update would be rejected. `main/updates.ts` owns the state machine (`idle`, `checking`, `up-to-date`,
+The macOS format depends on the signature, probed with `codesign` by `main/mac-signing.ts`:
+Squirrel.Mac validates the downloaded bundle against the running app's designated
+requirement, and an ad-hoc signature pins it to the current cdhash, so Squirrel cannot
+update those builds. A Developer ID bundle therefore uses the `dmg` format and
+electron-updater; an ad-hoc bundle uses the `maczip` format and `main/mac-script-updater.ts`,
+which fetches the newest release from the GitHub API, verifies the downloaded zip's
+SHA-256 against `SHA256SUMS.txt` and its code signature, and swaps the bundle in place from
+a detached helper once the app quits. `main/updates.ts` owns the state machine (`idle`, `checking`, `up-to-date`,
 `available`, `downloading`, `ready`, `error`) and talks to an `UpdateAdapter`, which
-`main/update-adapter.ts` implements over `electron-updater`. The adapter is bundled into
+`main/update-adapter.ts` implements over `electron-updater` (and
+`main/mac-script-updater.ts` for the ad-hoc macOS path). The adapters are bundled into
 the main output, so the packaged ASAR still has no `node_modules` tree.
+
+The ad-hoc macOS adapter keeps at most one deferred download in the app-owned
+`userData/mac-update/download` workspace; the next download replaces that workspace even
+after a restart. It never scans the OS temporary directory for other update packages.
+Cache removal uses Electron's `original-fs` so a physical `app.asar` is removed as a
+file rather than interpreted as a virtual directory by Electron's patched filesystem.
+Installation preparation is asynchronous and awaited by `update.install`: it copies and
+verifies an incoming bundle in a private directory on the target filesystem before
+detaching the helper or quitting. Preparation failures cross IPC as normal update errors.
+The helper aborts if the original process is still alive after its shutdown deadline.
+Replacement failures remove the failed destination before restoring the old bundle,
+relaunch it when possible and display an installation-failure alert; if restoration fails,
+the backup is retained for recovery. Diagnostics remain in `userData/mac-update/swap.log`.
+New downloads wait for obsolete installation preparation and cleanup to settle before
+reusing the cache, and an obsolete installation error cannot overwrite a newer offer.
 
 The replacement target is bound to the running installation before any update work:
 `main/appimage-binding.ts` accepts an AppImage only when `realpath(process.execPath)` lies
@@ -707,9 +727,12 @@ download so it can be cancelled, and installing always requires the explicit
 The renderer only sees sanitized `UpdateStatus` snapshots through `update.*` IPC calls and
 the `commit87:update-status` push channel. It cannot choose a feed URL, version or file:
 the feed comes from the packaged `app-update.yml` produced by electron-builder's `publish`
-configuration. Progress values are clamped, error messages are collapsed to one line and
+configuration, except for ad-hoc macOS builds, whose updater resolves the newest release
+from the GitHub releases API. Progress values are clamped, error messages are collapsed to one line and
 release notes are truncated before they cross the boundary. `update.install` is only
-accepted in the `ready` phase.
+accepted in the `ready` phase; it moves the status to `installing` while the adapter
+prepares the replacement, and a failed check, download or install records which step
+failed so the UI never labels an installation error as a check error.
 
 Release tags without a prerelease suffix build `latest.yml` and stay drafts until
 published. Tags such as `v0.2.0-beta.1` set `COMMIT87_RELEASE_CHANNEL=beta` in the release

@@ -1,4 +1,4 @@
-import type { UpdateChannel, UpdateProgress, UpdateStatus } from '@shared/types'
+import type { UpdateChannel, UpdateFailure, UpdateProgress, UpdateStatus } from '@shared/types'
 import { createAppImageProbe, revalidateAppImage } from './appimage-binding'
 import type { AppImageProbe, VerifiedAppImage } from './appimage-binding'
 import { detectUpdateSupport } from './update-support'
@@ -27,13 +27,14 @@ export interface UpdateAdapter {
    * never reads a possibly-mutated `APPIMAGE` environment variable.
    */
   download(target: VerifiedAppImage | null): UpdateDownloadTask
-  quitAndInstall(target: VerifiedAppImage | null): void
+  quitAndInstall(target: VerifiedAppImage | null): void | Promise<void>
   onChecking(listener: () => void): void
   onAvailable(listener: (info: UpdateInfoSummary) => void): void
   onNotAvailable(listener: () => void): void
   onProgress(listener: (progress: UpdateProgress) => void): void
   onDownloaded(listener: (info: UpdateInfoSummary) => void): void
-  onError(listener: (error: Error) => void): void
+  /** `context` lets an adapter name the failed operation; defaults to the live phase. */
+  onError(listener: (error: Error, context?: UpdateFailure) => void): void
 }
 
 export interface UpdateDownloadTask {
@@ -133,6 +134,7 @@ export class UpdateService {
       releaseNotes: null,
       progress: null,
       error: null,
+      failedAt: null,
       checkedAt: null,
       autoCheck: preferences.autoCheck
     }
@@ -168,6 +170,7 @@ export class UpdateService {
         this.status.releaseNotes = null
         this.status.progress = null
         this.status.error = null
+        this.status.failedAt = null
         this.status.checkedAt = null
       } else {
         this.clearAvailable()
@@ -209,6 +212,11 @@ export class UpdateService {
       // path cancels explicitly when the target feed changes.
       return this.snapshot()
     }
+    if (this.status.phase === 'installing') {
+      // Preparing and handing off an installation must not be disturbed by an
+      // automatic or manual check; a channel change clears the phase first.
+      return this.snapshot()
+    }
     if (this.checkPromise) {
       if (this.checkPromiseGeneration === this.checkGeneration) return this.checkPromise
       // A channel change invalidated the in-flight check. electron-updater
@@ -220,6 +228,7 @@ export class UpdateService {
     this.refreshPreferences()
     this.status.phase = 'checking'
     this.status.error = null
+    this.status.failedAt = null
     this.status.progress = null
     this.emit()
 
@@ -243,7 +252,7 @@ export class UpdateService {
           void this.download().catch(() => undefined)
         }
       } catch (error) {
-        if (generation === this.checkGeneration) this.fail(error)
+        if (generation === this.checkGeneration) this.fail(error, 'check')
       } finally {
         if (this.checkToken === token) {
           this.checkPromise = null
@@ -276,7 +285,7 @@ export class UpdateService {
     // not the environment, is what the adapter will replace.
     const binding = this.boundAppImageTarget()
     if (!binding.ok) {
-      this.fail(new Error(`The update download was refused: ${binding.reason}`))
+      this.fail(new Error(`The update download was refused: ${binding.reason}`), 'download')
       this.emit()
       return this.snapshot()
     }
@@ -285,6 +294,7 @@ export class UpdateService {
     this.downloadChannel = this.status.channel
     this.status.phase = 'downloading'
     this.status.error = null
+    this.status.failedAt = null
     this.status.progress = { percent: 0, transferred: 0, total: 0, bytesPerSecond: 0 }
     this.downloadCancelled = false
     this.downloadActive = true
@@ -297,7 +307,7 @@ export class UpdateService {
         // A synchronous adapter failure must not leave the UI stuck in
         // `downloading` with no task to settle.
         this.downloadActive = false
-        this.fail(error)
+        this.fail(error, 'download')
         this.emit()
         throw error
       }
@@ -309,12 +319,12 @@ export class UpdateService {
         if (generation !== this.downloadGeneration) return this.snapshot()
         if (this.downloadCancelled) this.clearAvailable()
         else if (this.status.phase === 'downloading') {
-          this.fail(new Error('The download finished without a prepared update package.'))
+          this.fail(new Error('The download finished without a prepared update package.'), 'download')
         }
       } catch (error) {
         if (generation !== this.downloadGeneration) return this.snapshot()
         if (this.downloadCancelled) this.clearAvailable()
-        else this.fail(error)
+        else this.fail(error, 'download')
       } finally {
         // The new download (if any) owns the fields now; never clear them from
         // a task that has already been superseded.
@@ -330,7 +340,7 @@ export class UpdateService {
     return this.downloadPromise
   }
 
-  install(): void {
+  install(): void | Promise<void> {
     if (!this.support.supported) {
       throw new Error(this.support.reason || 'Automatic updates are not supported on this build.')
     }
@@ -342,11 +352,34 @@ export class UpdateService {
     const binding = this.boundAppImageTarget()
     if (!binding.ok) {
       const error = new Error(`The update cannot be installed: ${binding.reason}`)
-      this.fail(error)
+      this.fail(error, 'install')
       this.emit()
       throw error
     }
-    this.adapter.quitAndInstall(binding.target)
+    const generation = this.checkGeneration
+    const version = this.status.version
+    // Show an explicit in-progress state while the adapter prepares the
+    // replacement on disk; that can take several seconds for a full bundle.
+    this.status.phase = 'installing'
+    this.status.error = null
+    this.status.failedAt = null
+    this.emit()
+    const failIfFresh = (error: unknown): void => {
+      if (generation !== this.checkGeneration || this.status.version !== version) return
+      if (this.status.phase !== 'installing' && this.status.phase !== 'ready') return
+      this.fail(error, 'install')
+      this.emit()
+    }
+    try {
+      const result = this.adapter.quitAndInstall(binding.target)
+      return result?.catch((error: unknown) => {
+        failIfFresh(error)
+        throw error
+      })
+    } catch (error) {
+      failIfFresh(error)
+      throw error
+    }
   }
 
   /**
@@ -387,6 +420,7 @@ export class UpdateService {
       if (!this.checkEventIsFresh()) return
       this.status.phase = 'checking'
       this.status.error = null
+      this.status.failedAt = null
       this.emit()
     })
     this.adapter.onAvailable((info) => {
@@ -421,6 +455,7 @@ export class UpdateService {
       this.status.releaseDate = info.releaseDate
       this.status.releaseNotes = sanitizeNotes(info.releaseNotes)
       this.status.error = null
+      this.status.failedAt = null
       this.status.checkedAt = Date.now()
       this.status.progress = {
         percent: 100,
@@ -430,10 +465,13 @@ export class UpdateService {
       }
       this.emit()
     })
-    this.adapter.onError((error) => {
+    this.adapter.onError((error, context) => {
       if (this.downloadCancelled) return
       if (!this.checkEventIsFresh()) return
-      this.fail(error)
+      this.fail(
+        error,
+        context ?? (this.downloadActive ? 'download' : this.status.phase === 'installing' ? 'install' : 'check')
+      )
       this.emit()
     })
   }
@@ -457,6 +495,7 @@ export class UpdateService {
     this.status.releaseNotes = sanitizeNotes(info.releaseNotes)
     this.status.progress = null
     this.status.error = null
+    this.status.failedAt = null
     this.status.checkedAt = Date.now()
   }
 
@@ -467,13 +506,15 @@ export class UpdateService {
     this.status.releaseNotes = null
     this.status.progress = null
     this.status.error = null
+    this.status.failedAt = null
     this.status.checkedAt = Date.now()
   }
 
-  private fail(error: unknown): void {
+  private fail(error: unknown, failedAt: UpdateFailure = 'check'): void {
     this.status.phase = 'error'
     this.status.progress = null
     this.status.error = sanitizeError(error)
+    this.status.failedAt = failedAt
     this.status.checkedAt = Date.now()
   }
 
@@ -484,6 +525,7 @@ export class UpdateService {
     this.status.releaseNotes = null
     this.status.progress = null
     this.status.error = null
+    this.status.failedAt = null
     this.status.checkedAt = null
   }
 

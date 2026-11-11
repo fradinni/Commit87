@@ -204,7 +204,11 @@ export type UpdatePhase =
   | 'available'
   | 'downloading'
   | 'ready'
+  | 'installing'
   | 'error'
+
+/** Which operation produced the current `error` phase. */
+export type UpdateFailure = 'check' | 'download' | 'install'
 
 export interface UpdateProgress {
   percent: number
@@ -224,6 +228,8 @@ export interface UpdateStatus {
   releaseNotes: string | null
   progress: UpdateProgress | null
   error: string | null
+  /** Operation that failed while `phase` is `error`; null otherwise. */
+  failedAt: UpdateFailure | null
   checkedAt: number | null
   autoCheck: boolean
 }

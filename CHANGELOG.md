@@ -4,6 +4,41 @@ All notable changes to Commit87 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- macOS installs that are not signed with an Apple Developer ID now get real in-place
+  updates. `scripts/install-macos.sh` installs a release from the command line without the
+  Gatekeeper step (the archive is downloaded with `curl`, verified against the release
+  `SHA256SUMS.txt` and its code signature, then installed to `~/Applications`), and the
+  in-app updater offers the same verified release-zip swap in Settings → Updates, so ad-hoc
+  builds no longer need the releases page. Developer ID-signed builds keep the
+  Squirrel.Mac updater and the `latest-mac.yml`/`beta-mac.yml` feed.
+- Every macOS release now attaches `install-macos.sh`.
+
+### Fixed
+
+- macOS update preparation now fails before quitting when the installation is not writable,
+  restores the previous app correctly after a failed swap, and never replaces a still-running
+  app after a shutdown timeout. Download filesystem errors are handled normally, and deferred
+  packages use one bounded private cache across restarts. Cleanup handles physical ASAR
+  archives correctly in Electron, and stale installation preparation cannot delete or
+  overwrite the state of a newer channel's package.
+- Ad-hoc macOS builds honor Beta-to-Stable downgrades. The command-line installer supports
+  offline uninstall and explicit pinned reinstalls/downgrades; updater tests clean only their
+  own isolated fixtures.
+- Both macOS updaters choose the highest matching release instead of the first entry in the
+  GitHub API's creation-ordered list, so a backport published later cannot hide a newer
+  release. `install-macos.sh` now rejects an option without its value, lists `--system` and
+  `--keep-work` in `--help`, is covered by `SHA256SUMS.txt`, and removes its temporary feed
+  copy when interrupted; the in-app swap helper restores the previous bundle on termination
+  signals and no longer hangs if the helper exits before a cancelled handoff.
+- Settings → Updates shows an explicit installing state while the macOS bundle swap is
+  prepared, labels check, download and installation failures separately, and recovers when
+  a detached swap helper times out because the app did not quit, so the update can be
+  retried without restarting the app.
+
 ## [0.2.0-beta.9] — 2026-11-11
 
 ### Fixed

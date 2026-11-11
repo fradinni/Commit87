@@ -76,6 +76,10 @@ arm64 clients without an update. The app's updater reads the file named by the p
   pre-release, so promoting it cannot make it the latest stable release.
 - The macOS feed must include the `.zip` target next to the `.dmg`; the zip is what the
   updater downloads and swaps in.
+- Ad-hoc macOS builds do not read these YAML feeds: their updater resolves the newest
+  release from the GitHub releases API (matching the architecture's `mac-<arch>.zip` and
+  the selected stable/beta channel), and `scripts/install-macos.sh` is attached to every
+  release as the command-line installer for the same flow.
 
 `electron-updater` is bundled into `out/main` by `electron-vite`, so the ASAR still ships
 without `node_modules`.
@@ -392,31 +396,82 @@ Consequences for users:
 
 - With signing secrets configured: a signed, notarized `.dmg`/`.zip` that Gatekeeper
   accepts directly.
-- Without them: an ad-hoc signed build that runs (it no longer reports "damaged") but is
-  blocked by Gatekeeper on first launch. On macOS 15+ the bypass is System Settings >
-  Privacy & Security > Open Anyway (Apple removed the Control-click > Open shortcut); a
-  fully clean experience requires configuring the secrets above and re-running the release.
+- Without them: an ad-hoc signed build that runs cleanly when installed by
+  `scripts/install-macos.sh`, which downloads the release with `curl` so the quarantine
+  attribute never lands on the bundle. A `.dmg`/`.zip` downloaded by a browser is instead
+  blocked by Gatekeeper until allowed in System Settings > Privacy & Security (macOS 15+
+  removed the Control-click > Open shortcut, and the `xattr -dr com.apple.quarantine`
+  workaround is unreliable on macOS 26; downloading through the script avoids the flag
+  entirely). A fully clean experience still requires configuring the secrets above.
 
-### macOS in-place updates require a Developer ID signature
+### macOS updates without a Developer ID
 
-Squirrel.Mac compares the downloaded bundle with the designated requirement of the
-running app before it swaps anything. A Developer ID signature produces a requirement
-anchored to the certificate and team, which the next release also satisfies. An ad-hoc
-signature instead embeds the current build's `cdhash`; a later build has a different hash,
-so ShipIt rejects it with:
+The in-app updater has two macOS paths, chosen by `main/mac-signing.ts`:
 
-```
-Code signature at URL … did not pass validation:
-code is not compliant with specified code requirements
-```
+- **Developer ID builds** use electron-updater/Squirrel.Mac. Squirrel.Mac compares the
+  downloaded bundle with the designated requirement of the running app; a Developer ID
+  signature produces a requirement anchored to the certificate and team, which the next
+  release also satisfies.
+- **Ad-hoc builds** cannot use Squirrel.Mac: an ad-hoc signature embeds the current
+  build's `cdhash`, so a later build would be rejected with:
 
-`main/mac-signing.ts` probes the running bundle with `codesign --display --verbose=4`.
-Without a Developer ID authority, the updater reports in-place updates as unavailable and
-the Settings > Updates panel offers the releases page instead of **Restart & install**.
-Configure `MAC_CERT_P12`, `MAC_CERT_PASSWORD`, `APPLE_ID`,
-`APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` to make automatic macOS updates work;
-existing ad-hoc installs need one manual DMG update before they can follow the signed
-feed.
+  ```
+  Code signature at URL … did not pass validation:
+  code is not compliant with specified code requirements
+  ```
+
+  Instead `main/mac-script-updater.ts` implements the same state machine
+  (`main/updates.ts`) with a self-contained flow: it resolves the newest release from the
+  GitHub releases API, downloads the architecture's `mac-<arch>.zip` with `fetch`
+  (again: no quarantine attribute), verifies its SHA-256 against the release's
+  `SHA256SUMS.txt`, confirms `codesign --verify --deep --strict` reports an intact
+  signature (an ad-hoc bundle has no trusted signer identity, so the checksum is the
+  integrity gate), reads the bundle's
+  declared version, and stages it in a bounded, app-private cache (`userData/mac-update/download`).
+  **Restart & install** first checks the installation location and copies and verifies a
+  complete replacement on the destination filesystem while the app is still running.
+  A read-only DMG or an unwritable folder returns an error without quitting. It then
+  detaches a small bash helper that waits up to 60 seconds for the app to quit (otherwise
+  it aborts), swaps the bundle in place, re-clears quarantine, re-verifies the signature
+  and relaunches. A failed swap restores and relaunches the previous app; a failed restore
+  preserves the backup. The helper records each step in
+  `userData/mac-update/swap.status`; if quitting is delayed past its deadline, the running
+  app reads the timeout, shows an installation error and releases the one-install guard so
+  the update can be retried without restarting the session. Failures display an alert and
+  are recorded in `userData/mac-update/swap.log`.
+  Progress, release notes and the stable/beta channel behave exactly like the other
+  formats, so Settings > Updates needs no macOS-specific UI.
+  A release must publish `SHA256SUMS.txt`; older releases without that file are refused,
+  not installed with weaker integrity checks.
+
+`scripts/install-macos.sh` is the command-line twin of that flow and is attached to every
+macOS release. It detects the architecture, resolves the newest release, downloads with
+`curl`, verifies `SHA256SUMS.txt` and that the bundle's signature is intact, installs to
+`~/Applications` (`--system` for `/Applications`) and is idempotent, so re-running it is how
+command-line users update. `latest` and `beta` include prereleases; `--channel stable`
+excludes them. It is also how a first install avoids the Gatekeeper step above.
+`--uninstall` requires no network connection or Python. An explicit `--version vX.Y.Z`
+also permits reinstalling the same version or downgrading; an unpinned invocation only
+installs a newer release. The script stages and verifies the complete replacement on the
+destination filesystem before moving the old copy aside, and refuses to replace an app
+that has not stopped after its quit deadline.
+
+Configure `MAC_CERT_P12`, `MAC_CERT_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`
+and `APPLE_TEAM_ID` to switch macOS back to the Squirrel.Mac path, where the update feed
+(`latest-mac.yml`/`beta-mac.yml`) is used again.
+
+The hardened ad-hoc path was exercised on macOS 26.5.1 (arm64) using private temporary
+app copies and an isolated profile. A packaged build with the current updater and an older
+version identity downloaded the real `v0.2.0-beta.9` zip, verified its checksum and signature,
+showed the ready state, refused an unwritable installation folder without quitting, retried
+successfully, then swapped and relaunched into `0.2.0-beta.9`. The installed signature passed,
+the profile was preserved, and the download and swap workspaces were removed. The native
+CLI also installed, reinstalled the same pinned version, downgraded to `v0.2.0-beta.8` and
+uninstalled with network access disabled; CLI process/launch commands were guarded to avoid
+affecting any normal app instance. The development unsupported state, latest-beta empty state
+and missing-checksum error were also inspected in the app. Helper rollback and shutdown
+timeouts are covered by executable isolated shell fixtures. Intel and Developer ID-signed/
+notarized builds still require their matching hosts/signers and a release run.
 
 ## Icons
 

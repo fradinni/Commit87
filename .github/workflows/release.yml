@@ -190,8 +190,19 @@ jobs:
         if: matrix.target == 'linux'
         # deb/rpm/pacman go through electron-builder's bundled fpm, which needs
         # fakeroot and rpm on the host and bsdtar (libarchive-tools) for the
-        # pacman .MTREE index.
-        run: sudo apt-get update && sudo apt-get install -y fakeroot rpm libarchive-tools
+        # pacman .MTREE index. The hosted runner's default mirror has had
+        # transient DNS failures, so retry over IPv4 before failing the job.
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if sudo apt-get -o Acquire::Retries=3 -o Acquire::ForceIPv4=true update \
+              && sudo apt-get -o Acquire::Retries=3 -o Acquire::ForceIPv4=true install -y fakeroot rpm libarchive-tools; then
+              exit 0
+            fi
+            echo "apt attempt ${attempt} failed; retrying"
+            sleep 20
+          done
+          exit 1
       - name: Apply the resolved version
         shell: bash
         run: node scripts/sync-version.mjs "$RELEASE_VERSION"
@@ -325,11 +336,26 @@ jobs:
                 if [[ "$HAS_MAC_CERT" == "true" ]]; then
                   echo "macOS: Developer ID signed and notarized."
                 else
-                  echo "macOS: DEVELOPMENT build, ad-hoc signed only (no Developer ID, not notarized). Gatekeeper blocks it until the user allows it in System Settings."
+                  echo "macOS: DEVELOPMENT build, ad-hoc signed only (no Developer ID, not notarized). Install with the bundled install-macos.sh to avoid the Gatekeeper step; the in-app updater uses the same verified release-zip swap."
                 fi
                 ;;
             esac
           } > "dist/SIGNING-STATUS-${{ matrix.target }}.txt"
+      # The ad-hoc installer/updater script is a single asset for every macOS
+      # release; the mac leg (which builds both architectures) stages and
+      # uploads it so the merged publish payload contains exactly one copy.
+      - name: Stage macOS installer script
+        if: matrix.target == 'mac'
+        shell: bash
+        run: cp scripts/install-macos.sh dist/install-macos.sh
+      - name: Upload macOS installer script
+        if: matrix.target == 'mac'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-mac-script
+          path: dist/install-macos.sh
+          if-no-files-found: error
+          retention-days: 14
       - name: Upload Linux artifacts
         if: matrix.target == 'linux'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -463,6 +489,7 @@ jobs:
           [[ "$(count '*.blockmap')" -ge 2 ]] || fail "expected block maps for differential updates in dist"
           empty="$(find dist -maxdepth 1 -type f -size 0 -print -quit)"
           [[ -z "$empty" ]] || fail "empty artifact: $empty"
+          [[ -s dist/install-macos.sh ]] || fail "missing macOS installer script"
       - name: Record build provenance and checksums
         shell: bash
         run: |
@@ -482,7 +509,7 @@ jobs:
             find dist -maxdepth 1 -type f \
               \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.pkg.tar.xz' \
                  -o -name '*.tar.gz' -o -name '*.exe' -o -name '*.dmg' -o -name '*.zip' \
-                 -o -name '*.blockmap' \) \
+                 -o -name '*.blockmap' -o -name 'install-macos.sh' \) \
               -printf '%f\n' | sort
           )
           ( cd dist && sha256sum -- "${payloads[@]}" > SHA256SUMS.txt )
@@ -498,6 +525,7 @@ jobs:
             dist/*.exe dist/*.dmg dist/*.zip dist/*.blockmap
             "dist/${CHANNEL}.yml" "dist/${CHANNEL}-linux.yml" "dist/${CHANNEL}-linux-arm64.yml" "dist/${CHANNEL}-mac.yml"
             dist/SHA256SUMS.txt dist/BUILD-INFO.txt dist/SIGNING-STATUS.txt
+            dist/install-macos.sh
           )
           # Drop globs that matched nothing so one platform-specific pattern
           # cannot fail the whole upload; the verification step above already
@@ -531,6 +559,6 @@ jobs:
             gh release edit "$TAG" --draft=false --repo "$GITHUB_REPOSITORY"
           fi
           echo "::warning::macOS build is ad-hoc signed but not signed with a Developer ID certificate and not notarized."
-          echo "::warning::Users downloading it will see a Gatekeeper prompt (System Settings > Privacy & Security > Open Anyway to launch)."
-          echo "::warning::In-place updates are unavailable on ad-hoc builds: Squirrel.Mac cannot validate them, so the app points users at this release page instead."
+          echo "::warning::Users should install with the bundled install-macos.sh so the archive is never quarantined; a browser-downloaded .dmg/.zip needs System Settings > Privacy & Security > Open Anyway on first launch."
+          echo "::warning::Ad-hoc macOS builds update in place through the verified release-zip swap (Settings > Updates uses it automatically); Squirrel.Mac remains limited to Developer ID-signed builds."
           echo "::warning::Configure MAC_CERT_P12, MAC_CERT_PASSWORD, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID secrets for fully signed, notarized releases."

@@ -88,7 +88,19 @@ jobs:
       - name: Install Linux packaging tools
         # fpm (bundled by electron-builder) builds deb/rpm/pacman archives and the
         # pacman .MTREE index with bsdtar, which Ubuntu does not include by default.
-        run: sudo apt-get update && sudo apt-get install -y fakeroot rpm libarchive-tools
+        # The hosted runner's default mirror has had transient DNS failures, so
+        # retry over IPv4 before failing the job.
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if sudo apt-get -o Acquire::Retries=3 -o Acquire::ForceIPv4=true update \
+              && sudo apt-get -o Acquire::Retries=3 -o Acquire::ForceIPv4=true install -y fakeroot rpm libarchive-tools; then
+              exit 0
+            fi
+            echo "apt attempt ${attempt} failed; retrying"
+            sleep 20
+          done
+          exit 1
       - name: Build AppImage, deb, rpm, pacman and tar.gz for x64 and arm64
         # The wrapper retries transient download failures (5xx, resets) with backoff.
         # `--publish never` needs no repository token, so this job gets no secret.
