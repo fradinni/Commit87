@@ -4,6 +4,23 @@ All notable changes to Commit87 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- AppImage updates work again when the bundled runtime mounts the image with its file name
+  as the kernel mount source instead of the full path; verification no longer depends on the
+  directory the AppImage was launched from, and a kernel loop mount is followed to its
+  backing file.
+
+### Security
+
+- When the bundled AppImage runtime records only the image file name as the mount source
+  (the FUSE shape), the hint is accepted only for a file with that same name. The kernel
+  keeps no directory for that mount, so a same-named file in another directory becomes the
+  replacement target; the AppImage path itself, not the mounted contents, decides what is
+  written.
+
 ## [0.2.0-beta.7] — 2026-11-10
 
 Readiness milestone: protect existing work, make the documented boundaries real, and make

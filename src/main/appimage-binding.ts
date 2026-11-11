@@ -1,4 +1,5 @@
 import { readFileSync, realpathSync, statSync } from 'node:fs'
+import path from 'node:path'
 import process from 'node:process'
 
 /**
@@ -41,7 +42,11 @@ export interface VerifiedAppImage {
   mode: number
   /** Canonical mount point that contains the running executable. */
   mountPoint: string
-  /** Canonical source recorded by the kernel for that mount. */
+  /**
+   * How the kernel names the image for that mount: the resolved image path for
+   * kernel loop mounts and helpers that record a path, or the bare file name
+   * for FUSE runtimes that record only `fsname`.
+   */
   mountSource: string
   /** Kernel filesystem type of the mount, for example `squashfs`. */
   filesystem: string
@@ -81,22 +86,29 @@ function parseMountInfo(contents: string): MountInfoEntry[] {
     if (separator < 0 || separator + 2 >= fields.length) continue
     entries.push({
       mountPoint: decodeMountInfoPath(fields[4]),
-      filesystem: fields[separator + 1],
+      filesystem: decodeMountInfoPath(fields[separator + 1]),
       source: decodeMountInfoPath(fields[separator + 2])
     })
   }
   return entries
 }
 
+const LOOP_SOURCE = /^\/dev\/(loop\d+)(?:p\d+)?$/
+
 /**
  * AppImage type 2 images are squashfs mounts, either through the kernel driver
- * (`squashfs`) or a FUSE helper (`fuse.squashfuse`, `fuse.appimage`, …).
+ * (`squashfs`) or a FUSE helper (`fuse.squashfuse`, `fuse.appimage`, …). The
+ * bundled runtime names its FUSE filesystem after the image file itself
+ * (`fuse.Commit87-0.1.0-linux-x86_64.AppImage`), so the expected image name is
+ * accepted as well; a renamed image would otherwise be mistaken for an
+ * unrelated mount.
  */
-function isAppImageFilesystem(filesystem: string): boolean {
+function isAppImageFilesystem(filesystem: string, imageName: string): boolean {
   const type = filesystem.toLowerCase()
   if (type === 'squashfs') return true
   if (!type.startsWith('fuse.')) return false
-  return type.includes('squash') || type.includes('appimage')
+  const name = type.slice('fuse.'.length)
+  return name.includes('squash') || name.includes('appimage') || name === imageName.toLowerCase()
 }
 
 function containsPath(parent: string, child: string): boolean {
@@ -111,6 +123,48 @@ function canonical(probe: AppImageProbe, value: string): string | null {
   } catch {
     return null
   }
+}
+
+/**
+ * The image file the kernel names for a mount, when it names a file at all.
+ * Kernel squashfs loop mounts record the loop device, so the backing file is
+ * read from sysfs. FUSE AppImage runtimes record only the file name, which is
+ * not a path and cannot be resolved; those return null and are matched by name.
+ */
+function mountImagePath(probe: AppImageProbe, entry: MountInfoEntry): string | null {
+  const loop = LOOP_SOURCE.exec(entry.source)
+  if (loop) {
+    let backing: string
+    try {
+      backing = probe.readFile(`/sys/block/${loop[1]}/loop/backing_file`).trim()
+    } catch {
+      return null
+    }
+    if (!backing || backing.endsWith(' (deleted)')) return null
+    return canonical(probe, backing)
+  }
+  if (!entry.source.startsWith('/')) return null
+  return canonical(probe, entry.source)
+}
+
+/** The identifier retained for revalidation: a resolved path, else the name. */
+function mountImageIdentifier(probe: AppImageProbe, entry: MountInfoEntry): string {
+  return mountImagePath(probe, entry) ?? entry.source
+}
+
+/**
+ * Whether the kernel mount entry identifies `imagePath`. Kernel-recorded paths
+ * must resolve to the same file. When the kernel records only a name, that name
+ * must equal the file name of the hinted image: the mount is still proven to be
+ * the AppImage this process runs from, but the kernel records no directory, so a
+ * same-named file in another directory is accepted and becomes the replacement
+ * target.
+ */
+function mountIdentifiesImage(probe: AppImageProbe, entry: MountInfoEntry, imagePath: string): boolean {
+  const resolved = mountImagePath(probe, entry)
+  if (resolved) return resolved === imagePath
+  if (!entry.source || entry.source.startsWith('/')) return false
+  return path.posix.basename(imagePath) === entry.source
 }
 
 function statFile(probe: AppImageProbe, value: string): ReturnType<AppImageProbe['stat']> | null {
@@ -168,7 +222,10 @@ export function verifyAppImage(probe: AppImageProbe): VerifyAppImageResult {
   } catch {
     return { ok: false, reason: 'The process mount table is not readable, so the AppImage cannot be verified.' }
   }
-  const mounts = parseMountInfo(mountInfoContents).filter((entry) => isAppImageFilesystem(entry.filesystem))
+  const imageName = path.posix.basename(imagePath)
+  const mounts = parseMountInfo(mountInfoContents).filter((entry) =>
+    isAppImageFilesystem(entry.filesystem, imageName)
+  )
   if (mounts.length === 0) {
     return { ok: false, reason: NOT_MOUNTED_REASON }
   }
@@ -179,9 +236,7 @@ export function verifyAppImage(probe: AppImageProbe): VerifyAppImageResult {
     if (!mountPoint) continue
     if (!containsPath(mountPoint, execPath)) continue
     sawContainingMount = true
-    const source = canonical(probe, entry.source)
-    if (!source) continue
-    if (source !== imagePath) continue
+    if (!mountIdentifiesImage(probe, entry, imagePath)) continue
     return {
       ok: true,
       target: {
@@ -192,7 +247,7 @@ export function verifyAppImage(probe: AppImageProbe): VerifyAppImageResult {
         mtimeMs: imageStat.mtimeMs,
         mode: imageStat.mode,
         mountPoint,
-        mountSource: source,
+        mountSource: mountImageIdentifier(probe, entry),
         filesystem: entry.filesystem
       }
     }
@@ -242,7 +297,10 @@ export function revalidateAppImage(probe: AppImageProbe, target: VerifiedAppImag
   } catch {
     return { ok: false, reason: 'The process mount table is not readable, so the AppImage cannot be revalidated.' }
   }
-  const mounts = parseMountInfo(mountInfoContents).filter((entry) => isAppImageFilesystem(entry.filesystem))
+  const imageName = path.posix.basename(target.imagePath)
+  const mounts = parseMountInfo(mountInfoContents).filter((entry) =>
+    isAppImageFilesystem(entry.filesystem, imageName)
+  )
   for (const entry of mounts) {
     const mountPoint = canonical(probe, entry.mountPoint)
     if (!mountPoint || mountPoint !== target.mountPoint) continue
@@ -252,8 +310,12 @@ export function revalidateAppImage(probe: AppImageProbe, target: VerifiedAppImag
         reason: 'The running executable is no longer inside the verified AppImage mount point.'
       }
     }
-    const source = canonical(probe, entry.source)
-    if (!source || source !== target.mountSource || source !== target.imagePath) {
+    const identifier = mountImageIdentifier(probe, entry)
+    if (
+      entry.filesystem !== target.filesystem ||
+      identifier !== target.mountSource ||
+      !mountIdentifiesImage(probe, entry, target.imagePath)
+    ) {
       return { ok: false, reason: 'The AppImage mount source no longer matches the verified update target.' }
     }
     return { ok: true }

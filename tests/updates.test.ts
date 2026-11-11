@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { UpdateChannel, UpdateProgress, UpdateStatus } from '../src/shared/types'
 import type { AppImageProbe, VerifiedAppImage } from '../src/main/appimage-binding'
-import { verifyAppImage } from '../src/main/appimage-binding'
+import { revalidateAppImage, verifyAppImage } from '../src/main/appimage-binding'
 import type { UpdateAdapter, UpdateDownloadTask, UpdateInfoSummary, UpdatePreferences } from '../src/main/updates'
 import { UpdateService, normalizeProgress, versionMatchesChannel } from '../src/main/updates'
 import { detectUpdateSupport } from '../src/main/update-support'
@@ -197,14 +197,16 @@ function makeStat(
   }
 }
 
-function buildMountInfo(source = IMAGE_PATH, mountPoint = MOUNT_POINT): string {
+function buildMountInfo(source = IMAGE_PATH, mountPoint = MOUNT_POINT, filesystem = 'squashfs'): string {
   const escape = (value: string): string => value.replace(/ /g, '\\040')
-  return `100 90 0:42 / ${escape(mountPoint)} rw,nosuid,nodev - squashfs ${escape(source)} ro\n`
+  return `100 90 0:42 / ${escape(mountPoint)} rw,nosuid,nodev - ${escape(filesystem)} ${escape(source)} ro\n`
 }
 
 /**
  * Fake kernel view of a mounted AppImage. `realpath` is the identity so the
- * tests can reason about the canonical paths they declare.
+ * tests can reason about the canonical paths they declare; it throws for a
+ * relative path — stricter than the real call, so a bare mount name can never
+ * be made to resolve by the working directory.
  */
 class FakeProbe implements AppImageProbe {
   platform: NodeJS.Platform = 'linux'
@@ -212,6 +214,7 @@ class FakeProbe implements AppImageProbe {
   hint: string | undefined = IMAGE_PATH
   mountInfo: string = buildMountInfo()
   private readonly files = new Map<string, FakeStat>()
+  private readonly readable = new Map<string, string>()
 
   constructor() {
     this.files.set(IMAGE_PATH, makeStat())
@@ -222,12 +225,15 @@ class FakeProbe implements AppImageProbe {
   }
 
   realpath(path: string): string {
+    if (!path.startsWith('/')) throw new Error(`ENOENT: ${path}`)
     return path
   }
 
   readFile(path: string): string {
-    if (path !== '/proc/self/mountinfo') throw new Error(`ENOENT: ${path}`)
-    return this.mountInfo
+    if (path === '/proc/self/mountinfo') return this.mountInfo
+    const value = this.readable.get(path)
+    if (value === undefined) throw new Error(`ENOENT: ${path}`)
+    return value
   }
 
   stat(path: string): FakeStat {
@@ -242,6 +248,10 @@ class FakeProbe implements AppImageProbe {
 
   removeFile(path: string): void {
     this.files.delete(path)
+  }
+
+  setReadable(path: string, contents: string): void {
+    this.readable.set(path, contents)
   }
 }
 
@@ -354,6 +364,119 @@ describe('AppImage binding', () => {
       supported: true,
       format: 'appimage',
       reason: null
+    })
+  })
+
+  it('accepts a FUSE mount that records the image name instead of its path', () => {
+    // The bundled AppImage runtime mounts with the file name as its fsname, so
+    // the kernel never records the absolute path. Resolving that name against
+    // the process working directory made verification depend on the launch cwd.
+    const probe = new FakeProbe()
+    probe.mountInfo = buildMountInfo('Commit 87.AppImage', MOUNT_POINT, 'fuse.Commit 87.AppImage')
+    const result = verifyAppImage(probe)
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error(result.reason)
+    expect(result.target.imagePath).toBe(IMAGE_PATH)
+    expect(result.target.mountSource).toBe('Commit 87.AppImage')
+    expect(result.target.mountPoint).toBe(MOUNT_POINT)
+    expect(revalidateAppImage(probe, result.target)).toEqual({ ok: true })
+  })
+
+  it('accepts a runtime that names a renamed image', () => {
+    // The mount is only identifiable by the fsname when the image has no
+    // `.AppImage` suffix to give it away.
+    const probe = new FakeProbe()
+    const renamed = '/home/user/commit87-nightly'
+    probe.hint = renamed
+    probe.setFile(renamed, makeStat())
+    probe.mountInfo = buildMountInfo('commit87-nightly', MOUNT_POINT, 'fuse.commit87-nightly')
+    const result = verifyAppImage(probe)
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error(result.reason)
+    expect(result.target.imagePath).toBe(renamed)
+    expect(result.target.mountSource).toBe('commit87-nightly')
+    expect(revalidateAppImage(probe, result.target)).toEqual({ ok: true })
+  })
+
+  it('binds a same-named file when the mount records only the image name', () => {
+    // The FUSE runtime records no directory, so the kernel cannot distinguish
+    // two files with the same name. Accepted trade-off: the mount is proven to
+    // be the AppImage this process runs from, but the replaced file is the one
+    // APPIMAGE names, which may live in another directory.
+    const probe = new FakeProbe()
+    const sameName = '/tmp/elsewhere/Commit 87.AppImage'
+    probe.hint = sameName
+    probe.setFile(sameName, makeStat({ ino: 7 }))
+    probe.mountInfo = buildMountInfo('Commit 87.AppImage', MOUNT_POINT, 'fuse.Commit 87.AppImage')
+    const result = verifyAppImage(probe)
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error(result.reason)
+    expect(result.target.imagePath).toBe(sameName)
+    expect(result.target.mountSource).toBe('Commit 87.AppImage')
+    expect(revalidateAppImage(probe, result.target)).toEqual({ ok: true })
+  })
+
+  it('refuses a mount source that is a relative path', () => {
+    const probe = new FakeProbe()
+    probe.mountInfo = buildMountInfo('dist/Commit 87.AppImage', MOUNT_POINT, 'fuse.squashfuse')
+    const result = verifyAppImage(probe)
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('expected the relative mount source to be rejected')
+    expect(result.reason).toContain('does not identify the image mounted')
+  })
+
+  it('rejects a FUSE mount name that does not match the hinted image', () => {
+    const probe = new FakeProbe()
+    probe.mountInfo = buildMountInfo('Other.AppImage', MOUNT_POINT, 'fuse.Other.AppImage')
+    const result = verifyAppImage(probe)
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('expected the mismatched mount name to be rejected')
+    expect(result.reason).toContain('does not identify the image mounted')
+  })
+
+  it('resolves a kernel loop mount through the loop device backing file', () => {
+    const probe = new FakeProbe()
+    probe.mountInfo = buildMountInfo('/dev/loop7', MOUNT_POINT, 'squashfs')
+    probe.setReadable('/sys/block/loop7/loop/backing_file', `${IMAGE_PATH}\n`)
+    const result = verifyAppImage(probe)
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error(result.reason)
+    expect(result.target.mountSource).toBe(IMAGE_PATH)
+    expect(revalidateAppImage(probe, result.target)).toEqual({ ok: true })
+
+    // A loop device that backs another file must not bind this installation.
+    probe.setReadable('/sys/block/loop7/loop/backing_file', '/home/user/Other.AppImage\n')
+    const other = verifyAppImage(probe)
+    expect(other.ok).toBe(false)
+    if (other.ok) throw new Error('expected the other loop backing file to be rejected')
+    expect(other.reason).toContain('does not identify the image mounted')
+  })
+
+  it('refuses a loop mount whose backing file cannot be identified', () => {
+    const probe = new FakeProbe()
+    probe.mountInfo = buildMountInfo('/dev/loop9', MOUNT_POINT, 'squashfs')
+
+    // No sysfs entry: the loop device cannot be traced back to a file.
+    const missing = verifyAppImage(probe)
+    expect(missing.ok).toBe(false)
+    if (missing.ok) throw new Error('expected the untraceable loop device to be rejected')
+    expect(missing.reason).toContain('does not identify the image mounted')
+
+    // A backing file that was deleted after mounting must not resolve either.
+    probe.setReadable('/sys/block/loop9/loop/backing_file', `${IMAGE_PATH} (deleted)\n`)
+    const deleted = verifyAppImage(probe)
+    expect(deleted.ok).toBe(false)
+  })
+
+  it('refuses to revalidate when the FUSE mount name changes', () => {
+    const probe = new FakeProbe()
+    probe.mountInfo = buildMountInfo('Commit 87.AppImage', MOUNT_POINT, 'fuse.Commit 87.AppImage')
+    const result = verifyAppImage(probe)
+    if (!result.ok) throw new Error(result.reason)
+    probe.mountInfo = buildMountInfo('Other.AppImage', MOUNT_POINT, 'fuse.Other.AppImage')
+    expect(revalidateAppImage(probe, result.target)).toEqual({
+      ok: false,
+      reason: 'The AppImage mount source no longer matches the verified update target.'
     })
   })
 
@@ -557,6 +680,23 @@ describe('UpdateService', () => {
     }
     expect(adapter.downloadTargets).toEqual([verifiedImage])
     expect(adapter.installTargets).toEqual([verifiedImage])
+  })
+
+  it('downloads and installs a FUSE-bound AppImage target', async () => {
+    const probe = new FakeProbe()
+    probe.mountInfo = buildMountInfo('Commit 87.AppImage', MOUNT_POINT, 'fuse.Commit 87.AppImage')
+    const verified = verifyAppImage(probe)
+    if (!verified.ok) throw new Error(verified.reason)
+    const { adapter, service } = setup({
+      probe,
+      environment: { platform: 'linux', isPackaged: true, appImage: verified.target }
+    })
+    await service.check()
+    await service.download()
+    expect(service.getStatus().phase).toBe('ready')
+    service.install()
+    expect(adapter.downloadTargets).toEqual([verified.target])
+    expect(adapter.installTargets).toEqual([verified.target])
   })
 
   it('refuses to download when the verified image disappears after the check', async () => {

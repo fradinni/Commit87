@@ -122,8 +122,13 @@ under `os.tmpdir()` and remove them afterwards; they require `git` on `PATH`.
   the conflict editor refuses a save against a changed baseline, and a partially staged file
   exposes both review sides.
 - **Update ownership**: an AppImage is accepted only when its mount contains the running
-  executable, an inherited `APPIMAGE` and an extracted tree are refused, and the verified
-  target is rechecked after the environment changes and before install.
+  executable and names the hinted image, whether the kernel records the image path, the
+  loop device's backing file or only the file name a FUSE runtime supplies; an inherited
+  `APPIMAGE` that does not match the mount, an extracted tree and a mount that names
+  another image are refused, and the verified target is rechecked after the environment
+  changes and before install. A name-only mount is matched by file name, so a same-named
+  file in another directory would be the replacement target (pinned by
+  *binds a same-named file when the mount records only the image name*).
 - **Development bootstrap**: a missing, partial or stale Electron runtime is provisioned
   once, a complete runtime triggers no download, and a failed installer gives an actionable
   error.

@@ -675,12 +675,18 @@ the main output, so the packaged ASAR still has no `node_modules` tree.
 
 The replacement target is bound to the running installation before any update work:
 `main/appimage-binding.ts` accepts an AppImage only when `realpath(process.execPath)` lies
-inside a kernel mount recorded in `/proc/self/mountinfo` whose filesystem is a squashfs
-AppImage mount and whose mount source resolves to the same file as `APPIMAGE`. `APPIMAGE`
-and `APPDIR` are treated as untrusted hints: an inherited variable, a path that exists, an
-executable bit or an AppImage header prove nothing. Extracted/unpacked runs, Snap, Flatpak
-and loop-mounted copies fail closed with an explicit reason. The verified target's device,
-inode, size, modification time, mount point and mount source are retained; the adapter
+inside a kernel mount recorded in `/proc/self/mountinfo` that is a squashfs mount, or a FUSE
+mount the runtime named after the image (`fuse.squashfuse`, `fuse.appimage`,
+`fuse.<image name>`). The mount source is compared as a resolved path when the kernel
+records an absolute one (a kernel loop mount is followed to the loop device's backing file
+in sysfs), compared as a name when the FUSE runtime records only the image's file name, and
+refused otherwise: a relative path proves nothing. The name form is the bundled runtime's
+shape and is inherently weaker, because the kernel keeps no directory for it: `APPIMAGE`
+may name a same-named file in another directory, and that file would be the one replaced.
+`APPIMAGE` and `APPDIR` remain untrusted hints: an inherited variable, a path that exists,
+an executable bit or an AppImage header prove nothing. Extracted/unpacked runs, Snap and
+Flatpak fail closed with an explicit reason. The verified target's device, inode, size,
+modification time, mount point, mount source and filesystem are retained; the adapter
 receives that object, sets `APPIMAGE` from it immediately before delegating, and the
 service revalidates the identity immediately before download and again immediately before
 install, refusing to reach the library when anything changed.
