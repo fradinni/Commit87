@@ -424,7 +424,9 @@ The in-app updater has two macOS paths, chosen by `main/mac-signing.ts`:
   (`main/updates.ts`) with a self-contained flow: it resolves the newest release from the
   GitHub releases API, downloads the architecture's `mac-<arch>.zip` with `fetch`
   (again: no quarantine attribute), verifies its SHA-256 against the release's
-  `SHA256SUMS.txt`, checks `codesign --verify --deep --strict`, reads the bundle's
+  `SHA256SUMS.txt`, confirms `codesign --verify --deep --strict` reports an intact
+  signature (an ad-hoc bundle has no trusted signer identity, so the checksum is the
+  integrity gate), reads the bundle's
   declared version, and stages it in a bounded, app-private cache (`userData/mac-update/download`).
   **Restart & install** first checks the installation location and copies and verifies a
   complete replacement on the destination filesystem while the app is still running.
@@ -441,9 +443,10 @@ The in-app updater has two macOS paths, chosen by `main/mac-signing.ts`:
 
 `scripts/install-macos.sh` is the command-line twin of that flow and is attached to every
 macOS release. It detects the architecture, resolves the newest release, downloads with
-`curl`, verifies `SHA256SUMS.txt` and the code signature, installs to `~/Applications`
-(`--system` for `/Applications`) and is idempotent, so re-running it is how command-line
-users update. It is also how a first install avoids the Gatekeeper step above.
+`curl`, verifies `SHA256SUMS.txt` and that the bundle's signature is intact, installs to
+`~/Applications` (`--system` for `/Applications`) and is idempotent, so re-running it is how
+command-line users update. `latest` and `beta` include prereleases; `--channel stable`
+excludes them. It is also how a first install avoids the Gatekeeper step above.
 `--uninstall` requires no network connection or Python. An explicit `--version vX.Y.Z`
 also permits reinstalling the same version or downgrading; an unpinned invocation only
 installs a newer release. The script stages and verifies the complete replacement on the

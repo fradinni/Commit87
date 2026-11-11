@@ -21,10 +21,14 @@
 #   bash install-macos.sh                 install the newest release, or update
 #   bash install-macos.sh --check         print the newest available version
 #   bash install-macos.sh --uninstall     remove the installed copy
-#   bash install-macos.sh --channel beta  prefer prerelease builds
+#   bash install-macos.sh --channel stable   follow stable releases only
+#   bash install-macos.sh --channel beta     include prerelease builds
 #   bash install-macos.sh --version v0.2.0-beta.9   install an exact tag
 #   bash install-macos.sh --to /Applications        install somewhere else
 #   bash install-macos.sh --system        install to /Applications
+#   bash install-macos.sh --keep-work     keep downloaded files for inspection
+#
+# `latest` and `beta` include prereleases; `stable` excludes them.
 #
 # Exit codes: 0 success / nothing to do, 1 run-time error, 2 usage error.
 
@@ -55,11 +59,15 @@ C_BOLD=${C_BOLD:-} C_GREEN=${C_GREEN:-} C_YELLOW=${C_YELLOW:-} C_RED=${C_RED:-} 
 say() { printf '%s\n' "${C_GREEN}==>${C_RESET} $*"; }
 warn() { printf '%s\n' "${C_YELLOW}warning:${C_RESET} $*" >&2; }
 die() { printf '%s\n' "${C_RED}error:${C_RESET} $*" >&2; exit 1; }
-usage() { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
+usage() { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
 
 # ---------------------------------------------------------------------------
 # Command line
 # ---------------------------------------------------------------------------
+
+need_value() {
+  (($# >= 2)) || die "$1 requires a value"
+}
 
 MODE=install
 CHANNEL=latest
@@ -72,9 +80,9 @@ while (($#)); do
     --check) MODE=check ;;
     --uninstall) MODE=uninstall ;;
     --update) MODE=install ;;
-    --channel) CHANNEL="${2-}"; shift ;;
-    --version) PINNED_TAG="${2-}"; shift ;;
-    --to) INSTALL_DIR="${2-}"; shift ;;
+    --channel) need_value "$@"; CHANNEL="$2"; shift ;;
+    --version) need_value "$@"; PINNED_TAG="$2"; shift ;;
+    --to) need_value "$@"; INSTALL_DIR="$2"; shift ;;
     --system) INSTALL_DIR=/Applications ;;
     --keep-work) KEEP_WORK=true ;;
     --help | -h) usage ;;
@@ -135,6 +143,9 @@ resolve_latest() {
   # passed by file name, not argv: macOS ARG_MAX would otherwise break this as
   # the release history grows.
   json_file=$(mktemp "${TMPDIR:-/tmp}/commit87-releases.XXXXXX")
+  # An interrupt while python runs must not leave the feed copy in TMPDIR.
+  trap 'rm -f "$json_file"; exit 130' INT
+  trap 'rm -f "$json_file"; exit 143' TERM HUP
   printf '%s' "$json" > "$json_file"
   out=$(CHECK_CHANNEL="$filter" CHECK_ARCH="$ARCH" python3 - "$json_file" <<'PY'
 import json, os, re, sys
@@ -150,17 +161,38 @@ if not isinstance(data, list):
 channel = os.environ["CHECK_CHANNEL"]
 arch = os.environ["CHECK_ARCH"]
 pattern = re.compile(r"^Commit87-[0-9].*-mac-" + re.escape(arch) + r"\.zip$")
+version_pattern = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$")
+
+def version_key(tag):
+    match = version_pattern.match(tag or "")
+    if not match:
+        return None
+    major, minor, patch, beta = match.groups()
+    # A stable release sorts above any beta of the same version.
+    return (int(major), int(minor), int(patch), 1 if beta is None else 0, int(beta or 0))
+
+# The API sorts by creation time, not semantic version, so a backport published
+# after a newer release can come first. Compare every match and keep the highest.
+best = None
 for release in data:
     if release.get("draft", False):
         continue
     if channel == "stable" and release.get("prerelease", False):
         continue
+    key = version_key(release.get("tag_name", ""))
+    if key is None:
+        continue
     for asset in release.get("assets", []) or []:
         if pattern.match(asset.get("name", "")):
-            print(release["tag_name"].lstrip("v"))
-            print(asset["name"])
-            print(release.get("published_at", "") or "")
-            sys.exit(0)
+            if best is None or key > best[0]:
+                best = (key, release, asset)
+            break
+
+if best is not None:
+    print(best[1]["tag_name"].lstrip("v"))
+    print(best[2]["name"])
+    print(best[1].get("published_at", "") or "")
+    sys.exit(0)
 sys.exit(10)
 PY
 ) || {
@@ -171,6 +203,7 @@ PY
     die "failed to resolve the newest release"
   }
   rm -f "$json_file"
+  trap - INT TERM HUP
 
   printf '%s\n' "$out"
 }

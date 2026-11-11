@@ -80,9 +80,10 @@ STAGED_ROOT=$3
 LOG=$4
 log() { echo "[commit87-swap] $(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
 notify_failure() {
-  osascript -e 'display alert "Commit87 update failed" message "The update could not be installed. Your previous installation has been kept. Please try again from a writable Applications folder." as warning' >/dev/null 2>&1 || true
+  osascript -e 'display alert "Commit87 update failed" message "The update could not be installed. Your previous installation has been kept. Quit Commit87 and try again, or use a writable Applications folder." as warning' >/dev/null 2>&1 || true
 }
 BACKUP="$STAGED_ROOT/previous.app"
+INSTALL_PENDING=0
 fail() {
   log "$*"
   if [ -d "$BACKUP" ]; then
@@ -97,6 +98,16 @@ fail() {
   notify_failure
   exit 1
 }
+restore_on_signal() {
+  log "interrupted during installation"
+  if [ "$INSTALL_PENDING" = 1 ] && [ -d "$BACKUP" ]; then
+    rm -rf "$TARGET" 2>/dev/null
+    mv "$BACKUP" "$TARGET" 2>/dev/null || log "could not restore the previous app; backup preserved at $BACKUP"
+  fi
+  notify_failure
+  exit 1
+}
+trap restore_on_signal INT TERM HUP
 log "waiting for pid $APP_PID to exit"
 for i in $(seq 1 120); do
   if ! kill -0 "$APP_PID" 2>/dev/null; then break; fi
@@ -110,6 +121,7 @@ if kill -0 "$APP_PID" 2>/dev/null; then
 fi
 log "installing into $TARGET"
 [ -d "$TARGET" ] || fail "current bundle is missing"
+INSTALL_PENDING=1
 mv "$TARGET" "$BACKUP" || fail "could not move current bundle aside"
 if ! mv "$STAGED" "$TARGET"; then
   fail "install failed; restoring backup"
@@ -118,6 +130,7 @@ xattr -dr com.apple.quarantine "$TARGET" >/dev/null 2>&1 || true
 if ! codesign --verify --deep --strict "$TARGET" 2>>"$LOG"; then
   fail "signature check failed; restoring backup"
 fi
+INSTALL_PENDING=0
 rm -rf "$STAGED_ROOT"
 log "relaunching"
 open "$TARGET"
@@ -390,10 +403,15 @@ export function createMacScriptUpdater(options: MacScriptUpdaterOptions): Update
             detached: true,
             stdio: 'ignore'
           })
+          child.on('error', (error) => {
+            safeLog(console, '[commit87:update]', 'warn', `update helper: ${error.message}`)
+          })
           await once(child, 'spawn')
           if (candidate !== selected || options.channel() !== selectedChannel) {
             child.kill()
-            await once(child, 'exit')
+            // A helper that exited before the kill has already emitted 'exit';
+            // waiting for another event would hang the install call forever.
+            if (child.exitCode === null && child.signalCode === null) await once(child, 'exit')
             throw new Error('The selected update changed while preparing installation')
           }
           child.unref()

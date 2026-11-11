@@ -12,6 +12,14 @@ import type { ApiRelease } from '../src/main/update-feed'
 
 const ZIP = 'https://github.com/fradinni/Commit87/releases/download'
 
+function assetsFor(version: string): ApiRelease['assets'] {
+  return [
+    { name: `Commit87-${version}-mac-arm64.zip`, browser_download_url: `${ZIP}/v${version}/a.zip` },
+    { name: `Commit87-${version}-mac-x64.zip`, browser_download_url: `${ZIP}/v${version}/x.zip` },
+    { name: `Commit87-${version}-mac-arm64.zip.blockmap`, browser_download_url: `${ZIP}/v${version}/a.bm` }
+  ]
+}
+
 function release(overrides: Partial<ApiRelease> = {}): ApiRelease {
   return {
     tag_name: 'v0.2.0-beta.9',
@@ -19,11 +27,7 @@ function release(overrides: Partial<ApiRelease> = {}): ApiRelease {
     prerelease: true,
     published_at: '2026-11-11T10:00:00Z',
     body: 'Release notes',
-    assets: [
-      { name: 'Commit87-0.2.0-beta.9-mac-arm64.zip', browser_download_url: `${ZIP}/v0.2.0-beta.9/a.zip` },
-      { name: 'Commit87-0.2.0-beta.9-mac-x64.zip', browser_download_url: `${ZIP}/v0.2.0-beta.9/x.zip` },
-      { name: 'Commit87-0.2.0-beta.9-mac-arm64.zip.blockmap', browser_download_url: `${ZIP}/v0.2.0-beta.9/a.bm` }
-    ],
+    assets: assetsFor('0.2.0-beta.9'),
     ...overrides
   }
 }
@@ -61,11 +65,27 @@ describe('release feed helpers', () => {
     expect(pickRelease([release({ assets: [] })], 'arm64', 'beta')).toBeNull()
   })
 
-  it('skips drafts and takes the first non-draft in API order', () => {
-    const first = release({ tag_name: 'v0.2.0-beta.10', draft: true })
+  it('skips drafts and takes the newest non-draft release', () => {
+    const first = release({ tag_name: 'v0.2.0-beta.10', assets: assetsFor('0.2.0-beta.10') })
     const second = release({ tag_name: 'v0.2.0-beta.9' })
-    const candidate = pickRelease([first, second], 'arm64', 'beta')
-    expect(candidate?.version).toBe('0.2.0-beta.9')
+    expect(pickRelease([first, second], 'arm64', 'beta')?.version).toBe('0.2.0-beta.10')
+
+    const draft = release({ tag_name: 'v0.2.0-beta.10', draft: true, assets: assetsFor('0.2.0-beta.10') })
+    expect(pickRelease([draft, second], 'arm64', 'beta')?.version).toBe('0.2.0-beta.9')
+  })
+
+  it('chooses the highest matching version regardless of API order', () => {
+    // The API sorts by creation time, so a backport created after a newer
+    // release appears first; taking the first match would hide the newer one.
+    const backport = release({ tag_name: 'v0.2.1', prerelease: false, assets: assetsFor('0.2.1') })
+    const newer = release({ tag_name: 'v0.3.0', prerelease: false, assets: assetsFor('0.3.0') })
+    expect(pickRelease([backport, newer], 'arm64', 'stable')?.version).toBe('0.3.0')
+  })
+
+  it('ignores tags this project never publishes', () => {
+    const odd = release({ tag_name: 'nightly', assets: assetsFor('nightly') })
+    const stable = release({ tag_name: 'v0.3.0', prerelease: false, assets: assetsFor('0.3.0') })
+    expect(pickRelease([odd, stable], 'arm64', 'stable')?.version).toBe('0.3.0')
   })
 
   it('returns null when no release matches', () => {

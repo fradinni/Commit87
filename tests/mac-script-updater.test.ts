@@ -25,7 +25,7 @@ const SUMS = `${sha256Hex(ZIP_BYTES)}  ${ZIP_ASSET}\n`
 const ALERT = [
   'display alert "Commit87 update failed"',
   'message "The update could not be installed. Your previous installation has been kept.',
-  'Please try again from a writable Applications folder." as warning'
+  'Quit Commit87 and try again, or use a writable Applications folder." as warning'
 ].join(' ')
 const execFileAsync = promisify(execFile)
 
@@ -214,7 +214,9 @@ exec /bin/mv "$@"`
     backup,
     async run(appPid, scenario = 'success') {
       const logPath = join(root, 'swap.log')
-      const scriptPath = join(root, 'swap helper.sh')
+      // The production adapter writes the helper inside the staging directory,
+      // so the helper deletes its own script during cleanup. Mirror that layout.
+      const scriptPath = join(stagedRoot, 'swap.sh')
       await writeFile(scriptPath, buildSwapHelperScript({
         appPid,
         targetBundle: bundlePath,
@@ -460,8 +462,12 @@ describe('createMacScriptUpdater', () => {
     ])
     expect(await readFile(join(staged, 'marker'), 'utf8')).toBe('new')
     expect(await readdir(cachePath)).toEqual(['download'])
-    expect((await stat(cachePath)).mode & 0o777).toBe(0o700)
-    expect((await stat(download)).mode & 0o777).toBe(0o700)
+    if (process.platform !== 'win32') {
+      // Windows does not model POSIX permission bits; the 0o700 modes are
+      // enforced by mkdir on POSIX platforms only.
+      expect((await stat(cachePath)).mode & 0o777).toBe(0o700)
+      expect((await stat(download)).mode & 0o777).toBe(0o700)
+    }
     expect(downloaded).toHaveBeenCalledWith(expect.objectContaining({ version: VERSION }))
     expect(progress).toHaveBeenLastCalledWith({
       percent: 100, transferred: ZIP_BYTES.length, total: ZIP_BYTES.length, bytesPerSecond: 0

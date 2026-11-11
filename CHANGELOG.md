@@ -28,6 +28,12 @@ All notable changes to Commit87 are documented here. The format follows
 - Ad-hoc macOS builds honor Beta-to-Stable downgrades. The command-line installer supports
   offline uninstall and explicit pinned reinstalls/downgrades; updater tests clean only their
   own isolated fixtures.
+- Both macOS updaters choose the highest matching release instead of the first entry in the
+  GitHub API's creation-ordered list, so a backport published later cannot hide a newer
+  release. `install-macos.sh` now rejects an option without its value, lists `--system` and
+  `--keep-work` in `--help`, is covered by `SHA256SUMS.txt`, and removes its temporary feed
+  copy when interrupted; the in-app swap helper restores the previous bundle on termination
+  signals and no longer hangs if the helper exits before a cancelled handoff.
 
 ## [0.2.0-beta.9] — 2026-11-11
 

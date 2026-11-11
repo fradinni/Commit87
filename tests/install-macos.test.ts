@@ -47,7 +47,11 @@ switch (command) {
     if (env.TEST_OFFLINE === '1') process.exit(22)
     const url = args.at(-1)
     if (url.includes('api.github.com')) {
-      console.log(JSON.stringify([{ tag_name: 'v' + env.TEST_VERSION, assets: [] }]))
+      if (env.TEST_RELEASES) {
+        console.log(fs.readFileSync(env.TEST_RELEASES, 'utf8'))
+      } else {
+        console.log(JSON.stringify([{ tag_name: 'v' + env.TEST_VERSION, assets: [] }]))
+      }
       break
     }
     const output = args[args.indexOf('-o') + 1]
@@ -123,7 +127,29 @@ function writeBundle(app: string, version: string, marker: string): void {
   writeFileSync(path.join(app, 'Contents', 'MacOS', 'Commit87'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
 }
 
-function createFixture(installedVersion: string | null = '0.1.0', version = '0.2.0') {
+function releaseInfo(
+  version: string,
+  options: { draft?: boolean; prerelease?: boolean; arches?: string[] } = {},
+): Record<string, unknown> {
+  const prerelease = options.prerelease ?? version.includes('-')
+  const arches = options.arches ?? ['arm64', 'x64']
+  return {
+    tag_name: `v${version}`,
+    draft: options.draft ?? false,
+    prerelease,
+    published_at: '2026-11-11T10:00:00Z',
+    assets: arches.map((arch) => ({
+      name: `Commit87-${version}-mac-${arch}.zip`,
+      browser_download_url: `https://example.invalid/Commit87-${version}-mac-${arch}.zip`,
+    })),
+  }
+}
+
+function createFixture(
+  installedVersion: string | null = '0.1.0',
+  version = '0.2.0',
+  options: { realPython?: boolean; releases?: unknown[] } = {},
+) {
   const approvedTemp = path.join(tmpdir(), 'opencode')
   const root = mkdtempSync(path.join(existsSync(approvedTemp) ? approvedTemp : tmpdir(), 'commit87 installer-'))
   roots.push(root)
@@ -135,20 +161,24 @@ function createFixture(installedVersion: string | null = '0.1.0', version = '0.2
   const payload = path.join(root, 'payload')
   const archive = path.join(root, 'release.zip')
   const sums = path.join(root, 'SHA256SUMS.txt')
+  const releases = path.join(root, 'releases.json')
   const log = path.join(root, 'commands.log')
   const running = path.join(root, 'running')
   const stub = path.join(root, 'command.cjs')
   for (const directory of [bin, destination, temp, home, payload]) mkdirSync(directory)
   writeFileSync(log, '')
   writeFileSync(stub, COMMAND_STUB)
+  writeFileSync(releases, JSON.stringify(options.releases ?? []))
   for (const command of [
     'uname', 'date', 'curl', 'python3', 'codesign', 'pgrep', 'pkill', 'mv', 'ditto',
     'open', 'osascript', 'killall', 'xattr', 'sleep',
   ]) {
+    if (command === 'python3' && options.realPython) continue
     const file = path.join(bin, command)
     writeFileSync(file, '#!/bin/bash\nexec "$TEST_NODE" "$TEST_STUB" "$0" "$@"\n')
     chmodSync(file, 0o755)
   }
+  if (options.realPython) symlinkSync('/usr/bin/python3', path.join(bin, 'python3'))
   for (const [command, file] of Object.entries({
     awk: '/usr/bin/awk',
     dirname: '/usr/bin/dirname',
@@ -194,6 +224,7 @@ function createFixture(installedVersion: string | null = '0.1.0', version = '0.2
         TEST_RUNNING: running,
         TEST_ARCHIVE: archive,
         TEST_SUMS: sums,
+        TEST_RELEASES: releases,
         TEST_VERSION: version,
         ...overrides,
       },
@@ -211,7 +242,7 @@ function createFixture(installedVersion: string | null = '0.1.0', version = '0.2
     expect(readdirSync(destination).filter((name) => name.startsWith('.commit87-'))).toEqual([])
   }
 
-  return { root, destination, target, temp, sums, running, run, marker, events, expectClean }
+  return { root, destination, target, temp, sums, releases, running, run, marker, events, expectClean }
 }
 
 afterEach(() => {
@@ -430,5 +461,55 @@ describe.skipIf(process.platform !== 'darwin')('macOS installer shell regression
     expect(events.filter((event) => event.command === 'pkill')).toHaveLength(1)
     expect(events.some((event) => ['mv', 'open'].includes(event.command))).toBe(false)
     fixture.expectClean()
+  })
+
+  it('resolves the highest version even when the API lists a backport first', () => {
+    const fixture = createFixture('0.1.0', '0.2.0', {
+      realPython: true,
+      releases: [releaseInfo('0.2.1'), releaseInfo('0.3.0'), releaseInfo('0.2.2')],
+    })
+
+    const result = fixture.run(['--check'])
+
+    expect(result.status, result.output).toBe(0)
+    expect(result.output).toContain('newest 0.3.0')
+  })
+
+  it('filters the channel with the real resolver', () => {
+    const releases = [releaseInfo('0.3.0-beta.2'), releaseInfo('0.2.5')]
+    const stable = createFixture('0.1.0', '0.2.0', { realPython: true, releases })
+    const beta = createFixture('0.1.0', '0.2.0', { realPython: true, releases })
+
+    const stableResult = stable.run(['--check', '--channel', 'stable'])
+    const betaResult = beta.run(['--check', '--channel', 'beta'])
+
+    expect(stableResult.status, stableResult.output).toBe(0)
+    expect(stableResult.output).toContain('newest 0.2.5')
+    expect(betaResult.status, betaResult.output).toBe(0)
+    expect(betaResult.output).toContain('newest 0.3.0-beta.2')
+  })
+
+  it('ignores drafts and releases without a build for the running architecture', () => {
+    const fixture = createFixture('0.1.0', '0.2.0', {
+      realPython: true,
+      releases: [releaseInfo('0.4.0', { draft: true }), releaseInfo('0.3.1', { arches: ['x64'] })],
+    })
+
+    const result = fixture.run(['--check'])
+
+    expect(result.status, result.output).toBe(1)
+    expect(result.output).toContain('no arm64 Commit87 build found')
+  })
+
+  it('rejects a missing value and documents every option in --help', () => {
+    const fixture = createFixture()
+    const missing = fixture.run(['--version'])
+    const help = fixture.run(['--help'])
+
+    expect(missing.status, missing.output).toBe(1)
+    expect(missing.output).toContain('--version requires a value')
+    expect(help.status, help.output).toBe(0)
+    expect(help.output).toContain('--system')
+    expect(help.output).toContain('--keep-work')
   })
 })

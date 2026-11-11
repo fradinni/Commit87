@@ -223,15 +223,19 @@ and CA certificates because their sandbox cannot use the host binaries.
 **macOS — recommended:** download `install-macos.sh` from the release page and run it. The
 script detects the machine's architecture, downloads the newest release with `curl` (which
 never attaches the quarantine attribute Gatekeeper enforces), verifies the archive against
-the release `SHA256SUMS.txt`, checks its code signature, installs to `~/Applications` and
-can update an existing copy in place — with no Apple Developer ID, notarization or
-Gatekeeper dance required:
+the release `SHA256SUMS.txt`, confirms the bundle's signature is intact, installs to
+`~/Applications` and can update an existing copy in place — with no Apple Developer ID,
+notarization or Gatekeeper dance required:
 
 ```bash
 bash install-macos.sh                 # install or update
 bash install-macos.sh --check         # what is the newest available version?
 bash install-macos.sh --uninstall     # remove the copy in ~/Applications
 ```
+
+`latest` (the default) and `beta` include prerelease builds; pass `--channel stable` to
+follow stable releases only. Because an ad-hoc signature has no verified signer identity,
+the release checksum — not the signature — is the integrity gate.
 
 Uninstall works offline. To reinstall or deliberately downgrade, pass an exact release
 tag with `--version vX.Y.Z`; without a pin, the script only installs newer versions.
@@ -243,7 +247,9 @@ from Beta to Stable may offer an older stable version. The `.dmg` (mount and dra
 artifacts remain available; a macOS build that was produced without the signing secrets is
 ad-hoc signed only, `SIGNING-STATUS.txt` says so, and Gatekeeper then blocks its first
 launch until you allow it in System Settings > Privacy & Security — the installer script
-above is the way to avoid that step.
+above is the way to avoid that step. The in-app updater fetches through Node's HTTP stack
+rather than the system network settings, so a network that requires a system-configured
+proxy or installs a TLS-inspecting root certificate may need the installer script instead.
 
 Windows installers are unsigned unless the release configured a certificate and then show a
 SmartScreen warning; `SIGNING-STATUS.txt` records what the build actually did.

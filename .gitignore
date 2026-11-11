@@ -34,3 +34,6 @@ snap/*.snap
 *.pem
 *.p12
 *.pfx
+
+# Symlinked dependency tree (worktrees)
+node_modules

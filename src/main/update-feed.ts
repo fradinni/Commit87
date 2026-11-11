@@ -46,23 +46,33 @@ export function macZipAssetName(version: string, arch: 'arm64' | 'x64'): string 
 }
 
 /**
- * First release that is not a draft, belongs to the requested channel and
- * carries the zip for this architecture. The API orders releases newest
- * first, so choosing the first match picks the newest release of the channel.
+ * Highest release that is not a draft, belongs to the requested channel and
+ * carries the zip for this architecture. The API sorts by creation time, which
+ * is not semantic-version order: a backport published after a newer release
+ * can appear first, so every matching release is compared instead of taking
+ * the first one.
  */
 export function pickRelease(
   releases: readonly ApiRelease[],
   arch: 'arm64' | 'x64',
   channel: UpdateChannel
 ): ReleaseCandidate | null {
+  let best: ReleaseCandidate | null = null
   for (const release of releases) {
     if (release.draft) continue
     const version = normalizeVersion(release.tag_name)
     if (!versionMatchesChannel(version, channel)) continue
+    try {
+      parseVersion(version)
+    } catch {
+      // Ignore tags this project never publishes rather than failing the check.
+      continue
+    }
+    if (best && !isVersionNewer(version, best.version)) continue
     const name = macZipAssetName(version, arch)
     const asset = release.assets.find((entry) => entry.name === name)
     if (!asset) continue
-    return {
+    best = {
       version: version,
       tag: release.tag_name,
       zipAsset: name,
@@ -71,7 +81,7 @@ export function pickRelease(
       notes: release.body
     }
   }
-  return null
+  return best
 }
 
 export interface ParsedVersion {
