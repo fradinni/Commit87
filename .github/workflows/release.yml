@@ -190,8 +190,19 @@ jobs:
         if: matrix.target == 'linux'
         # deb/rpm/pacman go through electron-builder's bundled fpm, which needs
         # fakeroot and rpm on the host and bsdtar (libarchive-tools) for the
-        # pacman .MTREE index.
-        run: sudo apt-get update && sudo apt-get install -y fakeroot rpm libarchive-tools
+        # pacman .MTREE index. The hosted runner's default mirror has had
+        # transient DNS failures, so retry over IPv4 before failing the job.
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if sudo apt-get -o Acquire::Retries=3 -o Acquire::ForceIPv4=true update \
+              && sudo apt-get -o Acquire::Retries=3 -o Acquire::ForceIPv4=true install -y fakeroot rpm libarchive-tools; then
+              exit 0
+            fi
+            echo "apt attempt ${attempt} failed; retrying"
+            sleep 20
+          done
+          exit 1
       - name: Apply the resolved version
         shell: bash
         run: node scripts/sync-version.mjs "$RELEASE_VERSION"
