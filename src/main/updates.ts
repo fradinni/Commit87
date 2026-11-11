@@ -27,7 +27,7 @@ export interface UpdateAdapter {
    * never reads a possibly-mutated `APPIMAGE` environment variable.
    */
   download(target: VerifiedAppImage | null): UpdateDownloadTask
-  quitAndInstall(target: VerifiedAppImage | null): void
+  quitAndInstall(target: VerifiedAppImage | null): void | Promise<void>
   onChecking(listener: () => void): void
   onAvailable(listener: (info: UpdateInfoSummary) => void): void
   onNotAvailable(listener: () => void): void
@@ -330,7 +330,7 @@ export class UpdateService {
     return this.downloadPromise
   }
 
-  install(): void {
+  install(): void | Promise<void> {
     if (!this.support.supported) {
       throw new Error(this.support.reason || 'Automatic updates are not supported on this build.')
     }
@@ -346,7 +346,23 @@ export class UpdateService {
       this.emit()
       throw error
     }
-    this.adapter.quitAndInstall(binding.target)
+    const generation = this.checkGeneration
+    const version = this.status.version
+    const failIfFresh = (error: unknown): void => {
+      if (generation !== this.checkGeneration || this.status.version !== version || this.status.phase !== 'ready') return
+      this.fail(error)
+      this.emit()
+    }
+    try {
+      const result = this.adapter.quitAndInstall(binding.target)
+      return result?.catch((error: unknown) => {
+        failIfFresh(error)
+        throw error
+      })
+    } catch (error) {
+      failIfFresh(error)
+      throw error
+    }
   }
 
   /**

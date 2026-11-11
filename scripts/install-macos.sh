@@ -175,15 +175,6 @@ PY
   printf '%s\n' "$out"
 }
 
-RELEASE_INFO=$(resolve_latest)
-LATEST_VERSION=$(printf '%s\n' "$RELEASE_INFO" | sed -n '1p')
-ZIP_NAME=$(printf '%s\n' "$RELEASE_INFO" | sed -n '2p')
-PUBLISHED_AT=$(printf '%s\n' "$RELEASE_INFO" | sed -n '3p')
-
-if [[ -z "$LATEST_VERSION" || -z "$ZIP_NAME" ]]; then
-  die "could not resolve a ${ARCH} release"
-fi
-
 # ---------------------------------------------------------------------------
 # Installed copy detection
 # ---------------------------------------------------------------------------
@@ -232,6 +223,42 @@ version_gt() {
 # Modes
 # ---------------------------------------------------------------------------
 
+quit_app() {
+  if ! pgrep -x "$PRODUCT" >/dev/null 2>&1; then
+    return
+  fi
+  pkill -x "$PRODUCT" 2>/dev/null || true
+  for _ in 1 2 3 4 5 6; do
+    pgrep -x "$PRODUCT" >/dev/null 2>&1 || return 0
+    sleep 1
+  done
+  if pgrep -x "$PRODUCT" >/dev/null 2>&1; then
+    die "${PRODUCT} is still running; quit it manually and try again. The installed app was not changed."
+  fi
+}
+
+if [[ "$MODE" == uninstall ]]; then
+  if [[ -z "$INSTALLED_PATH" ]]; then
+    echo "${PRODUCT} is not installed in ${INSTALL_DIR:-$HOME/Applications or /Applications}; nothing to do."
+    exit 0
+  fi
+  say "Quitting ${PRODUCT}…"
+  quit_app
+  say "Removing ${INSTALLED_PATH}"
+  rm -rf "$INSTALLED_PATH"
+  echo "done. The app was removed; your repositories, identities and settings were kept."
+  exit 0
+fi
+
+RELEASE_INFO=$(resolve_latest)
+LATEST_VERSION=$(printf '%s\n' "$RELEASE_INFO" | sed -n '1p')
+ZIP_NAME=$(printf '%s\n' "$RELEASE_INFO" | sed -n '2p')
+PUBLISHED_AT=$(printf '%s\n' "$RELEASE_INFO" | sed -n '3p')
+
+if [[ -z "$LATEST_VERSION" || -z "$ZIP_NAME" ]]; then
+  die "could not resolve a ${ARCH} release"
+fi
+
 if [[ "$MODE" == check ]]; then
   echo "${PRODUCT}: local ${INSTALLED_VERSION:-not installed} · newest ${LATEST_VERSION} (${ZIP_NAME})"
   if [[ -n "$INSTALLED_VERSION" ]]; then
@@ -246,24 +273,12 @@ if [[ "$MODE" == check ]]; then
   exit 0
 fi
 
-if [[ "$MODE" == uninstall ]]; then
-  if [[ -z "$INSTALLED_PATH" ]]; then
-    echo "${PRODUCT} is not installed in ${INSTALL_DIR:-$HOME/Applications or /Applications}; nothing to do."
-    exit 0
-  fi
-  say "Quitting ${PRODUCT}…"
-  pkill -x "$PRODUCT" 2>/dev/null || true
-  sleep 1
-  say "Removing ${INSTALLED_PATH}"
-  rm -rf "$INSTALLED_PATH"
-  echo "done. The app was removed; your repositories, identities and settings were kept."
-  exit 0
-fi
-
 # install / update ----------------------------------------------------------
 
 if [[ -n "$INSTALLED_VERSION" ]]; then
-  if version_gt "$LATEST_VERSION" "$INSTALLED_VERSION"; then
+  if [[ -n "$PINNED_TAG" ]]; then
+    say "Installing requested ${PRODUCT} ${LATEST_VERSION} (replacing ${INSTALLED_VERSION})"
+  elif version_gt "$LATEST_VERSION" "$INSTALLED_VERSION"; then
     say "Updating ${PRODUCT} ${INSTALLED_VERSION} → ${LATEST_VERSION}"
   else
     echo "${PRODUCT} ${INSTALLED_VERSION} is already the newest release (${LATEST_VERSION})."
@@ -286,7 +301,55 @@ fi
 mkdir -p "$BASE_DIR"
 TMP_BASE=${TMPDIR:-/tmp}
 WORK=$(mktemp -d "${TMP_BASE%/}/commit87-install.XXXXXX")
-trap '[[ $KEEP_WORK == false ]] && rm -rf "$WORK"' EXIT
+STAGE=
+BACKUP_DIR=
+BACKUP=
+INSTALL_PENDING=false
+TARGET="$BASE_DIR/Commit87.app"
+
+restore_previous() {
+  # The move-aside operation may itself have failed or been interrupted before
+  # moving anything. In that case the target is still the original app.
+  if [[ -n "$BACKUP" && ! -e "$BACKUP" && ! -L "$BACKUP" ]]; then
+    INSTALL_PENDING=false
+    return 0
+  fi
+  # Never move the backup into an existing directory: mv would nest it inside
+  # the broken replacement instead of restoring the installed bundle.
+  if [[ -e "$TARGET" || -L "$TARGET" ]]; then
+    if ! mv "$TARGET" "$STAGE/failed-Commit87.app"; then
+      warn "could not move the failed replacement aside at ${TARGET}; previous copy kept at ${BACKUP:-not installed}"
+      return 1
+    fi
+  fi
+  if [[ -n "$BACKUP" ]]; then
+    if ! mv "$BACKUP" "$TARGET"; then
+      warn "could not restore the previous copy; it is kept at ${BACKUP}"
+      return 1
+    fi
+    say "Restored the previous ${PRODUCT} at ${TARGET}"
+  fi
+  INSTALL_PENDING=false
+}
+
+cleanup() {
+  local status=$?
+  if [[ "$INSTALL_PENDING" == true ]]; then
+    restore_previous || true
+  fi
+  if [[ "$KEEP_WORK" == false ]]; then
+    rm -rf "$WORK"
+    [[ -z "$STAGE" ]] || rm -rf "$STAGE"
+  fi
+  # A backup that could not be restored is recovery data, never temporary trash.
+  if [[ -n "$BACKUP_DIR" && ! -e "$BACKUP" && ! -L "$BACKUP" ]]; then
+    rmdir "$BACKUP_DIR" 2>/dev/null || true
+  fi
+  return "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 say "Downloading ${ZIP_NAME}…"
 ZIP_PATH="$WORK/$ZIP_NAME"
@@ -304,9 +367,12 @@ ACTUAL=$(shasum -a 256 "$ZIP_PATH" | awk '{ print $1 }')
 [[ "$ACTUAL" == "$EXPECTED" ]] || die "checksum mismatch for $ZIP_NAME (refusing to install a corrupted download)"
 
 say "Extracting…"
-mkdir -p "$WORK/app"
-unzip -q "$ZIP_PATH" -d "$WORK/app" 2>/dev/null || ditto -x -k "$ZIP_PATH" "$WORK/app"
-APP_PATH="$WORK/app/Commit87.app"
+# Extract and verify on the destination filesystem before touching the current
+# app. The final swap is a rename, never a cross-volume partial copy.
+STAGE=$(mktemp -d "${BASE_DIR%/}/.commit87-install.XXXXXX")
+mkdir -p "$STAGE/app"
+unzip -q "$ZIP_PATH" -d "$STAGE/app" 2>/dev/null || ditto -x -k "$ZIP_PATH" "$STAGE/app"
+APP_PATH="$STAGE/app/Commit87.app"
 [[ -d "$APP_PATH" ]] || die "the archive does not contain Commit87.app"
 
 APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' \
@@ -325,34 +391,27 @@ fi
 xattr -dr com.apple.quarantine "$APP_PATH" >/dev/null 2>&1 || true
 
 say "Quitting any running ${PRODUCT} instance…"
-if pgrep -x "$PRODUCT" >/dev/null 2>&1; then
-  pkill -x "$PRODUCT" 2>/dev/null || true
-  for _ in 1 2 3 4 5 6; do
-    pgrep -x "$PRODUCT" >/dev/null 2>&1 || break
-    sleep 1
-  done
-fi
+quit_app
 
-TARGET="$BASE_DIR/Commit87.app"
-BACKUP=
-if [[ -d "$TARGET" ]]; then
-  BACKUP="${BASE_DIR}/Commit87.old-$(date +%s)"
+if [[ -e "$TARGET" || -L "$TARGET" ]]; then
+  BACKUP_DIR=$(mktemp -d "${BASE_DIR%/}/.commit87-backup.XXXXXX")
+  BACKUP="$BACKUP_DIR/Commit87.app"
   say "Replacing ${TARGET}"
+  INSTALL_PENDING=true
   mv "$TARGET" "$BACKUP" || die "could not move aside the current ${PRODUCT}"
 fi
+INSTALL_PENDING=true
 if ! mv "$APP_PATH" "$TARGET"; then
-  say "move failed; copying with ditto"
-  if ! ditto "$APP_PATH" "$TARGET"; then
-    if [[ -n "$BACKUP" && -d "$BACKUP" ]]; then
-      mv "$BACKUP" "$TARGET" 2>/dev/null || warn "could not restore the previous copy at ${TARGET}"
-    fi
-    die "could not install ${PRODUCT} into ${BASE_DIR}"
-  fi
-fi
-if [[ -n "$BACKUP" ]]; then
-  rm -rf "$BACKUP"
+  die "could not install ${PRODUCT} into ${BASE_DIR}"
 fi
 xattr -dr com.apple.quarantine "$TARGET" >/dev/null 2>&1 || true
+if ! codesign --verify --deep --strict --verbose=1 "$TARGET" 2>/dev/null; then
+  die "the installed ${PRODUCT} failed its code-signature check"
+fi
+INSTALL_PENDING=false
+if [[ -n "$BACKUP_DIR" ]]; then
+  rm -rf "$BACKUP_DIR"
+fi
 
 say "Launching ${PRODUCT} ${LATEST_VERSION}"
 open -n "$TARGET"

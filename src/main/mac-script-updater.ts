@@ -1,10 +1,10 @@
 import { spawn, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { createWriteStream, writeFileSync } from 'node:fs'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { constants, createWriteStream } from 'node:fs'
+import { access, lstat, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
 import { once } from 'node:events'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { pipeline } from 'node:stream/promises'
 import type { UpdateChannel, UpdateProgress } from '@shared/types'
 import { safeLog } from './logging'
 import type { UpdateAdapter, UpdateDownloadTask, UpdateInfoSummary } from './updates'
@@ -16,6 +16,15 @@ const DOWNLOAD_TIMEOUT_MS = 30 * 60_000
 const MAX_RELEASES = 100
 const execFileAsync = promisify(execFile)
 
+async function removeWorkspace(directory: string): Promise<void> {
+  // Electron's patched fs treats app.asar as a virtual directory. Recursive
+  // cleanup must operate on the physical archive, not its virtual contents.
+  const { rm } = process.versions.electron
+    ? (await import('original-fs')).promises
+    : await import('node:fs/promises')
+  await rm(directory, { recursive: true, force: true, maxRetries: 3 })
+}
+
 export interface MacScriptUpdaterOptions {
   owner: string
   repo: string
@@ -25,6 +34,8 @@ export interface MacScriptUpdaterOptions {
   channel: () => UpdateChannel
   /** Absolute path to the running Commit87.app bundle. */
   bundlePath: string
+  /** Private, app-owned cache. One download is retained across sessions at most. */
+  cachePath: string
   /** Ends the session after the swap helper has been detached. */
   quit: () => void
   /**
@@ -68,37 +79,46 @@ STAGED=$2
 STAGED_ROOT=$3
 LOG=$4
 log() { echo "[commit87-swap] $(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
+notify_failure() {
+  osascript -e 'display alert "Commit87 update failed" message "The update could not be installed. Your previous installation has been kept. Please try again from a writable Applications folder." as warning' >/dev/null 2>&1 || true
+}
+BACKUP="$STAGED_ROOT/previous.app"
+fail() {
+  log "$*"
+  if [ -d "$BACKUP" ]; then
+    if ! rm -rf "$TARGET" || ! mv "$BACKUP" "$TARGET"; then
+      log "could not restore the previous app; backup preserved at $BACKUP"
+      notify_failure
+      exit 1
+    fi
+  fi
+  rm -rf "$STAGED_ROOT"
+  [ -d "$TARGET" ] && open "$TARGET"
+  notify_failure
+  exit 1
+}
 log "waiting for pid $APP_PID to exit"
 for i in $(seq 1 120); do
   if ! kill -0 "$APP_PID" 2>/dev/null; then break; fi
   sleep 0.5
 done
 if kill -0 "$APP_PID" 2>/dev/null; then
-  log "pid still alive; proceeding anyway"
+  log "pid still alive; installation aborted without changing the app"
+  rm -rf "$STAGED_ROOT"
+  notify_failure
+  exit 1
 fi
 log "installing into $TARGET"
-mkdir -p "$(dirname "$TARGET")"
-BACKUP="$TARGET.old-$(date +%s)"
-if [ -d "$TARGET" ]; then
-  mv "$TARGET" "$BACKUP" || { log "could not move current bundle aside"; exit 1; }
-fi
+[ -d "$TARGET" ] || fail "current bundle is missing"
+mv "$TARGET" "$BACKUP" || fail "could not move current bundle aside"
 if ! mv "$STAGED" "$TARGET"; then
-  log "rename failed; falling back to ditto"
-  if ! ditto "$STAGED" "$TARGET"; then
-    log "install failed; restoring backup"
-    [ -d "$BACKUP" ] && mv "$BACKUP" "$TARGET"
-    rm -rf "$STAGED_ROOT"
-    exit 1
-  fi
+  fail "install failed; restoring backup"
 fi
 xattr -dr com.apple.quarantine "$TARGET" >/dev/null 2>&1 || true
 if ! codesign --verify --deep --strict "$TARGET" 2>>"$LOG"; then
-  log "signature check failed; restoring backup"
-  [ -d "$BACKUP" ] && mv "$BACKUP" "$TARGET"
-  rm -rf "$STAGED_ROOT"
-  exit 1
+  fail "signature check failed; restoring backup"
 fi
-rm -rf "$BACKUP" "$STAGED_ROOT"
+rm -rf "$STAGED_ROOT"
 log "relaunching"
 open "$TARGET"
 exit 0
@@ -122,6 +142,11 @@ export function createMacScriptUpdater(options: MacScriptUpdaterOptions): Update
   let candidate: ReleaseCandidate | null = null
   let stagingRoot: string | null = null
   let stagedApp: string | null = null
+  let allowDowngrade = false
+  let installPromise: Promise<void> | null = null
+  let installCandidate: ReleaseCandidate | null = null
+  let installChannel: UpdateChannel | null = null
+  let handedOff = false
 
   const checking: Array<() => void> = []
   const available: Array<(info: UpdateInfoSummary) => void> = []
@@ -143,7 +168,7 @@ export function createMacScriptUpdater(options: MacScriptUpdaterOptions): Update
 
   async function cleanStaging(): Promise<void> {
     if (stagingRoot) {
-      await rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined)
+      await removeWorkspace(stagingRoot)
       stagingRoot = null
       stagedApp = null
     }
@@ -153,7 +178,7 @@ export function createMacScriptUpdater(options: MacScriptUpdaterOptions): Update
     setChannel: () => undefined,
     setAutoDownload: () => undefined,
     setAutoInstallOnAppQuit: () => undefined,
-    setAllowDowngrade: () => undefined,
+    setAllowDowngrade: (value) => { allowDowngrade = value },
 
     async check(): Promise<UpdateInfoSummary | null> {
       candidate = null
@@ -162,7 +187,10 @@ export function createMacScriptUpdater(options: MacScriptUpdaterOptions): Update
       try {
         const releases = await listReleases()
         const found = pickRelease(releases, options.arch, channel)
-        if (!found || !isVersionNewer(found.version, options.currentVersion)) {
+        if (
+          !found || found.version === options.currentVersion ||
+          (!allowDowngrade && !isVersionNewer(found.version, options.currentVersion))
+        ) {
           notAvailable.forEach((listener) => listener())
           return null
         }
@@ -194,8 +222,19 @@ export function createMacScriptUpdater(options: MacScriptUpdaterOptions): Update
 
       const promise = (async (): Promise<void> => {
         try {
+          // Installation and downloads share one bounded cache. A new channel
+          // must wait for stale preparation (including cleanup) to fully settle
+          // before reusing that physical directory.
+          await installPromise?.catch(() => undefined)
+          if (handedOff) throw new Error('An update installation has already started')
           await cleanStaging()
-          stagingRoot = await mkdtemp(join(tmpdir(), 'commit87-update-'))
+          // This private, fixed workspace bounds deferred downloads across app
+          // restarts. Never scan or delete other sessions' OS temp directories.
+          await mkdir(options.cachePath, { recursive: true, mode: 0o700 })
+          stagingRoot = join(options.cachePath, 'download')
+          await removeWorkspace(stagingRoot)
+          await mkdir(stagingRoot, { mode: 0o700 })
+          controller.signal.throwIfAborted()
           const zipPath = join(stagingRoot, selected.zipAsset)
           const zipResponse = await fetch(selected.zipUrl, { redirect: 'follow', signal: controller.signal })
           if (!zipResponse.ok || !zipResponse.body) {
@@ -205,39 +244,42 @@ export function createMacScriptUpdater(options: MacScriptUpdaterOptions): Update
 
           safeLog(console, '[commit87:update]', 'info', `downloading ${selected.zipAsset} (${total} bytes)`)
           const writer = createWriteStream(zipPath)
+          // Also interrupt a stalled HTTP body when the destination fails.
+          // pipeline continuously handles stream errors, including async open.
+          writer.once('error', () => controller.abort())
           let transferred = 0
           let lastEmitAt = 0
           let lastBytes = 0
           let lastTickAt = Date.now()
-          try {
-            for await (const chunk of zipResponse.body) {
-              const buffer = Buffer.from(chunk)
-              transferred += buffer.length
-              if (!writer.write(buffer)) await once(writer, 'drain')
-              const now = Date.now()
-              if (now - lastEmitAt >= PROGRESS_THROTTLE_MS) {
-                const seconds = (now - lastTickAt) / 1000
-                const bytesPerSecond = seconds > 0 ? Math.round((transferred - lastBytes) / seconds) : 0
-                progress.forEach((listener) =>
-                  listener({
-                    percent: total ? Math.round((transferred / total) * 1000) / 10 : 0,
-                    transferred,
-                    total,
-                    bytesPerSecond
-                  })
-                )
-                lastEmitAt = now
-                lastTickAt = now
-                lastBytes = transferred
+          await pipeline(
+            zipResponse.body,
+            async function* (source: AsyncIterable<Uint8Array>) {
+              for await (const chunk of source) {
+                const buffer = Buffer.from(chunk)
+                transferred += buffer.length
+                const now = Date.now()
+                if (now - lastEmitAt >= PROGRESS_THROTTLE_MS) {
+                  const seconds = (now - lastTickAt) / 1000
+                  const bytesPerSecond = seconds > 0 ? Math.round((transferred - lastBytes) / seconds) : 0
+                  progress.forEach((listener) =>
+                    listener({
+                      percent: total ? Math.round((transferred / total) * 1000) / 10 : 0,
+                      transferred,
+                      total,
+                      bytesPerSecond
+                    })
+                  )
+                  lastEmitAt = now
+                  lastTickAt = now
+                  lastBytes = transferred
+                }
+                yield buffer
               }
-            }
-            writer.end()
-            await once(writer, 'finish')
-            progress.forEach((listener) => listener({ percent: 100, transferred, total, bytesPerSecond: 0 }))
-          } catch (error) {
-            writer.destroy()
-            throw error
-          }
+            },
+            writer,
+            { signal: controller.signal }
+          )
+          progress.forEach((listener) => listener({ percent: 100, transferred, total, bytesPerSecond: 0 }))
 
           // Checksum gate: the release publishes SHA256SUMS.txt next to the
           // archive. A mismatch means a tampered or truncated download.
@@ -261,6 +303,7 @@ export function createMacScriptUpdater(options: MacScriptUpdaterOptions): Update
           // the bundle before it is ever staged for the swap.
           const appDir = join(stagingRoot, 'app')
           await run('/usr/bin/ditto', ['-x', '-k', zipPath, appDir])
+          controller.signal.throwIfAborted()
           const staged = join(appDir, 'Commit87.app')
           await stat(staged).catch(() => {
             throw new Error('The downloaded archive does not contain Commit87.app')
@@ -269,6 +312,7 @@ export function createMacScriptUpdater(options: MacScriptUpdaterOptions): Update
             throw new Error(`The downloaded ${selected.version} bundle failed its code-signature check`)
           })
           const plist = await readFile(join(staged, 'Contents', 'Info.plist'), 'utf8')
+          controller.signal.throwIfAborted()
           const declared = plist.match(/<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/)?.[1]
           if (declared !== selected.version) {
             throw new Error(
@@ -299,27 +343,74 @@ export function createMacScriptUpdater(options: MacScriptUpdaterOptions): Update
       }
     },
 
-    quitAndInstall(): void {
-      if (!candidate || !stagedApp || !stagingRoot) {
-        throw new Error('No verified update package is staged')
+    quitAndInstall(): Promise<void> {
+      if (installPromise) {
+        return candidate === installCandidate && options.channel() === installChannel
+          ? installPromise
+          : Promise.reject(new Error('The previous update preparation is still stopping. Try again.'))
       }
-      const script = buildSwapHelperScript({
-        appPid: process.pid,
-        targetBundle: options.bundlePath,
-        stagedApp: stagedApp,
-        stagedRoot: stagingRoot,
-        logPath: join(tmpdir(), `commit87-swap-${process.pid}.log`)
+      if (!candidate || !stagedApp || !stagingRoot) {
+        return Promise.reject(new Error('No verified update package is staged'))
+      }
+      const source = stagedApp
+      const selected = candidate
+      const selectedChannel = options.channel()
+      installCandidate = selected
+      installChannel = selectedChannel
+      installPromise = (async () => {
+        let installRoot: string | null = null
+        try {
+          // Prepare a complete replacement on the destination filesystem while
+          // the app is still alive. A read-only DMG, translocation or permission
+          // failure is returned through IPC instead of quitting the session.
+          const target = await lstat(options.bundlePath)
+          if (!target.isDirectory() || target.isSymbolicLink()) throw new Error('Not an installed app bundle')
+          await access(dirname(options.bundlePath), constants.W_OK | constants.X_OK)
+          installRoot = await mkdtemp(join(dirname(options.bundlePath), '.commit87-update-'))
+          const incoming = join(installRoot, 'incoming.app')
+          await run('/usr/bin/ditto', [source, incoming])
+          await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', incoming])
+          const logPath = join(options.cachePath, 'swap.log')
+          const scriptPath = join(installRoot, 'swap.sh')
+          await writeFile(scriptPath, buildSwapHelperScript({
+            appPid: process.pid,
+            targetBundle: options.bundlePath,
+            stagedApp: incoming,
+            stagedRoot: installRoot,
+            logPath
+          }), { mode: 0o700 })
+          if (candidate !== selected || stagedApp !== source || options.channel() !== selectedChannel) {
+            throw new Error('The selected update changed while preparing installation')
+          }
+          await cleanStaging()
+          if (candidate !== selected || options.channel() !== selectedChannel) {
+            throw new Error('The selected update changed while preparing installation')
+          }
+          const child = spawn('/bin/bash', [scriptPath, options.bundlePath, incoming, installRoot, logPath], {
+            detached: true,
+            stdio: 'ignore'
+          })
+          await once(child, 'spawn')
+          if (candidate !== selected || options.channel() !== selectedChannel) {
+            child.kill()
+            await once(child, 'exit')
+            throw new Error('The selected update changed while preparing installation')
+          }
+          child.unref()
+          handedOff = true
+          options.quit()
+        } catch (error) {
+          if (installRoot && !handedOff) await removeWorkspace(installRoot)
+          const detail = error instanceof Error ? error.message : String(error)
+          throw new Error(
+            `The update could not be prepared. Move Commit87.app to a writable Applications folder and try again. ${detail}`
+          )
+        }
+      })().catch((error: unknown) => {
+        installPromise = null
+        throw error
       })
-      const scriptPath = join(tmpdir(), `commit87-swap-${process.pid}.sh`)
-      writeFileSync(scriptPath, script, { mode: 0o755 })
-      // Detached so it outlives the app; the helper waits for this PID to exit
-      // before renaming the bundle into place. Paths travel as argv (not script
-      // text), so quoting cannot corrupt them.
-      spawn('/bin/bash', [scriptPath, options.bundlePath, stagedApp, stagingRoot, scriptPath.replace(/\.sh$/, '.log')], {
-        detached: true,
-        stdio: 'ignore'
-      }).unref()
-      options.quit()
+      return installPromise
     },
 
     onChecking: (listener) => checking.push(listener),

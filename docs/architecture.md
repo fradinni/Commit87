@@ -678,6 +678,21 @@ a detached helper once the app quits. `main/updates.ts` owns the state machine (
 `main/mac-script-updater.ts` for the ad-hoc macOS path). The adapters are bundled into
 the main output, so the packaged ASAR still has no `node_modules` tree.
 
+The ad-hoc macOS adapter keeps at most one deferred download in the app-owned
+`userData/mac-update/download` workspace; the next download replaces that workspace even
+after a restart. It never scans the OS temporary directory for other update packages.
+Cache removal uses Electron's `original-fs` so a physical `app.asar` is removed as a
+file rather than interpreted as a virtual directory by Electron's patched filesystem.
+Installation preparation is asynchronous and awaited by `update.install`: it copies and
+verifies an incoming bundle in a private directory on the target filesystem before
+detaching the helper or quitting. Preparation failures cross IPC as normal update errors.
+The helper aborts if the original process is still alive after its shutdown deadline.
+Replacement failures remove the failed destination before restoring the old bundle,
+relaunch it when possible and display an installation-failure alert; if restoration fails,
+the backup is retained for recovery. Diagnostics remain in `userData/mac-update/swap.log`.
+New downloads wait for obsolete installation preparation and cleanup to settle before
+reusing the cache, and an obsolete installation error cannot overwrite a newer offer.
+
 The replacement target is bound to the running installation before any update work:
 `main/appimage-binding.ts` accepts an AppImage only when `realpath(process.execPath)` lies
 inside a kernel mount recorded in `/proc/self/mountinfo` that is a squashfs mount, or a FUSE

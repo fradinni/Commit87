@@ -17,6 +17,18 @@ All notable changes to Commit87 are documented here. The format follows
   Squirrel.Mac updater and the `latest-mac.yml`/`beta-mac.yml` feed.
 - Every macOS release now attaches `install-macos.sh`.
 
+### Fixed
+
+- macOS update preparation now fails before quitting when the installation is not writable,
+  restores the previous app correctly after a failed swap, and never replaces a still-running
+  app after a shutdown timeout. Download filesystem errors are handled normally, and deferred
+  packages use one bounded private cache across restarts. Cleanup handles physical ASAR
+  archives correctly in Electron, and stale installation preparation cannot delete or
+  overwrite the state of a newer channel's package.
+- Ad-hoc macOS builds honor Beta-to-Stable downgrades. The command-line installer supports
+  offline uninstall and explicit pinned reinstalls/downgrades; updater tests clean only their
+  own isolated fixtures.
+
 ## [0.2.0-beta.9] — 2026-11-11
 
 ### Fixed

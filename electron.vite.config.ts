@@ -14,6 +14,8 @@ export default defineConfig({
     build: {
       sourcemap: true,
       rollupOptions: {
+        // Electron provides its unpatched physical filesystem at runtime.
+        external: ['original-fs'],
         input: { index: resolve(__dirname, 'src/main/index.ts') }
       }
     }

@@ -257,6 +257,7 @@ app.whenReady().then(() => {
             currentVersion: APP_VERSION,
             channel: () => store.getConfig().updateChannel,
             bundlePath: path.resolve(path.dirname(process.execPath), '../..'),
+            cachePath: path.join(app.getPath('userData'), 'mac-update'),
             quit: () => app.quit()
           })
         : null

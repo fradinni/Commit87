@@ -636,6 +636,39 @@ describe('UpdateService', () => {
     expect(status.progress).toEqual({ percent: 100, transferred: 1000, total: 1000, bytesPerSecond: 0 })
   })
 
+  it('awaits asynchronous install preparation and reports a refusal without quitting', async () => {
+    const { adapter, service } = setup()
+    await service.check()
+    await service.download()
+    vi.spyOn(adapter, 'quitAndInstall').mockImplementation(() =>
+      Promise.reject(new Error('The application folder is read-only'))
+    )
+
+    await expect(service.install()).rejects.toThrow('read-only')
+    expect(service.getStatus()).toMatchObject({ phase: 'error', error: 'The application folder is read-only' })
+    expect(adapter.installs).toBe(0)
+  })
+
+  it('does not let a stale install failure demote a new channel package', async () => {
+    const { adapter, service, preferences } = setup()
+    await service.check()
+    await service.download()
+    let rejectInstall = (_error: Error): void => undefined
+    vi.spyOn(adapter, 'quitAndInstall').mockImplementation(() => new Promise<void>((_resolve, reject) => {
+      rejectInstall = reject
+    }))
+    const installing = service.install()
+    preferences.channel = 'beta'
+    service.refreshPreferences()
+    await service.check()
+    await service.download()
+    expect(service.getStatus().phase).toBe('ready')
+
+    rejectInstall(new Error('The old update preparation was cancelled'))
+    await expect(installing).rejects.toThrow('old update preparation')
+    expect(service.getStatus()).toMatchObject({ phase: 'ready', channel: 'beta', error: null })
+  })
+
   it('refuses to download without an available update and to install before ready', async () => {
     const { adapter, service } = setup()
     await expect(service.download()).rejects.toThrow('No update is available')

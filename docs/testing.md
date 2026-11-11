@@ -51,6 +51,9 @@ paths to check a subset.
 | `tests/ipc-boundaries.test.ts` | strict decoding (real booleans, enums, revisions, paths), the console's bounded grammar and its bypass matrix, grant issuance/authorization (picks, recents, linked worktrees, clone/init targets, persistence), custom-executable policy, symlink-aware file reads and the config execution-key policy |
 | `tests/refs.test.ts` | refs panel helpers: local/remote folder grouping, current-first ordering, worktree lookup (main checkout excluded from linked worktrees), query matching, cross-platform sibling paths and configured worktree parents |
 | `tests/updates.test.ts` | update support per packaging format, progress clamping, channel and auto-check preferences, the check → available → download → ready state machine, error sanitization, concurrent checks, install gating and the automatic check timer |
+| `tests/update-feed.test.ts` | architecture-specific macOS release selection, version ordering and release checksum parsing |
+| `tests/mac-script-updater.test.ts` | streamed-download failures/cancellation, private bounded staging, channel downgrade policy, asynchronous install preparation and executable helper success/rollback/timeout/backup-preservation paths |
+| `tests/install-macos.test.ts` | executable macOS installer fixtures: offline uninstall, pinned reinstall/downgrade, destination-filesystem staging, checksum/signature failures, rollback and shutdown timeouts; process/network/launch commands are stubbed |
 | `tests/providers.test.ts` | GitHub, GitLab, Bitbucket and Gitea mapping, auth headers, enterprise base paths, JSON bodies, pagination and continuation links, error messages, workflow dispatch payloads, release capability rejection; the mocked fetch fails on any unexpected request |
 | `tests/provider-checkout.test.ts` | pull-request fetch planning per provider, contributor-repository fallback for Bitbucket/Gitea forks, authoritative head verification, and deletion of a temporary ref on mismatch |
 | `tests/build-packages.test.ts` | packaging wrapper: transient network failures retried with backoff, fatal errors and child exit codes passed through, argument forwarding, attempt and delay configuration |
@@ -61,8 +64,10 @@ paths to check a subset.
 | `tests/rebase-plan.test.ts` | rebase target normalization, todo parsing and plan validation, message limits, comment-character choice and shell quoting |
 | `tests/submodule.integration.test.ts` | real `git` end-to-end: add, status/config join, dirty detection and forced clean reset (including nested submodules), checkout drift and update, deinit/reinit, tracked-branch update, URL sync, remove (working tree, module dir, `.gitmodules`, config section), uncommitted-add removal and dirty refusal, linked-worktree isolation, orphan gitlinks, unstaged `.gitmodules` refusal and path validation |
 
-Total: 486 tests in 27 files. The integration suites create temporary repositories
+Total: 567 tests in 31 files. The integration suites create temporary repositories
 under `os.tmpdir()` and remove them afterwards; they require `git` on `PATH`.
+macOS installer tests run only on macOS. Updater tests use a private cache and clean only
+their own temporary roots; they never enumerate and remove live app update staging directories.
 
 ## What is asserted, not just executed
 

@@ -425,30 +425,47 @@ The in-app updater has two macOS paths, chosen by `main/mac-signing.ts`:
   GitHub releases API, downloads the architecture's `mac-<arch>.zip` with `fetch`
   (again: no quarantine attribute), verifies its SHA-256 against the release's
   `SHA256SUMS.txt`, checks `codesign --verify --deep --strict`, reads the bundle's
-  declared version, and stages it. **Restart & install** then detaches a small bash
-  helper that waits for the app to quit, swaps the bundle in place (backup first,
-  restored on failure), re-clears quarantine, re-verifies the signature and relaunches.
+  declared version, and stages it in a bounded, app-private cache (`userData/mac-update/download`).
+  **Restart & install** first checks the installation location and copies and verifies a
+  complete replacement on the destination filesystem while the app is still running.
+  A read-only DMG or an unwritable folder returns an error without quitting. It then
+  detaches a small bash helper that waits up to 60 seconds for the app to quit (otherwise
+  it aborts), swaps the bundle in place, re-clears quarantine, re-verifies the signature
+  and relaunches. A failed swap restores and relaunches the previous app; a failed restore
+  preserves the backup. Failures display an alert and are recorded in
+  `userData/mac-update/swap.log`.
   Progress, release notes and the stable/beta channel behave exactly like the other
   formats, so Settings > Updates needs no macOS-specific UI.
+  A release must publish `SHA256SUMS.txt`; older releases without that file are refused,
+  not installed with weaker integrity checks.
 
 `scripts/install-macos.sh` is the command-line twin of that flow and is attached to every
 macOS release. It detects the architecture, resolves the newest release, downloads with
 `curl`, verifies `SHA256SUMS.txt` and the code signature, installs to `~/Applications`
 (`--system` for `/Applications`) and is idempotent, so re-running it is how command-line
 users update. It is also how a first install avoids the Gatekeeper step above.
+`--uninstall` requires no network connection or Python. An explicit `--version vX.Y.Z`
+also permits reinstalling the same version or downgrading; an unpinned invocation only
+installs a newer release. The script stages and verifies the complete replacement on the
+destination filesystem before moving the old copy aside, and refuses to replace an app
+that has not stopped after its quit deadline.
 
 Configure `MAC_CERT_P12`, `MAC_CERT_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`
 and `APPLE_TEAM_ID` to switch macOS back to the Squirrel.Mac path, where the update feed
 (`latest-mac.yml`/`beta-mac.yml`) is used again.
 
-The ad-hoc path was exercised against the real `v0.2.0-beta.9` release on macOS 26.5.1
-(Apple M5 Pro): `scripts/install-macos.sh` installed, updated and removed the app in a
-throwaway directory and in `~/Applications`; the in-app adapter resolved the beta release,
-downloaded the zip, verified its SHA-256 against the release `SHA256SUMS.txt`, extracted it
-with `ditto`, passed `codesign --verify --deep --strict` and the bundle-version cross-check,
-and its detached swap helper replaced the bundle and relaunched it. Signed/notarized macOS
-releases and the push-installed UI behaviour still require their native signers and a
-release run.
+The hardened ad-hoc path was exercised on macOS 26.5.1 (arm64) using private temporary
+app copies and an isolated profile. A packaged build with the current updater and an older
+version identity downloaded the real `v0.2.0-beta.9` zip, verified its checksum and signature,
+showed the ready state, refused an unwritable installation folder without quitting, retried
+successfully, then swapped and relaunched into `0.2.0-beta.9`. The installed signature passed,
+the profile was preserved, and the download and swap workspaces were removed. The native
+CLI also installed, reinstalled the same pinned version, downgraded to `v0.2.0-beta.8` and
+uninstalled with network access disabled; CLI process/launch commands were guarded to avoid
+affecting any normal app instance. The development unsupported state, latest-beta empty state
+and missing-checksum error were also inspected in the app. Helper rollback and shutdown
+timeouts are covered by executable isolated shell fixtures. Intel and Developer ID-signed/
+notarized builds still require their matching hosts/signers and a release run.
 
 ## Icons
 

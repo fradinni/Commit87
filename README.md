@@ -233,8 +233,13 @@ bash install-macos.sh --check         # what is the newest available version?
 bash install-macos.sh --uninstall     # remove the copy in ~/Applications
 ```
 
+Uninstall works offline. To reinstall or deliberately downgrade, pass an exact release
+tag with `--version vX.Y.Z`; without a pin, the script only installs newer versions.
+
 After the first install, updates are also offered inside **Settings → Updates**, using the
-same verified release-zip swap. The `.dmg` (mount and drag) and `.zip` (run in place)
+same verified release-zip swap. The app checks and stages the replacement in a writable
+installation folder before quitting; a read-only DMG cannot be updated in place. Switching
+from Beta to Stable may offer an older stable version. The `.dmg` (mount and drag) and `.zip` (run in place)
 artifacts remain available; a macOS build that was produced without the signing secrets is
 ad-hoc signed only, `SIGNING-STATUS.txt` says so, and Gatekeeper then blocks its first
 launch until you allow it in System Settings > Privacy & Security — the installer script
