@@ -730,7 +730,9 @@ the feed comes from the packaged `app-update.yml` produced by electron-builder's
 configuration, except for ad-hoc macOS builds, whose updater resolves the newest release
 from the GitHub releases API. Progress values are clamped, error messages are collapsed to one line and
 release notes are truncated before they cross the boundary. `update.install` is only
-accepted in the `ready` phase.
+accepted in the `ready` phase; it moves the status to `installing` while the adapter
+prepares the replacement, and a failed check, download or install records which step
+failed so the UI never labels an installation error as a check error.
 
 Release tags without a prerelease suffix build `latest.yml` and stay drafts until
 published. Tags such as `v0.2.0-beta.1` set `COMMIT87_RELEASE_CHANNEL=beta` in the release

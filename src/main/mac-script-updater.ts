@@ -5,7 +5,7 @@ import { access, lstat, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:f
 import { once } from 'node:events'
 import { dirname, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
-import type { UpdateChannel, UpdateProgress } from '@shared/types'
+import type { UpdateChannel, UpdateFailure, UpdateProgress } from '@shared/types'
 import { safeLog } from './logging'
 import type { UpdateAdapter, UpdateDownloadTask, UpdateInfoSummary } from './updates'
 import { isVersionNewer, parseSha256Sums, pickRelease, sha256Hex } from './update-feed'
@@ -14,6 +14,8 @@ import type { ApiRelease, ReleaseCandidate } from './update-feed'
 const PROGRESS_THROTTLE_MS = 250
 const DOWNLOAD_TIMEOUT_MS = 30 * 60_000
 const MAX_RELEASES = 100
+/** Give up watching a helper after its own 60-second shutdown deadline. */
+const HANDOFF_WATCH_MS = 90_000
 const execFileAsync = promisify(execFile)
 
 async function removeWorkspace(directory: string): Promise<void> {
@@ -43,6 +45,10 @@ export interface MacScriptUpdaterOptions {
    * this; the adapter otherwise uses `execFile` with absolute tool paths.
    */
   exec?: (file: string, args: string[]) => Promise<void>
+  /** How often the helper status file is polled. Only tests override this. */
+  handoffPollMs?: number
+  /** How long to wait for the helper status before abandoning it. Tests override this. */
+  handoffWatchMs?: number
 }
 
 /**
@@ -61,6 +67,8 @@ export interface SwapSpec {
   stagedRoot: string
   /** Where the helper appends its progress lines. */
   logPath: string
+  /** Where the helper records its current step so the app can detect a stall. */
+  statusPath: string
 }
 
 /**
@@ -78,13 +86,16 @@ TARGET=$1
 STAGED=$2
 STAGED_ROOT=$3
 LOG=$4
+STATUS=$5
 log() { echo "[commit87-swap] $(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
+status() { printf '%s' "$1" > "$STATUS" 2>/dev/null || true; }
 notify_failure() {
   osascript -e 'display alert "Commit87 update failed" message "The update could not be installed. Your previous installation has been kept. Quit Commit87 and try again, or use a writable Applications folder." as warning' >/dev/null 2>&1 || true
 }
 BACKUP="$STAGED_ROOT/previous.app"
 INSTALL_PENDING=0
 fail() {
+  status failed
   log "$*"
   if [ -d "$BACKUP" ]; then
     if ! rm -rf "$TARGET" || ! mv "$BACKUP" "$TARGET"; then
@@ -99,6 +110,7 @@ fail() {
   exit 1
 }
 restore_on_signal() {
+  status interrupted
   log "interrupted during installation"
   if [ "$INSTALL_PENDING" = 1 ] && [ -d "$BACKUP" ]; then
     rm -rf "$TARGET" 2>/dev/null
@@ -115,17 +127,20 @@ restore_on_signal() {
   exit 1
 }
 trap restore_on_signal INT TERM HUP
+status waiting
 log "waiting for pid $APP_PID to exit"
 for i in $(seq 1 120); do
   if ! kill -0 "$APP_PID" 2>/dev/null; then break; fi
   sleep 0.5
 done
 if kill -0 "$APP_PID" 2>/dev/null; then
+  status timeout
   log "pid still alive; installation aborted without changing the app"
   rm -rf "$STAGED_ROOT"
   notify_failure
   exit 1
 fi
+status installing
 log "installing into $TARGET"
 [ -d "$TARGET" ] || fail "current bundle is missing"
 INSTALL_PENDING=1
@@ -138,8 +153,9 @@ if ! codesign --verify --deep --strict "$TARGET" 2>>"$LOG"; then
   fail "signature check failed; restoring backup"
 fi
 INSTALL_PENDING=0
-rm -rf "$STAGED_ROOT"
+status installed
 log "relaunching"
+rm -rf "$STAGED_ROOT"
 open "$TARGET"
 exit 0
 `
@@ -173,6 +189,70 @@ export function createMacScriptUpdater(options: MacScriptUpdaterOptions): Update
   const notAvailable: Array<() => void> = []
   const progress: Array<(value: UpdateProgress) => void> = []
   const downloaded: Array<(info: UpdateInfoSummary) => void> = []
+  const errors: Array<(error: Error, context?: UpdateFailure) => void> = []
+  let handoffTimer: ReturnType<typeof setTimeout> | null = null
+
+  function stopHandoffWatch(): void {
+    if (handoffTimer) {
+      clearTimeout(handoffTimer)
+      handoffTimer = null
+    }
+  }
+
+  /**
+   * After the helper is detached the app normally exits, so this watcher only
+   * matters when quitting is delayed or refused. The helper records each step
+   * in a status file; a timeout or failure there releases the one-install guard
+   * and surfaces an error instead of leaving the session stuck.
+   */
+  function watchHandoff(statusPath: string, installRoot: string): void {
+    const startedAt = Date.now()
+    const finish = (status: string, abandonedRoot?: string): void => {
+      stopHandoffWatch()
+      if (status === 'installed') return
+      if (abandonedRoot) {
+        void removeWorkspace(abandonedRoot).catch((error: unknown) => {
+          safeLog(console, '[commit87:update]', 'warn', `could not remove abandoned update workspace: ${String(error)}`)
+        })
+      }
+      handedOff = false
+      installPromise = null
+      installCandidate = null
+      installChannel = null
+      const message =
+        status === 'timeout'
+          ? 'Commit87 did not quit within the update deadline, so the update was not installed. Quit Commit87 and try again.'
+          : status === 'expired'
+            ? 'The update helper stopped responding before it could install the update. Try again.'
+            : status === 'interrupted'
+              ? 'The update helper was interrupted before it could install the update. Try again.'
+              : 'The update could not be installed. Your previous installation has been kept.'
+      safeLog(console, '[commit87:update]', 'warn', message)
+      errors.forEach((listener) => listener(new Error(message), 'install'))
+    }
+    const poll = async (): Promise<void> => {
+      handoffTimer = null
+      if (!handedOff) return
+      let status: string | null = null
+      try {
+        status = (await readFile(statusPath, 'utf8')).trim()
+      } catch {
+        // The helper has not written its first status yet.
+      }
+      if (status === 'installed' || status === 'failed' || status === 'timeout' || status === 'interrupted') {
+        finish(status)
+        return
+      }
+      if (Date.now() - startedAt >= (options.handoffWatchMs ?? HANDOFF_WATCH_MS)) {
+        finish('expired', installRoot)
+        return
+      }
+      handoffTimer = setTimeout(() => void poll(), options.handoffPollMs ?? 500)
+      handoffTimer.unref?.()
+    }
+    handoffTimer = setTimeout(() => void poll(), options.handoffPollMs ?? 500)
+    handoffTimer.unref?.()
+  }
 
   async function listReleases(): Promise<ApiRelease[]> {
     const response = await fetch(releaseUrl, {
@@ -391,14 +471,19 @@ export function createMacScriptUpdater(options: MacScriptUpdaterOptions): Update
           await run('/usr/bin/ditto', [source, incoming])
           await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', incoming])
           const logPath = join(options.cachePath, 'swap.log')
+          const statusPath = join(options.cachePath, 'swap.status')
           const scriptPath = join(installRoot, 'swap.sh')
           await writeFile(scriptPath, buildSwapHelperScript({
             appPid: process.pid,
             targetBundle: options.bundlePath,
             stagedApp: incoming,
             stagedRoot: installRoot,
-            logPath
+            logPath,
+            statusPath
           }), { mode: 0o700 })
+          // Clear any status from an earlier attempt so the watcher cannot read
+          // a stale terminal state before this helper writes its own.
+          await writeFile(statusPath, '')
           if (candidate !== selected || stagedApp !== source || options.channel() !== selectedChannel) {
             throw new Error('The selected update changed while preparing installation')
           }
@@ -406,7 +491,7 @@ export function createMacScriptUpdater(options: MacScriptUpdaterOptions): Update
           if (candidate !== selected || options.channel() !== selectedChannel) {
             throw new Error('The selected update changed while preparing installation')
           }
-          const child = spawn('/bin/bash', [scriptPath, options.bundlePath, incoming, installRoot, logPath], {
+          const child = spawn('/bin/bash', [scriptPath, options.bundlePath, incoming, installRoot, logPath, statusPath], {
             detached: true,
             stdio: 'ignore'
           })
@@ -423,6 +508,7 @@ export function createMacScriptUpdater(options: MacScriptUpdaterOptions): Update
           }
           child.unref()
           handedOff = true
+          watchHandoff(statusPath, installRoot)
           options.quit()
         } catch (error) {
           if (installRoot && !handedOff) await removeWorkspace(installRoot)
@@ -443,6 +529,6 @@ export function createMacScriptUpdater(options: MacScriptUpdaterOptions): Update
     onNotAvailable: (listener) => notAvailable.push(listener),
     onProgress: (listener) => progress.push(listener),
     onDownloaded: (listener) => downloaded.push(listener),
-    onError: () => undefined
+    onError: (listener) => errors.push(listener)
   }
 }

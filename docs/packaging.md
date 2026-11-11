@@ -434,8 +434,11 @@ The in-app updater has two macOS paths, chosen by `main/mac-signing.ts`:
   detaches a small bash helper that waits up to 60 seconds for the app to quit (otherwise
   it aborts), swaps the bundle in place, re-clears quarantine, re-verifies the signature
   and relaunches. A failed swap restores and relaunches the previous app; a failed restore
-  preserves the backup. Failures display an alert and are recorded in
-  `userData/mac-update/swap.log`.
+  preserves the backup. The helper records each step in
+  `userData/mac-update/swap.status`; if quitting is delayed past its deadline, the running
+  app reads the timeout, shows an installation error and releases the one-install guard so
+  the update can be retried without restarting the session. Failures display an alert and
+  are recorded in `userData/mac-update/swap.log`.
   Progress, release notes and the stable/beta channel behave exactly like the other
   formats, so Settings > Updates needs no macOS-specific UI.
   A release must publish `SHA256SUMS.txt`; older releases without that file are refused,

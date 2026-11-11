@@ -64,7 +64,7 @@ paths to check a subset.
 | `tests/rebase-plan.test.ts` | rebase target normalization, todo parsing and plan validation, message limits, comment-character choice and shell quoting |
 | `tests/submodule.integration.test.ts` | real `git` end-to-end: add, status/config join, dirty detection and forced clean reset (including nested submodules), checkout drift and update, deinit/reinit, tracked-branch update, URL sync, remove (working tree, module dir, `.gitmodules`, config section), uncommitted-add removal and dirty refusal, linked-worktree isolation, orphan gitlinks, unstaged `.gitmodules` refusal and path validation |
 
-Total: 574 tests in 31 files. The integration suites create temporary repositories
+Total: 581 tests in 31 files. The integration suites create temporary repositories
 under `os.tmpdir()` and remove them afterwards; they require `git` on `PATH`.
 macOS installer tests run only on macOS. Updater tests use a private cache and clean only
 their own temporary roots; they never enumerate and remove live app update staging directories.

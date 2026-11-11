@@ -2687,6 +2687,16 @@
   background: var(--amber-soft);
 }
 
+.update-state-installing {
+  border-color: var(--amber);
+  background: var(--amber-soft);
+}
+
+.update-state-installing .update-state-icon {
+  color: var(--amber);
+  background: var(--amber-soft);
+}
+
 .update-state-ready {
   border-color: var(--accent);
   background: var(--accent-soft);

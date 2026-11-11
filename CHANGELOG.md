@@ -34,6 +34,10 @@ All notable changes to Commit87 are documented here. The format follows
   `--keep-work` in `--help`, is covered by `SHA256SUMS.txt`, and removes its temporary feed
   copy when interrupted; the in-app swap helper restores the previous bundle on termination
   signals and no longer hangs if the helper exits before a cancelled handoff.
+- Settings → Updates shows an explicit installing state while the macOS bundle swap is
+  prepared, labels check, download and installation failures separately, and recovers when
+  a detached swap helper times out because the app did not quit, so the update can be
+  retried without restarting the app.
 
 ## [0.2.0-beta.9] — 2026-11-11
 

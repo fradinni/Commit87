@@ -176,6 +176,7 @@ interface HelperFixture {
   backup: string
   scriptPath: string
   logPath: string
+  statusPath: string
   writeScript: (appPid: number) => Promise<void>
   run: (appPid: number, scenario?: string) => Promise<number>
 }
@@ -212,6 +213,7 @@ exec /bin/mv "$@"`
     writeFile(join(bin, name), `#!/bin/bash\nset -eu\n${body}\n`, { mode: 0o700 })
   ))
   const logPath = join(root, 'swap.log')
+  const statusPath = join(root, 'swap.status')
   // The production adapter writes the helper inside the staging directory, so
   // the helper deletes its own script during cleanup. Mirror that layout.
   const scriptPath = join(stagedRoot, 'swap.sh')
@@ -221,7 +223,8 @@ exec /bin/mv "$@"`
       targetBundle: bundlePath,
       stagedApp: incoming,
       stagedRoot,
-      logPath
+      logPath,
+      statusPath
     }))
   }
   return {
@@ -230,11 +233,12 @@ exec /bin/mv "$@"`
     backup,
     scriptPath,
     logPath,
+    statusPath,
     writeScript,
     async run(appPid, scenario = 'success') {
       await writeScript(appPid)
       try {
-        await execFileAsync('/bin/bash', [scriptPath, bundlePath, incoming, stagedRoot, logPath], {
+        await execFileAsync('/bin/bash', [scriptPath, bundlePath, incoming, stagedRoot, logPath, statusPath], {
           env: {
             ...process.env,
             PATH: `${bin}:/usr/bin:/bin`,
@@ -281,6 +285,7 @@ describe.skipIf(process.platform === 'win32')('swap helper script executed in an
     await expectRelaunched('new')
     await expectAbsent(helper.stagedRoot)
     await expectAbsent(join(root, 'alert-args'))
+    expect(await readFile(helper.statusPath, 'utf8')).toBe('installed')
   })
 
   it('removes a failed post-swap signature and restores and relaunches the old app', async () => {
@@ -292,6 +297,7 @@ describe.skipIf(process.platform === 'win32')('swap helper script executed in an
     await expectFailureAlert()
     await expectAbsent(helper.stagedRoot)
     expect(await readFile(join(root, 'swap.log'), 'utf8')).toContain('signature check failed')
+    expect(await readFile(helper.statusPath, 'utf8')).toBe('failed')
   })
 
   it('deletes a partially created target before renaming the backup back into place', async () => {
@@ -346,6 +352,7 @@ describe.skipIf(process.platform === 'win32')('swap helper script executed in an
       await expectFailureAlert()
       expect((await readFile(join(root, 'waits'), 'utf8')).trim().split('\n')).toHaveLength(2)
       expect(await readFile(join(root, 'swap.log'), 'utf8')).toContain('installation aborted without changing the app')
+      expect(await readFile(helper.statusPath, 'utf8')).toBe('timeout')
       expect(parent.exitCode).toBeNull()
       expect(parent.killed).toBe(false)
     } finally {
@@ -363,7 +370,7 @@ describe.skipIf(process.platform === 'win32')('swap helper script executed in an
       await helper.writeScript(parent.pid)
       const child = execFile(
         '/bin/bash',
-        [helper.scriptPath, bundlePath, helper.incoming, helper.stagedRoot, helper.logPath],
+        [helper.scriptPath, bundlePath, helper.incoming, helper.stagedRoot, helper.logPath, helper.statusPath],
         { env: { ...process.env, PATH: '/usr/bin:/bin' } }
       )
       await new Promise((resolve) => setTimeout(resolve, 300))
@@ -374,6 +381,7 @@ describe.skipIf(process.platform === 'win32')('swap helper script executed in an
       await expectOriginalBundle()
       await expectAbsent(helper.stagedRoot)
       expect(await readFile(helper.logPath, 'utf8')).toContain('interrupted during installation')
+      expect(await readFile(helper.statusPath, 'utf8')).toBe('interrupted')
       await expectAbsent(join(root, 'open-args'))
     } finally {
       parent.kill()
@@ -633,6 +641,7 @@ describe('createMacScriptUpdater', () => {
     const incoming = join(installRoot, 'incoming.app')
     const scriptPath = join(installRoot, 'swap.sh')
     const logPath = join(cachePath, 'swap.log')
+    const statusPath = join(cachePath, 'swap.status')
     expect((await stat(incoming)).dev).toBe((await stat(bundlePath)).dev)
     expect(await readFile(join(incoming, 'marker'), 'utf8')).toBe('new')
     await expectOriginalBundle()
@@ -641,10 +650,10 @@ describe('createMacScriptUpdater', () => {
       ['/usr/bin/codesign', ['--verify', '--deep', '--strict', incoming]]
     ])
     expect(await readFile(scriptPath, 'utf8')).toBe(buildSwapHelperScript({
-      appPid: process.pid, targetBundle: bundlePath, stagedApp: incoming, stagedRoot: installRoot, logPath
+      appPid: process.pid, targetBundle: bundlePath, stagedApp: incoming, stagedRoot: installRoot, logPath, statusPath
     }))
     expect(spawn).toHaveBeenCalledExactlyOnceWith(
-      '/bin/bash', [scriptPath, bundlePath, incoming, installRoot, logPath], { detached: true, stdio: 'ignore' }
+      '/bin/bash', [scriptPath, bundlePath, incoming, installRoot, logPath, statusPath], { detached: true, stdio: 'ignore' }
     )
     await expectAbsent(join(cachePath, 'download'))
 
@@ -655,6 +664,109 @@ describe('createMacScriptUpdater', () => {
     expect(state.quit).toHaveBeenCalledTimes(1)
     await expectAbsent(join(cachePath, 'download'))
     expect((await stat(incoming)).isDirectory()).toBe(true)
+  })
+
+  it('surfaces a helper timeout and releases the one-install guard', async () => {
+    const { adapter, state } = await readyAdapter({ handoffPollMs: 5 })
+    const child = new ChildProcess()
+    vi.spyOn(child, 'unref').mockImplementation(() => undefined)
+    const spawned = gate()
+    vi.mocked(spawn).mockImplementation(() => {
+      spawned.resolve()
+      return child
+    })
+    const failed = vi.fn()
+    adapter.onError(failed)
+    const install = adapter.quitAndInstall(null)
+    await spawned.promise
+    child.emit('spawn')
+    await install
+    expect(state.quit).toHaveBeenCalledTimes(1)
+
+    // The detached helper records the outcome; a timeout means quitting was
+    // delayed and the bundle was not touched.
+    await writeFile(join(cachePath, 'swap.status'), 'timeout')
+    await vi.waitFor(() => expect(failed).toHaveBeenCalledTimes(1))
+
+    expect(failed).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining('did not quit within the update deadline')
+    }), 'install')
+    // The guard is released, so a later download is not rejected as already started.
+    stubDownloads()
+    await adapter.check()
+    await expect(adapter.download(null).promise).resolves.toBeUndefined()
+  })
+
+  it('keeps the one-install guard when the helper reports success', async () => {
+    const { adapter, state } = await readyAdapter({ handoffPollMs: 5 })
+    const child = new ChildProcess()
+    vi.spyOn(child, 'unref').mockImplementation(() => undefined)
+    const spawned = gate()
+    vi.mocked(spawn).mockImplementation(() => {
+      spawned.resolve()
+      return child
+    })
+    const failed = vi.fn()
+    adapter.onError(failed)
+    const install = adapter.quitAndInstall(null)
+    await spawned.promise
+    child.emit('spawn')
+    await install
+
+    await writeFile(join(cachePath, 'swap.status'), 'installed')
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    expect(failed).not.toHaveBeenCalled()
+    // The handoff still owns installation: a new download must be refused.
+    await expect(adapter.download(null).promise).rejects.toThrow('already started')
+    expect(state.quit).toHaveBeenCalledTimes(1)
+  })
+
+  it('abandons a helper that never reports and removes its workspace', async () => {
+    const { adapter } = await readyAdapter({ handoffPollMs: 5, handoffWatchMs: 25 })
+    const child = new ChildProcess()
+    vi.spyOn(child, 'unref').mockImplementation(() => undefined)
+    const spawned = gate()
+    vi.mocked(spawn).mockImplementation(() => {
+      spawned.resolve()
+      return child
+    })
+    const failed = vi.fn()
+    adapter.onError(failed)
+    const install = adapter.quitAndInstall(null)
+    await spawned.promise
+    child.emit('spawn')
+    await install
+    const workspaces = await installWorkspaces()
+    expect(workspaces).toHaveLength(1)
+
+    // The helper never writes a status: the watchdog must give up and clean up.
+    await vi.waitFor(() => expect(failed).toHaveBeenCalledTimes(1))
+    expect(failed).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining('stopped responding')
+    }), 'install')
+    await vi.waitFor(async () => expect(await installWorkspaces()).toEqual([]))
+  })
+
+  it('ignores a stale terminal status from an earlier attempt', async () => {
+    const { adapter } = await readyAdapter({ handoffPollMs: 5 })
+    await writeFile(join(cachePath, 'swap.status'), 'failed')
+    const child = new ChildProcess()
+    vi.spyOn(child, 'unref').mockImplementation(() => undefined)
+    const spawned = gate()
+    vi.mocked(spawn).mockImplementation(() => {
+      spawned.resolve()
+      return child
+    })
+    const failed = vi.fn()
+    adapter.onError(failed)
+    const install = adapter.quitAndInstall(null)
+    await spawned.promise
+    expect(await readFile(join(cachePath, 'swap.status'), 'utf8')).toBe('')
+    child.emit('spawn')
+    await install
+
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    expect(failed).not.toHaveBeenCalled()
   })
 
   it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(

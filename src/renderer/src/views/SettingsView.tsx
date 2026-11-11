@@ -794,7 +794,7 @@ function UpdatesSettings({
 
   const phase = status?.phase ?? 'idle'
   const supported = status?.supported ?? false
-  const busy = phase === 'checking' || phase === 'downloading'
+  const busy = phase === 'checking' || phase === 'downloading' || phase === 'installing'
   const channel = config.updateChannel
 
   return (
@@ -810,7 +810,7 @@ function UpdatesSettings({
           </div>
           <div className="update-badges">
             <Badge tone="outline">{channel === 'beta' ? 'Beta channel' : 'Stable channel'}</Badge>
-            <Badge tone={phase === 'ready' ? 'green' : phase === 'error' ? 'red' : 'neutral'}>{phaseLabel(phase)}</Badge>
+            <Badge tone={phase === 'ready' ? 'green' : phase === 'error' ? 'red' : 'neutral'}>{phaseLabel(status)}</Badge>
           </div>
         </div>
 
@@ -820,7 +820,7 @@ function UpdatesSettings({
               <Select
                 value={channel}
                 onChange={(event) => void patch({ updateChannel: event.target.value as AppConfig['updateChannel'] })}
-                disabled={phase === 'downloading'}
+                disabled={phase === 'downloading' || phase === 'installing'}
               >
                 <option value="stable">Stable</option>
                 <option value="beta">Beta</option>
@@ -856,7 +856,7 @@ function UpdatesSettings({
             <div className={`update-state update-state-${phase}`}>
               <span className="update-state-icon">{phaseIcon(phase)}</span>
               <div className="update-state-copy">
-                <strong>{phaseTitle(phase, status?.version, channel)}</strong>
+                <strong>{phaseTitle(status, channel)}</strong>
                 <span>{phaseDetail(status, channel)}</span>
               </div>
               <div className="update-actions">
@@ -939,8 +939,8 @@ function UpdatesSettings({
   )
 }
 
-function phaseLabel(phase: UpdatePhase): string {
-  switch (phase) {
+function phaseLabel(status: ReturnType<typeof useStore.getState>['updateStatus']): string {
+  switch (status?.phase ?? 'idle') {
     case 'unsupported':
       return 'manual updates'
     case 'checking':
@@ -953,27 +953,42 @@ function phaseLabel(phase: UpdatePhase): string {
       return 'downloading'
     case 'ready':
       return 'ready to install'
+    case 'installing':
+      return 'installing'
     case 'error':
-      return 'check failed'
+      return status?.failedAt === 'install'
+        ? 'install failed'
+        : status?.failedAt === 'download'
+          ? 'download failed'
+          : 'check failed'
     default:
       return 'idle'
   }
 }
 
-function phaseTitle(phase: UpdatePhase, version: string | null | undefined, channel: AppConfig['updateChannel']): string {
-  switch (phase) {
+function phaseTitle(
+  status: ReturnType<typeof useStore.getState>['updateStatus'],
+  channel: AppConfig['updateChannel']
+): string {
+  switch (status?.phase ?? 'idle') {
     case 'checking':
       return 'Checking for updates…'
     case 'up-to-date':
       return `You are on the latest ${channel} build`
     case 'available':
-      return `Commit87 ${version ?? 'update'} is available`
+      return `Commit87 ${status?.version ?? 'update'} is available`
     case 'downloading':
-      return `Downloading Commit87 ${version ?? 'update'}`
+      return `Downloading Commit87 ${status?.version ?? 'update'}`
     case 'ready':
-      return `Commit87 ${version ?? 'update'} is ready to install`
+      return `Commit87 ${status?.version ?? 'update'} is ready to install`
+    case 'installing':
+      return `Installing Commit87 ${status?.version ?? 'update'}…`
     case 'error':
-      return 'Update check failed'
+      return status?.failedAt === 'install'
+        ? 'Update installation failed'
+        : status?.failedAt === 'download'
+          ? 'Update download failed'
+          : 'Update check failed'
     case 'unsupported':
       return 'Managed by your installation method'
     default:
@@ -999,6 +1014,8 @@ function phaseDetail(
       return 'Keep the app open. The install prompt appears when the download completes.'
     case 'ready':
       return 'Restart to finish. Your repositories and settings are kept.'
+    case 'installing':
+      return 'Keep the app open. Commit87 restarts when the verified replacement is ready.'
     case 'error':
       return status.error ?? 'The update server could not be reached.'
     case 'unsupported':
@@ -1012,6 +1029,7 @@ function phaseIcon(phase: UpdatePhase) {
   switch (phase) {
     case 'checking':
     case 'downloading':
+    case 'installing':
       return <RefreshCw size={16} className="spin" />
     case 'up-to-date':
     case 'ready':
