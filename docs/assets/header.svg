@@ -55,7 +55,7 @@
   <g fill="none" stroke-linecap="round" stroke-width="2.5">
     <path d="M742 56 V 350" stroke="#3ddc97" stroke-opacity="0.45"/>
     <path d="M870 56 V 118 Q870 152 904 152 H1096" stroke="#5ba8ff" stroke-opacity="0.4"/>
-    <path d="M870 304 V 248 Q870 248 904 248 H1096" stroke="#c792ea" stroke-opacity="0.4"/>
+    <path d="M870 304 V 282 Q870 248 904 248 H1096" stroke="#c792ea" stroke-opacity="0.4"/>
     <path d="M1010 152 V 248" stroke="#c792ea" stroke-opacity="0.18"/>
   </g>
     <circle cx="742" cy="104" r="5.5" fill="#3ddc97">
@@ -76,16 +76,16 @@
       <circle cx="742" cy="296" r="13" fill="#3ddc97" opacity="0.08">
         <animate attributeName="opacity" values="0;0.16;0" dur="5s" begin="1.4s" repeatCount="indefinite"/>
       </circle>
-    <circle cx="870" cy="152" r="5.5" fill="#5ba8ff">
+    <circle cx="870" cy="118" r="5.5" fill="#5ba8ff">
         <animate attributeName="opacity" values="0.35;0.95;0.35" dur="5s" begin="0.35s" repeatCount="indefinite"/>
       </circle>
-      <circle cx="870" cy="152" r="13" fill="#5ba8ff" opacity="0.08">
+      <circle cx="870" cy="118" r="13" fill="#5ba8ff" opacity="0.08">
         <animate attributeName="opacity" values="0;0.16;0" dur="5s" begin="0.35s" repeatCount="indefinite"/>
       </circle>
-    <circle cx="870" cy="248" r="5.5" fill="#c792ea">
+    <circle cx="870" cy="282" r="5.5" fill="#c792ea">
         <animate attributeName="opacity" values="0.35;0.95;0.35" dur="5s" begin="1.05s" repeatCount="indefinite"/>
       </circle>
-      <circle cx="870" cy="248" r="13" fill="#c792ea" opacity="0.08">
+      <circle cx="870" cy="282" r="13" fill="#c792ea" opacity="0.08">
         <animate attributeName="opacity" values="0;0.16;0" dur="5s" begin="1.05s" repeatCount="indefinite"/>
       </circle>
     <circle cx="1112" cy="152" r="5.5" fill="#5ba8ff">
@@ -108,8 +108,7 @@
       <circle cx="338" cy="358" r="32" fill="#f4fbf8"/>
       <circle cx="338" cy="358" r="13" fill="#0a1214"/>
     </g>
-    <text x="176" y="212" font-family="Inter, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="62" font-weight="700" letter-spacing="-1.6" fill="#f4fbf8" textLength="228" lengthAdjust="spacingAndGlyphs">Commit</text>
-    <text x="410" y="212" font-family="Inter, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="62" font-weight="700" letter-spacing="-1.6" fill="#3ddc97" textLength="78" lengthAdjust="spacingAndGlyphs">87</text>
+    <text x="176" y="212" font-family="Inter, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="62" font-weight="700" letter-spacing="-1.6" fill="#f4fbf8" textLength="306" lengthAdjust="spacingAndGlyphs">Commit<tspan fill="#3ddc97" dx="5">87</tspan></text>
     <text x="178" y="254" font-family="Inter, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="13" font-weight="600" letter-spacing="4.6" fill="#7e9a90">EVERY COMMIT COUNTS</text>
   </g>
   <rect x="0.5" y="0.5" width="1199" height="399" rx="14" fill="none" stroke="#ffffff" stroke-opacity="0.06"/>
