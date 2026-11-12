@@ -113,5 +113,5 @@ read as evidence for them:
   release-qualified, and whether production releases require signing secrets, remains a
   maintainer decision; [packaging](packaging.md) records the current tiers and evidence.
 - **LFS versus inline review.** Git LFS status/pull/prune and inline diff review comments
-  compete for the next feature slot; both are listed in the README roadmap and neither was
-  selected on this branch.
+  compete for the next feature slot; both are listed in the
+  [roadmap](roadmap-2026-11-10.md) and neither was selected on this branch.

@@ -2,161 +2,182 @@
   <a href="https://github.com/fradinni/Commit87">
     <img src="docs/assets/header.svg" alt="Commit87 — every commit counts" width="100%">
   </a>
+
+  <p><strong>Every commit counts.</strong> A focused desktop Git client for people who already like Git.</p>
+
+  [![Latest release](https://img.shields.io/github/v/release/fradinni/Commit87?color=3ddc97&label=release&include_prereleases&sort=semver)](https://github.com/fradinni/Commit87/releases) [![License](https://img.shields.io/github/license/fradinni/Commit87?color=3ddc97)](LICENSE) [![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-5ba8ff)](https://github.com/fradinni/Commit87/releases) [![CI](https://github.com/fradinni/Commit87/actions/workflows/ci.yml/badge.svg)](https://github.com/fradinni/Commit87/actions/workflows/ci.yml)
+
+  <a href="https://github.com/fradinni/Commit87/releases">
+    <img src="https://img.shields.io/badge/Linux-AppImage-5ba8ff?style=for-the-badge&logo=linux&logoColor=white" alt="Download for Linux">
+  </a>
+  <a href="https://github.com/fradinni/Commit87/releases">
+    <img src="https://img.shields.io/badge/macOS-install%20script-3ddc97?style=for-the-badge&logo=apple&logoColor=white" alt="Install on macOS">
+  </a>
 </div>
 
-<div align="center">
+<p align="center">
+  <a href="#about">About</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#usage">Usage</a> ·
+  <a href="#developers">Developers</a> ·
+  <a href="#license">License</a>
+</p>
 
-[![CI](https://github.com/fradinni/Commit87/actions/workflows/ci.yml/badge.svg)](https://github.com/fradinni/Commit87/actions/workflows/ci.yml)
-[![Dependabot Updates](https://github.com/fradinni/Commit87/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/fradinni/Commit87/actions/workflows/dependabot/dependabot-updates)
-[![Release](https://github.com/fradinni/Commit87/actions/workflows/release.yml/badge.svg)](https://github.com/fradinni/Commit87/actions/workflows/release.yml)
+![Commit87 launchpad](docs/screenshots/launchpad.png)
 
-[![Latest release](https://img.shields.io/github/v/release/fradinni/Commit87?color=3ddc97&label=latest)](https://github.com/fradinni/Commit87/releases)
-[![License](https://img.shields.io/github/license/fradinni/Commit87?color=3ddc97)](LICENSE)
-[![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-5ba8ff)](https://github.com/fradinni/Commit87/releases)
-[![Vitest](https://img.shields.io/badge/tests-Vitest-6E9F18?logo=vitest&logoColor=white)](https://github.com/fradinni/Commit87/actions/workflows/ci.yml)
+## About
 
-[![Electron](https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
-[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev/)
-[![Node.js](https://img.shields.io/badge/Node.js-24-5FA04E?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
-[![Git](https://img.shields.io/badge/Git-2.30%2B-F05032?logo=git&logoColor=white)](https://git-scm.com/)
+Commit87 is a cross-platform desktop Git client for Linux, macOS and Windows. It provides a
+graphical interface for repositories, history, branches, worktrees, code review and forge
+integrations, while every version-control operation is executed by the Git CLI itself rather
+than a reimplementation. Existing hooks, filters, LFS, GPG signing, SSH configuration and
+`includeIf` identities therefore continue to apply.
 
-**Every commit counts.** The Git client for people who already like Git.
+The client covers staging and commits, commit graph navigation, branch and tag management,
+linked worktrees, submodules and stashes, plus pull requests, releases and pipelines where
+each forge supports them. Multiple identities and forge accounts can be configured and bound
+per repository, per remote or per push.
 
-</div>
-
-![Launchpad](docs/screenshots/launchpad.png)
-
-## Why another Git client
-
-Graphical Git clients usually reimplement Git to build their UI on top of it — and that is
-where your hooks, filters, LFS, GPG signing, SSH config and `includeIf` identities quietly
-stop working. Commit87 takes the other path: **a focused UI on top of the Git you already
-trust.**
-
-- **Real Git, not a re-implementation.** Every operation is a real `git` invocation, so your
-  existing setup keeps working — including the parts nobody wrote a UI for.
-- **Small by design.** Repositories, review, worktrees, tags, releases and pipelines.
-  No boards, no issue tracker, no wiki, no AI panel.
-- **Multi-account, per repository.** Several identities and forge accounts, bound per
-  repository, per remote or per push.
-- **Auditable.** Tokens in the OS credential store, a sandboxed renderer behind a strict CSP,
-  and a git console that cannot spawn a shell.
+Commit87 is built with Electron, React and TypeScript, with no compiled native add-ons and
+no Git reimplementation. Git commands and provider API calls run in the main process,
+credentials are kept in the OS credential store when available, and the sandboxed renderer
+communicates through one validated IPC channel.
 
 ## Features
 
-### Repositories and code
+- **Commit graph** with lanes, refs, search, multi-select and per-commit actions: branch,
+  tag, checkout detached, cherry-pick, revert and reset.
+- **Repository tabs**: keep several repositories open at once, each with its own selection,
+  status and console.
+- **Branches, worktrees and refs**: a keyboard-first refs panel, conflict-aware merge and
+  rebase continuation, submodules, tags and stashes.
+- **Review and code browsing**: unified diffs with per-file stats, file tree at `HEAD` or in
+  the worktree, syntax highlighting, blame and open in your editor.
+- **Forge integrations** for GitHub, GitLab, Bitbucket and Gitea: pull requests, releases
+  and pipelines or workflow runs where the forge exposes them, matched to the right account
+  per remote.
+- **Built for the keyboard** with a command palette and a git-only console that cannot spawn
+  a shell.
+- **In-place updates** for AppImage, Windows and macOS builds, with stable and beta channels.
 
-| Area | What you get |
+| Commit graph | Staging |
 | --- | --- |
-| Repositories | Open, clone (HTTPS/SSH, shallow, bare), init, recent list with pinning |
-| Repository tabs | Keep several repositories open at once, each with its own view, selection, status and console; drag to reorder, middle-click to close |
-| Commit graph | Lane layout, refs and tags, search, branch filter, load more, commit details, Ctrl/Cmd and Shift multi-select, right-click actions |
-| History actions | Branch here, tag here, detached checkout and reset for one commit; cherry-pick and revert for one commit or a selection |
-| Staging | Staged and worktree sides of each file, per-file stage and unstage, discard (no app-level undo — see [recovery](docs/recovery.md)), keyboard-navigable rows, drafts kept per repository |
-| Commits | Amend, sign-off, `--allow-empty`, identity override per commit, Ctrl/Cmd+Enter |
-| Code browsing | Worktree and `HEAD` file tree, syntax highlighting, blame, open in OS editor |
-| Diffs | Unified diffs with per-file stats, binary detection, rename detection |
+| ![Commit graph](docs/screenshots/commit-graph.png) | ![Staging](docs/screenshots/staging.png) |
 
-![Commit graph](docs/screenshots/commit-graph.png)
-![Repository tabs](docs/screenshots/repository-tabs.png)
-![Staging](docs/screenshots/staging.png)
+| Refs panel | Git console |
+| --- | --- |
+| ![Refs panel](docs/screenshots/refs-panel.png) | ![Git console](docs/screenshots/git-console.png) |
 
-In the commit graph, click a commit to select it, `Ctrl/Cmd`-click to toggle individual
-commits, and `Shift`-click (or `Shift`+`↑`/`↓`) to select a range from the last anchor.
-Right-click the selection for its actions: for one commit, copy the SHA or subject, open it
-on the forge, check it out detached, create a branch or tag here, cherry-pick or revert
-it, or reset the current branch; for any selection, copy all SHAs, cherry-pick or revert
-the selected commits, select all loaded commits, or clear the selection. Bulk cherry-pick
-replays oldest first; bulk revert rewrites newest first. Merge commits are excluded from
-cherry-pick and revert because Git needs an explicit parent.
+## Install
 
-### Branches, worktrees and refs
+Prebuilt packages are published for every release. **Git 2.30+ must be on your `PATH`** or
+selected in **Settings → System Git** (the Flatpak and Snap bundles ship their own Git).
+Node.js is only needed to build from source. Linux packages are unsigned, so the checksum
+from the same release is the integrity gate. Recent releases publish `SHA256SUMS.txt`,
+`BUILD-INFO.txt` and `SIGNING-STATUS.txt`; verify downloads against them.
 
-- **Refs panel**: a compact, keyboard-first switcher in the sidebar (`Navigate` / `Refs`)
-  that lists local branches, remote branches, linked worktrees, stashes and tags for the
-  active repository, grouped by folder and remote. The main checkout stays represented by
-  its branch in Local, so the Worktrees section only contains the additional folders. Open it with the sidebar toggle,
-  `Ctrl/Cmd+Shift+B`, the command palette or the View menu, then type to filter, use the
-  arrow keys, single-click to select and **double-click (or press Enter)** to switch. A
-  branch that is checked out in another worktree
-  opens that worktree instead of failing the checkout, worktree rows show whether they are
-  open and how many files are modified, and right-click exposes the same actions as the
-  full pages (create worktree, merge, rebase, rename, delete, lock, prune, tag push/delete,
-  stash apply/pop/drop, copy, show in graph). Sections are resizable panes: Local grows
-  from the top and takes whatever height is left, the rest sit at the bottom, and each
-  expanded bottom section with rows can be resized by dragging the splitter above its
-  header. Collapsing Local hands its height to the first expanded section below, so the
-  stack closes up instead of leaving a gap when one is open.
-- Local and remote branches with upstream and ahead/behind counts
-- Checkout, create, rename, delete (with optional remote delete), set upstream
-- Merge (`--no-ff`, `--ff-only`, squash) and rebase onto any branch
-- Conflict-aware status bar with **Continue**, **Skip** and **Abort** for merge, rebase,
-  cherry-pick, revert and `git am`
-- Worktrees: add from a branch or a new branch, open side by side, lock/unlock with a
-  reason, prune, force-remove; new worktrees are created next to the repository by default
-  or in the default parent set in Settings, and every dialog accepts a one-off folder
-- Submodules: initialize, update to the recorded commit or the tracked branch, sync URLs,
-  add with an optional branch, reset local work, remove (with an explicit force option) and
-  open the nested repository; local changes and out-of-sync checkouts are flagged. Removal
-  moves the module clone aside under the Git directory instead of deleting it, so
-  unpublished commits, other refs and stashes remain recoverable; the path is shown after
-  removal, and re-adding the same submodule at the same path works
-- Tags: annotated or lightweight, push to a remote, delete locally and remotely
-- Stashes: push (with untracked), apply, pop, drop
+| Platform | Recommended | Also available |
+| --- | --- | --- |
+| macOS | [install script](#macos) — app auto-updates | `.dmg`, `.zip` (Apple Silicon and Intel) |
+| Linux | [AppImage](#linux) — app auto-updates | `.deb`, `.rpm`, `.pkg.tar.xz` (pacman), `.tar.gz` |
+| Windows | [NSIS installer](#windows) — app auto-updates | portable `.exe`, `.zip` (x64 and arm64) |
 
-![Worktrees](docs/screenshots/worktrees.png)
-![Refs panel](docs/screenshots/refs-panel.png)
+### macOS
 
-### Forge integrations
+The installer script downloads the newest release with `curl`, verifies it against
+`SHA256SUMS.txt` and installs to `~/Applications`. After the first install,
+**Settings → Updates** uses the same verified release archive to update the app in place:
 
-| Forge | Pull requests | Releases | Pipelines / actions |
-| --- | --- | --- | --- |
-| GitHub / GitHub Enterprise | yes | yes | Actions (list, dispatch) |
-| GitLab (self-hosted included) | merge requests | yes | CI pipelines |
-| Bitbucket Cloud | yes | — (API has none) | Pipelines |
-| Gitea / Forgejo | yes | yes | Actions (tasks + dispatch) |
+```bash
+curl -fsSL https://raw.githubusercontent.com/fradinni/Commit87/main/scripts/install-macos.sh | bash
+```
 
-- Detect the forge from any remote URL (HTTPS, `ssh://`, `git@host:owner/repo`)
-- Match a configured account to the remote host, or pin one per repository
-- Check out a pull request locally (`refs/pull/N/head`, GitLab merge refs, or the
-  contributor repository and head on Bitbucket/Gitea) into `pr-N`; the fetched commit must
-  match the forge-reported head before anything is switched
-- Create pull requests, create and delete releases, dispatch workflows and follow runs
-- Paginate pull requests, releases, workflows and runs with **Load more**; unsupported
-  collections and empty results are reported separately
-- Releases honour draft and prerelease where the forge can represent them; GitLab has
-  neither, so Commit87 rejects that intent instead of publishing silently
-- Never touches the network from the renderer: all API traffic runs in the main process
+The script resolves the newest version with `python3`, which ships with the Xcode Command
+Line Tools; pin `--version` to skip that lookup. Useful options:
 
-### Identity management
+```bash
+# Follow stable releases only
+curl -fsSL https://raw.githubusercontent.com/fradinni/Commit87/main/scripts/install-macos.sh \
+  | bash -s -- --channel stable
 
-- Unlimited identities: label, name, email, optional SSH key and GPG key/signing
-- Default identity plus per-repository override and per-account binding
-- Every commit, merge, cherry-pick, revert, tag and stash uses one main-side precedence:
-  explicit pick, then the repository's default, then the identity Git resolves for that
-  repository (`includeIf` and global config included), then the application default
-- Pushes authenticate with the selected integration account through an ephemeral
-  credential helper — tokens never appear in `argv` or in the process list
+# Check the newest version, or remove the installed copy
+curl -fsSL https://raw.githubusercontent.com/fradinni/Commit87/main/scripts/install-macos.sh \
+  | bash -s -- --check
+curl -fsSL https://raw.githubusercontent.com/fradinni/Commit87/main/scripts/install-macos.sh \
+  | bash -s -- --uninstall
+```
 
-### Updates
+Install to `/Applications` with `--system`, pin a tag with
+`--version v0.2.0-beta.10`, or install somewhere else with `--to <dir>`. The script is also
+attached to the newest release, so you can download and run it locally if you prefer to read
+it first.
 
-- In-place updates for the AppImage, the Windows NSIS installer and the macOS app bundle
-  (installed from the release zip). macOS builds that are ad-hoc signed instead of
-  Developer ID signed get the same flow through a release-zip updater that verifies
-  the download's checksum and code signature before swapping the bundle
-- Stable and beta channels; prerelease tags publish `beta.yml` and never reach stable
-  installs
-- Automatic check after launch with background download, on by default, or a manual check
-  that waits for an explicit Download action. **Settings → Updates** turns the automatic
-  check off, and there is no telemetry in either path
-- Downloads are installed only by the **Restart & install** action, so quitting the app
-  never swaps the binary without confirmation
-- Progress, release notes and failures stay in Settings → Updates without exposing the
-  feed or artifacts to the renderer
-- Flatpak, Snap, portable, zip and package-manager builds are told where to update instead
-  of being patched behind their back
+> [!WARNING]
+> The `.dmg` and `.zip` are manual installs. Copy Commit87 to a writable folder (for
+> example `~/Applications`) before launching it: a copy running from the mounted disk image
+> cannot update itself. Automatic updates require that writable location — use the install
+> script above if you want updates handled for you.
 
-### Built for the keyboard
+### Linux
+
+The AppImage is a single file, runs on most distributions and updates in place.
+
+1. Download the **AppImage** for your architecture from the
+   [latest release](https://github.com/fradinni/Commit87/releases) (`x86_64` or `arm64`).
+2. Make it executable and run it:
+
+```bash
+chmod +x Commit87-*-linux-x86_64.AppImage
+./Commit87-*-linux-x86_64.AppImage
+```
+
+<sub>On ARM, use the `arm64` AppImage. If FUSE 2 is unavailable (Ubuntu 22.04+ ships it
+separately), launch with `--appimage-extract-and-run` instead.</sub>
+
+Package formats are attached to the same release:
+
+```bash
+# Debian / Ubuntu / Mint
+sudo apt install ./Commit87-*-linux-amd64.deb
+
+# Fedora / RHEL
+sudo dnf install ./Commit87-*-linux-x86_64.rpm
+
+# openSUSE
+sudo zypper install ./Commit87-*-linux-x86_64.rpm
+
+# Arch / Manjaro
+sudo pacman -U ./Commit87-*-linux-x64.pkg.tar.xz
+
+# Any distro, no install
+tar -xzf Commit87-*-linux-x64.tar.gz
+```
+
+<sub>On ARM the artifacts are `-linux-arm64` (AppImage, deb, tar.gz) or `-linux-aarch64`
+(rpm, pkg.tar.xz).</sub>
+
+Flatpak and Snap bundles are built from source (`npm run dist:flatpak`,
+`npm run dist:snap`) because their sandbox cannot use the host binaries: Snap stages Git,
+OpenSSH and CA certificates, and the Flatpak builds Git and uses the runtime's SSH and CA
+bundle. Package-manager builds are not patched in place; the package manager or software
+center owns the update, and portable or zip copies are replaced by downloading the next
+release.
+
+### Windows
+
+Download the `*-win-x64-setup.exe` (or `*-win-arm64-setup.exe`) installer from the
+[latest release](https://github.com/fradinni/Commit87/releases). Portable `.exe` and `.zip`
+builds are attached too. Installers are unsigned unless the release configured a
+certificate, so SmartScreen may ask for confirmation; `SIGNING-STATUS.txt` records what each
+build actually did.
+
+## Usage
+
+1. **Open**, **Clone** or **Init** a repository from the launchpad.
+2. Pick an identity and, for forge features, an integration account in **Settings**.
+3. Stage files, write a message and press `Ctrl/Cmd + Enter` to commit.
+4. Push, then open review from the pull request view for the repository's remote.
 
 | Shortcut | Action |
 | --- | --- |
@@ -164,250 +185,55 @@ cherry-pick and revert because Git needs an explicit parent.
 | `Ctrl/Cmd + J` | Toggle the git console |
 | `Ctrl/Cmd + O` | Open repository |
 | `Ctrl/Cmd + Shift + O` | Clone repository |
-| `Ctrl/Cmd + R` | Refresh repository |
 | `Ctrl/Cmd + Enter` | Commit from the message box |
-| `Ctrl + Tab` | Next repository tab |
-| `Ctrl + Shift + Tab` | Previous repository tab |
-| `Ctrl/Cmd + 1…9` | Jump to a repository tab |
-| `Ctrl/Cmd + W` | Close the active repository tab |
 
-The git console runs **only git commands, without a shell**. A bounded per-command
-grammar lists the flags, verbs and positional kinds it accepts, rejects global overrides
-and execution options (`-c`, `-C`, `--git-dir`, `--upload-pack`, `--exec`, …) in every
-attached, separate or short spelling, and allows only read-only `git config` queries.
+See [Getting started](docs/getting-started.md) for system Git discovery, token scopes and
+repository grants, and [Recovery](docs/recovery.md) for what discard, submodule removal and
+interrupted operations leave behind.
 
-![Git console](docs/screenshots/git-console.png)
-![Command palette](docs/screenshots/command-palette.png)
+## Developers
 
-## Install
-
-Prebuilt Linux, Windows and macOS packages are built by CI for every target and architecture
-listed below; Snap and Flatpak are built from source locally (see the note under Linux):
-
-| Platform | Formats |
-| --- | --- |
-| Linux | AppImage, `.deb` (Debian/Ubuntu/Mint), `.rpm` (Fedora/RHEL/openSUSE), `pacman` (Arch/Manjaro), `tar.gz` |
-| Windows | NSIS installer, portable `.exe`, `.zip` (x64 and arm64) |
-| macOS | `.dmg` and `.zip` (Apple Silicon arm64 and Intel x64) |
-
-Every release attaches `SHA256SUMS.txt`, a `BUILD-INFO.txt` with the source commit and
-workflow run, and a `SIGNING-STATUS.txt` stating what the build actually did. Linux packages
-are unsigned. Windows builds are unsigned unless the release configured a certificate.
-macOS builds are ad-hoc signed when no Developer ID is configured and signed/notarized when
-it is; the status file records which case applied.
-
-### Linux
+Requirements: **Node.js 24+** and **Git 2.30+**. There are no native modules to compile.
 
 ```bash
-# Debian / Ubuntu
-sudo apt install ./Commit87-0.2.0-beta.5-amd64.deb
-
-# Fedora / RHEL
-sudo dnf install ./Commit87-0.2.0-beta.5-x86_64.rpm
-
-# Arch
-sudo pacman -U Commit87-0.2.0-beta.5-linux-x64.pkg.tar.xz
-
-# Any distro, no install
-chmod +x Commit87-0.2.0-beta.5-linux-x86_64.AppImage
-./Commit87-0.2.0-beta.5-linux-x86_64.AppImage
-```
-
-Substitute the version you downloaded. Every Linux package depends on the system `git`.
-Snap and Flatpak bundles are built from source (`npm run dist:snap`,
-`npm run dist:flatpak`) rather than attached to GitHub releases; they include Git, OpenSSH
-and CA certificates because their sandbox cannot use the host binaries.
-
-### Windows and macOS
-
-**macOS — recommended:** download `install-macos.sh` from the release page and run it. The
-script detects the machine's architecture, downloads the newest release with `curl` (which
-never attaches the quarantine attribute Gatekeeper enforces), verifies the archive against
-the release `SHA256SUMS.txt`, confirms the bundle's signature is intact, installs to
-`~/Applications` and can update an existing copy in place — with no Apple Developer ID,
-notarization or Gatekeeper dance required:
-
-```bash
-bash install-macos.sh                 # install or update
-bash install-macos.sh --check         # what is the newest available version?
-bash install-macos.sh --uninstall     # remove the copy in ~/Applications
-```
-
-`latest` (the default) and `beta` include prerelease builds; pass `--channel stable` to
-follow stable releases only. Because an ad-hoc signature has no verified signer identity,
-the release checksum — not the signature — is the integrity gate.
-
-Uninstall works offline. To reinstall or deliberately downgrade, pass an exact release
-tag with `--version vX.Y.Z`; without a pin, the script only installs newer versions.
-
-After the first install, updates are also offered inside **Settings → Updates**, using the
-same verified release-zip swap. The app checks and stages the replacement in a writable
-installation folder before quitting; a read-only DMG cannot be updated in place. Switching
-from Beta to Stable may offer an older stable version. The `.dmg` (mount and drag) and `.zip` (run in place)
-artifacts remain available; a macOS build that was produced without the signing secrets is
-ad-hoc signed only, `SIGNING-STATUS.txt` says so, and Gatekeeper then blocks its first
-launch until you allow it in System Settings > Privacy & Security — the installer script
-above is the way to avoid that step. The in-app updater uses Node's HTTP stack and cannot
-use a proxy configured in the system network settings; on such a network, set `HTTPS_PROXY`
-and use the installer script instead.
-
-Windows installers are unsigned unless the release configured a certificate and then show a
-SmartScreen warning; `SIGNING-STATUS.txt` records what the build actually did.
-
-> macOS packages are built on `macos-15` (Apple Silicon). Both architectures are
-> produced there: arm64 natively and Intel x64 cross-packaged, so no Intel runner is
-> required.
-
-## Build from source
-
-Requirements: Node.js 24+ and Git 2.30+.
-
-```bash
-npm ci               # or npm install
+npm install          # or npm ci
 npm run dev          # electron-vite dev server with HMR
 npm run typecheck    # strict TypeScript for main, preload and renderer
 npm test             # unit and integration tests against real git
 npm run build        # production bundles in out/
-npm run pack:dir     # unpacked app in dist/linux-unpacked (or dist/linux-arm64-unpacked)
+npm run pack:dir     # unpacked app in dist/
 ```
 
-`npm run dev` and `npm run start` provision the Electron runtime themselves before
-electron-vite starts. The `electron` package no longer downloads its binary during dependency
-installation, and electron-vite needs `node_modules/electron/path.txt`, so a fresh `npm ci`
-would otherwise stop with `Electron uninstall`. The check runs before every launch, is
-idempotent, and downloads nothing once the runtime matches the lockfile. To diagnose or
-force a repair:
+`npm run dev` and `npm run start` provision the Electron runtime first;
+`npm run ensure:electron -- --check` reports without downloading. Build installers with
+`npm run build:linux`, `npm run build:win` or `npm run build:mac` (Windows and macOS
+packaging must run on a matching host or in CI). Linux packaging also needs `fakeroot`,
+`rpm` and `bsdtar` (`libarchive-tools`); see the
+[packaging details](docs/packaging.md#linux-packaging-details).
 
-```bash
-npm run ensure:electron -- --check   # report only, never downloads
-rm -rf node_modules/electron/dist node_modules/electron/path.txt
-npm run ensure:electron              # download the matching runtime once
+Layout and boundaries:
+
+```
+src/main/       Electron main: Git, providers, IPC, secrets, updates (full privileges)
+src/preload/    contextBridge surface: invoke and event subscriptions only
+src/shared/     pure domain types and the typed IPC contract
+src/renderer/   React UI (sandboxed: no Node, no secrets, no direct network)
+tests/          Vitest suites against temporary repositories and mocked fetch
+docs/           architecture, guides, recovery, packaging, testing, screenshots
 ```
 
-Package the app:
+Extending IPC means adding to `IpcMethods` in `src/shared/ipc.ts`, a type in
+`src/shared/types.ts`, and the decoder/handler entries in `src/main/ipc/router.ts`. Never
+bypass `src/renderer/src/lib/ipc.ts`, and never interpolate shell strings when spawning Git.
 
-```bash
-npm run icons             # regenerate PNG/ICO/ICNS from build/icon.svg
-npm run build:linux       # AppImage, deb, rpm, pacman, tar.gz
-npm run build:win         # NSIS, portable, zip
-npm run build:mac         # dmg, zip
-npm run dist:flatpak      # Flatpak bundle (needs flatpak-builder)
-npm run dist:snap         # Snap (needs snapcraft)
-python3 scripts/package-linux.py deb rpm pacman   # no-fpm fallback packager
-```
+More documentation:
 
-Local package builds are not published. Pass `--publish never` for a dry run (CI does); the
-release workflow builds every target that way, verifies the assembled artifacts, and only
-then uploads them to a draft release. Keep `dist/` artifacts out of the release feed unless
-they came from that workflow.
-
-Linux packaging with `electron-builder` also needs `fakeroot`, `rpm` and `bsdtar`
-(`libarchive-tools`); see [docs/packaging.md](docs/packaging.md#linux-packaging-details).
-
-## Guides and reference
-
-- [Getting started](docs/getting-started.md) — system Git discovery, identity versus
-  authentication, token scopes, native pickers and repository grants.
-- [Recovery](docs/recovery.md) — what discard, submodule removal, interrupted operations,
-  updates and the app profile leave behind, and what has no undo.
-- [Architecture](docs/architecture.md) — processes, IPC contract, Git execution,
-  providers and updates.
+- [Architecture](docs/architecture.md) — processes, IPC contract, Git execution, providers,
+  updates and the security model.
 - [Packaging](docs/packaging.md) and [Testing](docs/testing.md) — platform tiers, release
-  workflow, suites and the update demo.
-- [Readiness remediation status](docs/remediation-2026-11-10.md) — how the 2026-11-10
-  assessment findings were addressed, with evidence, plus what was not exercised on the
-  validation host and which product decisions remain open.
-
-## Architecture
-
-```
-src/
-├─ main/                      Electron main process (Node, full privileges)
-│  ├─ index.ts                lifecycle, single instance, deep links
-│  ├─ window.ts               hardened BrowserWindow, navigation guards
-│  ├─ protocol.ts             commit87:// app scheme (no file:// renderer)
-│  ├─ menu.ts                 native menu
-│  ├─ store.ts                config + encrypted secrets, repo defaults
-│  ├─ tasks.ts                streaming git tasks, console grammar
-│  ├─ git/
-│  │  ├─ runner.ts            spawn wrapper, identity and credential env
-│  │  ├─ parsers.ts           porcelain v2, log, refs, worktrees, submodules, blame
-│  │  └─ repo.ts              typed operations over system git
-│  ├─ providers/              GitHub, GitLab, Bitbucket, Gitea clients
-│  └─ ipc/router.ts           one validated channel table, no dynamic IPC
-├─ preload/index.ts           contextBridge surface (invoke + events)
-├─ shared/                    types and the typed IPC contract
-└─ renderer/                  React 19 UI (sandboxed, no Node access)
-   └─ src/{components,views,lib,styles}
-```
-
-**Process boundaries.** The renderer never sees a token, a path outside the chosen repo,
-or a `child_process`. It calls a single `commit87:invoke` channel with a discriminated
-envelope; the router re-validates every argument, resolves identity/account permissions
-and returns either a value or a sanitized error.
-
-**Git execution.** `git/runner.ts` spawns Git with `shell: false`,
-`GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=true`, `GIT_SEQUENCE_EDITOR=true` and a non-parsing
-`--no-pager` baseline. Long operations (clone/fetch/pull/push/console) stream stdout and
-stderr line by line through `TaskManager`, which redacts known secrets before sending
-anything to the renderer.
-
-**Identity and credentials.** `buildIdentityEnv` exports `GIT_AUTHOR_*` / `GIT_COMMITTER_*`
-and inline `-c user.*` values, and sets `GIT_SSH_COMMAND` for per-identity SSH keys.
-`buildAuthArgs` installs a throwaway credential helper that reads the username and token
-from the environment, so secrets never appear in `argv`, `ps`, shell history or task logs.
-
-**Renderer serving.** The production renderer is served by a privileged `commit87://`
-scheme instead of `file://`. That allows `grantFileProtocolExtraPrivileges: false` and
-`onlyLoadAppFromAsar: true` while keeping ES modules and a strict CSP working.
-
-See [docs/architecture.md](docs/architecture.md) for the full design and data flow.
-
-## Security model
-
-- `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`, no `webview`
-- Strict CSP: no remote script, no inline script, no `unsafe-eval`, `object-src 'none'`
-- Navigation and `window.open` are blocked; http(s) links open in the system browser
-- Tokens encrypted with Electron `safeStorage` (OS keychain) when available; otherwise
-  stored in `secrets.json` with mode `0600` and clearly reported in Settings
-- IPC accepts only the known channel table and only from the main window's webContents
-- Git console: git-only bounded grammar, no shell, no global overrides or config writes
-- Path traversal is rejected for every file, worktree and repository argument
-- No telemetry or analytics; the only background network call is the update check
-  (on by default for in-place update formats, switchable in Settings → Updates)
-- Electron fuses disable `runAsNode`, `NODE_OPTIONS`, CLI inspect and extra `file://`
-  privileges, and enable ASAR integrity validation
-
-Report vulnerabilities via [SECURITY.md](SECURITY.md).
-
-## Project layout
-
-```
-docs/                architecture, guides, recovery, packaging, testing, screenshots
-build/               icons, installer and entitlement resources
-scripts/             icon generation, version sync, Flatpak/Snap/deb/rpm/pacman helpers
-flatpak/ snap/       native manifests
-src/                 application source (see above)
-tests/               vitest suites (parsers, providers, git integration, security)
-```
-
-## Roadmap
-
-Current priorities, in order:
-
-1. **Diff review comments and inline PR review**
-2. **Git LFS status and pull/prune actions**
-
-Next up:
-
-- [ ] Windows ARM64 native ARM build validation on hardware
-
-Shipped:
-
-- [x] Auto-update channels for AppImage, NSIS and DMG, with stable and beta feeds
-- [x] Multiple simultaneous repository tabs, each with per-repository state
-- [x] Interactive rebase editor (todo list, squash, reword) inside the app
-- [x] Submodule management UI
+  workflow and the suites.
+- [Contributing](CONTRIBUTING.md) — review expectations and verification gates.
+- [Security](SECURITY.md) — how to report a vulnerability.
 
 ## License
 
