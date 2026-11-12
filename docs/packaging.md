@@ -248,7 +248,7 @@ exists inside the snap. Plugs include `home`, `removable-media`,
 
 ```bash
 npm run dist:snap                         # builds dist/commit87_<version>_<arch>.snap
-sudo snap install --dangerous dist/commit87_0.2.0-beta.5_amd64.snap
+sudo snap install --dangerous dist/commit87_0.2.0_amd64.snap
 ```
 
 ### Flatpak
@@ -268,7 +268,7 @@ also fails if the bundle file was not written and names it from `package.json`.
 
 ```bash
 npm run dist:flatpak                      # dist/Commit87-<version>-x86_64.flatpak
-flatpak install --user dist/Commit87-0.2.0-beta.5-x86_64.flatpak
+flatpak install --user dist/Commit87-0.2.0-x86_64.flatpak
 ```
 
 App ID: `fr.fradinni.Commit87`.
@@ -313,7 +313,7 @@ in-app splash cannot cover that phase. Everything after it is optimised:
 Measure a build with the opt-in trace:
 
 ```bash
-COMMIT87_STARTUP_TRACE=1 ./dist/Commit87-0.2.0-beta.5-linux-x86_64.AppImage
+COMMIT87_STARTUP_TRACE=1 ./dist/Commit87-0.2.0-linux-x86_64.AppImage
 # [commit87:startup] main process loaded … +0ms
 # [commit87:startup] app ready … +249ms
 # [commit87:startup] main window ready … +1290ms
@@ -482,8 +482,12 @@ the ICNS container with PNG chunks for `ic07`–`ic14`).
 
 ## Versioning
 
-One version source: `package.json`. `node scripts/sync-version.mjs [version]` rewrites
+One version source: `package.json`. `node scripts/sync-version.mjs [version]` (or
+`npm run version:sync [x.y.z]`) rewrites `package.json` itself, `package-lock.json`,
 `src/main/version.ts`, `snap/snapcraft.yaml` and adds the Flatpak metainfo release entry.
+A stable release also drops the metainfo's prerelease entries: AppStream ranks a beta above
+its own stable release (`0.2.0-beta.10` > `0.2.0`) and rejects the file as out of order
+otherwise.
 
 Release runs do not guess the version or channel. `node scripts/sync-version.mjs --resolve`
 prints the single resolution (`version`, `tag`, `channel`, `prerelease`, `draft`), and

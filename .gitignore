@@ -11,6 +11,10 @@ dist/
 coverage/
 .vitest
 
+# Python bytecode from scripts/
+__pycache__/
+*.pyc
+
 # Editors and OS
 .vscode/*
 !.vscode/extensions.json

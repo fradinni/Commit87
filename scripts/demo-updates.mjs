@@ -23,9 +23,26 @@ const PORT = Number(process.env.COMMIT87_UPDATE_DEMO_PORT || 8787)
 const ARTIFACT_BYTES = Number(process.env.COMMIT87_UPDATE_DEMO_SIZE || 2 * 1024 * 1024)
 const THROTTLE_BYTES_PER_SECOND = Number(process.env.COMMIT87_UPDATE_DEMO_RATE || 420 * 1024)
 
+// The demo must offer something newer than the checked-out app, so derive the
+// next minor from package.json instead of pinning versions a release turns into
+// "no update available".
+const appVersion = JSON.parse(readFileSync(path.join(ROOT, '..', '..', 'package.json'), 'utf8')).version
+const [appMajor, appMinor] = appVersion.split('.').map(Number)
+const demoMinor = `${appMajor}.${appMinor + 1}`
+
 const channels = [
-  { id: 'stable', version: '0.2.0', file: 'Commit87-0.2.0-linux-x86_64.AppImage', notes: 'Stable demo build' },
-  { id: 'beta', version: '0.3.0-beta.1', file: 'Commit87-0.3.0-beta.1-linux-x86_64.AppImage', notes: 'Beta demo build' }
+  {
+    id: 'stable',
+    version: `${demoMinor}.0`,
+    file: `Commit87-${demoMinor}.0-linux-x86_64.AppImage`,
+    notes: 'Stable demo build'
+  },
+  {
+    id: 'beta',
+    version: `${demoMinor}.1-beta.1`,
+    file: `Commit87-${demoMinor}.1-beta.1-linux-x86_64.AppImage`,
+    notes: 'Beta demo build'
+  }
 ]
 
 function ensureArtifact(channel) {
@@ -175,8 +192,10 @@ function serve() {
     sendSlow(res, target, req.headers.range)
   })
   server.listen(PORT, '127.0.0.1', () => {
+    const [stable, beta] = channels
+    const rate = Math.round(THROTTLE_BYTES_PER_SECOND / 1024)
     console.log(`Commit87 update feed on http://127.0.0.1:${PORT}/`)
-    console.log(`stable 0.2.0 and beta 0.3.0-beta.1, throttled to ~${Math.round(THROTTLE_BYTES_PER_SECOND / 1024)} KiB/s`)
+    console.log(`stable ${stable.version} and beta ${beta.version}, throttled to ~${rate} KiB/s`)
     console.log('Press Ctrl+C to stop.')
   })
   process.on('SIGINT', () => {

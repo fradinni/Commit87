@@ -6,6 +6,137 @@ All notable changes to Commit87 are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-11-12
+
+First stable release since 0.1.0, consolidating the ten 0.2.0 betas. Upgrading from 0.1.0
+is recommended: it adds the refs panel, worktree status and commit-graph multi-select,
+makes recovery from interrupted work reliable, and fixes the packaging and update paths
+that made earlier builds fail to launch or fail to update. Installations on the Beta channel
+are offered this release as well; keep Beta to continue receiving later prereleases, or
+switch to Stable in Settings → Updates to follow stable releases only.
+
+### Added
+
+- Refs panel in the sidebar (`Navigate` / `Refs`): grouped local and remote branches, linked
+  worktrees, stashes and tags with live filtering and keyboard navigation. A single click
+  selects a row; double-click or `Enter` switches. A branch checked out in another worktree
+  opens that worktree instead of letting Git refuse the checkout, and row menus expose the
+  same branch, worktree, tag and stash actions as the full pages. Open it from the sidebar
+  toggle, `Ctrl/Cmd+Shift+B`, the command palette or the View menu.
+- Worktree status in the refs panel: open/current state, dirty file counts and lock/prunable
+  flags, backed by a batch `git.worktreeStatuses` read that reports missing checkouts without
+  failing the whole list, plus a default worktree parent in Settings.
+- Resizable refs-panel sections whose sizes survive collapsing, resizing and reopening.
+- Repository tab strip improvements: the launchpad button stays reachable, the new-tab menu
+  lists recent repositories and worktrees, and a repository and its linked worktrees stay
+  together as one drag-and-drop group.
+- Commit-graph multi-select (`Ctrl/Cmd`-click, `Shift`-click, `Ctrl/Cmd+Shift`-click,
+  `Ctrl/Cmd+A`, arrow keys) kept per repository tab, with a right-click context menu and a
+  selection summary for copy SHA/subject, open on forge, detached checkout, branch, tag,
+  cherry-pick, revert and reset. Bulk cherry-pick replays oldest first, bulk revert rewrites
+  newest first, and merge commits are excluded from both.
+- macOS installs that are not signed with an Apple Developer ID now get real in-place
+  updates. `scripts/install-macos.sh` installs a release from the command line without the
+  Gatekeeper step, and the in-app updater offers the same verified release-zip swap in
+  Settings → Updates. Every macOS release attaches `install-macos.sh`.
+- Staging shows both the staged and the worktree side of a partially staged file, with the
+  action scope for each side and a preview that reloads after staging changes.
+- Commit messages and conflict resolutions are kept per repository, and conflict drafts per
+  file and content baseline, so switching views or tabs no longer discards them.
+- Changed-file rows are keyboard-navigable and their actions are visible on focus; dialogs
+  move focus inside, trap Tab, close on Escape only for the top-most dialog and restore
+  focus.
+- A native picker chooses the Git executable, and repository/worktree access is recorded as
+  an explicit grant when the user picks, opens, clones, initialises or creates it.
+- Provider lists (pull requests, releases, pipelines) load more pages, and a reloaded window
+  restores running and recently finished tasks from a bounded main-process snapshot.
+- Folder launches: `file://` directory URLs from Linux file managers and macOS `open-file`
+  events resolve to the repository, and Linux packages advertise `inode/directory`.
+- First-success and recovery guides (`docs/getting-started.md`, `docs/recovery.md`).
+
+### Changed
+
+- One identity precedence in main: explicit pick, repository default, the identity Git
+  resolves for that repository (including `includeIf`), then the application default.
+- Credentials are authorized per operation destination before a helper is scoped to it;
+  provider-name guesses can no longer release a token, and changing an integration endpoint
+  invalidates the stored secret.
+- Bare clones open with graph, branches, tags and remotes, and worktree-only actions report
+  that they need a working tree instead of failing with a Git fatal.
+- Releases resolve one validated version and channel for tag and manual runs, verify channel
+  metadata, architectures and artifacts before publishing, and keep Windows/macOS grouped.
+- Optional Flatpak, Snap and fallback pacman recipes are architecture-aware and covered by a
+  static recipe check; support tiers are documented as supported, buildable or experimental.
+- Repository discovery is cached for stable facts only; a status poll now spawns about three
+  Git processes instead of about fifteen, while branch, status and operation state stay live.
+- Fresh dependency installation starts `npm run dev` without a manual Electron install step.
+
+### Fixed
+
+- macOS builds no longer report "the application is damaged" or get killed at launch: the
+  bundle is re-signed after the fuses are patched, CI verifies every produced bundle, and
+  Developer ID signing and notarization are used when a certificate is configured.
+- Ad-hoc macOS builds honor Beta-to-Stable downgrades, and the ad-hoc in-app updater and
+  `install-macos.sh` choose the highest matching release instead of the first entry in the
+  GitHub API's creation-ordered list, so a backport published later cannot hide a newer
+  release.
+- macOS update preparation fails before quitting when the installation is not writable,
+  restores the previous app after a failed swap, and never replaces a still-running app after
+  a shutdown timeout. Settings → Updates labels check, download and installation failures
+  separately and recovers when a detached swap helper times out.
+- AppImage updates work when the bundled runtime mounts the image with its file name as the
+  kernel mount source, and verification follows a kernel loop mount to its backing file.
+- An update check no longer crashes the main process with `write EPIPE` when stdout or stderr
+  is attached to a pipe whose reader has exited.
+- Selected filenames no longer act as patterns: staging, unstaging and discarding
+  `notes[1].txt` leaves `notes1.txt` untouched, and unstaging a staged rename clears both
+  sides of it.
+- Checking out a ref never falls back to restoring a same-named tracked file, and multiline
+  tag messages no longer create phantom tags; a tag and a branch with the same name no
+  longer collide.
+- Removing a submodule keeps its module clone (moved aside and reported), so unpublished
+  commits and stashes stay recoverable, and re-adding the same submodule works.
+- Conflict saves are rejected when the file changed since it was loaded, keeping the newer
+  bytes and the user's edit, and conflicts from a cherry-pick or revert are reported as
+  errors while the status bar keeps offering Continue, Skip and Abort.
+- In-place updates are bound to the AppImage mount that contains the running executable and
+  revalidated before download and install; unpacked, extracted, Snap, Flatpak and loop
+  mounted runs fail closed.
+- Pull-request checkout fetches and verifies the forge-reported head for every provider, so a
+  fork branch named like the destination branch can no longer check out the wrong commit.
+- A draft release requested for GitLab is rejected before any write instead of being
+  published as an ordinary release; unsupported controls are hidden per provider.
+- Merge, rebase, continue, skip, cherry-pick, revert and discard return a machine-readable
+  outcome built from the real exit status, so a refusal, hook failure or conflict is never
+  announced as success.
+- An interrupted rebase keeps the comment character it chose, so a reword subject starting
+  with `#` survives Continue or a restart.
+- JSON provider requests send `Content-Type: application/json`; Gitea task runs decode the
+  documented envelope; Bitbucket uses correct state queries and continuation links.
+- Recent repositories and worktrees survive restarts, concurrent profile writes are
+  serialised, a failed write is reported without blocking the open, and an unreadable
+  `config.json` is kept aside instead of being overwritten with defaults.
+- The commit graph keeps a tag or remote ref selected as its branch filter, reconciles
+  selection when a filter or history rewrite removes commits, and never leaves a stale
+  selection behind.
+- Stale refresh results can no longer overwrite newer data, console output for a closed
+  repository tab never appears in another tab, and repeated discovery, unbounded task output
+  and stale pagination no longer grow without bound.
+
+### Security
+
+- File and ref operations execute with literal path semantics and validated operands, and
+  the console accepts only a bounded command grammar rather than a spelling deny-list.
+- The IPC boundary decodes every payload strictly and pins each handler result to its
+  declared response type.
+- Repository roots, linked worktrees and custom Git executables are authorized by
+  main-owned grants; file reads resolve the authorized root and never follow symlinks.
+- Credential tokens stay in the child environment, scoped to one exact origin, and are bound
+  to the authority they were issued for. Tokens saved by earlier releases carry no authority
+  and must be entered once more.
+- Release jobs run read-only by default, write only in the prepare and publish jobs, do not
+  persist checkout credentials, scope signing secrets to their platform and pin actions.
+
 ## [0.2.0-beta.10] — 2026-11-11
 
 ### Added

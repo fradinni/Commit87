@@ -109,7 +109,7 @@ curl -fsSL https://raw.githubusercontent.com/fradinni/Commit87/main/scripts/inst
 ```
 
 Install to `/Applications` with `--system`, pin a tag with
-`--version v0.2.0-beta.10`, or install somewhere else with `--to <dir>`. The script is also
+`--version v0.2.0`, or install somewhere else with `--to <dir>`. The script is also
 attached to the newest release, so you can download and run it locally if you prefer to read
 it first.
 

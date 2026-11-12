@@ -159,8 +159,9 @@ their own temporary roots; they never enumerate and remove live app update stagi
 
 ## Update demo harness
 
-`scripts/demo-updates.mjs` serves a local feed with a stable `0.2.0` and a beta
-`0.3.0-beta.1`, throttled so the download state is visible. Its `prepare` command also
+`scripts/demo-updates.mjs` serves a local feed with a stable release one minor ahead of the
+checked-out `package.json` (for example `0.3.0` from `0.2.0`) and a beta one patch beyond
+that (`0.3.1-beta.1`), throttled so the download state is visible. Its `prepare` command also
 extracts a packaged AppImage and rewrites the copied `app-update.yml`:
 
 ```bash
@@ -186,10 +187,12 @@ use an x64 AppImage.
 
 Open Settings → Updates. The flow to check:
 
-1. Stable channel: Check now → 0.2.0 available → Download → progress → ready to install.
+1. Stable channel: Check now → the demo's stable version (for example `0.3.0` from
+   `0.2.0`) is offered → Download → progress → ready to install.
    The title bar shows the same state.
-2. Switch to Beta and check again: 0.3.0-beta.1 is offered, proving the channel file is
-   used; switching back clears the stale offer and cancels a download in flight.
+2. Switch to Beta and check again: the demo's beta version (`0.3.1-beta.1`) is offered,
+   proving the channel file is used; switching back clears the stale offer and cancels a
+   download in flight.
 3. Toggle automatic checks off and on; with it on, the next launch checks after about
    12 seconds and downloads in the background.
 4. Unsupported builds are covered in the unit tests and visible in the dev app: Settings →

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Keeps the app version in one place: package.json.
- * Rewrites src/main/version.ts, snapcraft.yaml and the Flatpak metainfo release.
+ * Rewrites package-lock.json, src/main/version.ts, snapcraft.yaml and the Flatpak
+ * metainfo release.
  *
  *   node scripts/sync-version.mjs [version]
  *
@@ -116,10 +117,26 @@ export function syncVersion(requestedVersion) {
   }
 
   const written = []
+  // Read every file before writing any, so a missing lockfile cannot leave
+  // package.json bumped while the rest of the tree is untouched.
+  const lockPath = path.join(root, 'package-lock.json')
+  const lock = JSON.parse(readFileSync(lockPath, 'utf8'))
+
   if (version !== pkg.version) {
     pkg.version = version
     writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`)
     written.push(pkgPath)
+  }
+
+  // The lockfile carries the root version twice; leaving it behind used to need
+  // a manual `npm install --package-lock-only` on every release.
+  if (lock.version !== version || lock.packages?.['']?.version !== version) {
+    lock.version = version
+    if (lock.packages?.[''] !== undefined) {
+      lock.packages[''].version = version
+    }
+    writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`)
+    written.push(lockPath)
   }
 
   const versionFile = path.join(root, 'src/main/version.ts')
@@ -135,16 +152,25 @@ export function syncVersion(requestedVersion) {
   written.push(snapPath)
 
   const metaPath = path.join(root, 'flatpak/fr.fradinni.Commit87.metainfo.xml')
-  const meta = readFileSync(metaPath, 'utf8')
+  const originalMeta = readFileSync(metaPath, 'utf8')
+  let meta = originalMeta
+  // AppStream orders releases by version and ranks a prerelease above its own
+  // stable release (`0.2.0-beta.10` > `0.2.0`), so keeping the betas a stable
+  // release followed fails `appstreamcli validate` with "releases-not-in-order".
+  // Prereleases are not distributed through AppStream metadata, so a stable
+  // release drops them; re-running this script heals an already-dirty file.
+  if (!version.includes('-')) {
+    meta = meta.replace(/\s*<release version="[^"]*-[^"]*"[\s\S]*?<\/release>/g, '')
+  }
   if (!meta.includes(`version="${version}"`)) {
     const today = new Date().toISOString().slice(0, 10)
-    writeFileSync(
-      metaPath,
-      meta.replace(
-        /<releases>/,
-        `<releases>\n    <release version="${version}" date="${today}">\n      <description>\n        <p>See the changelog for details.</p>\n      </description>\n    </release>`
-      )
+    meta = meta.replace(
+      /<releases>/,
+      `<releases>\n    <release version="${version}" date="${today}">\n      <description>\n        <p>See the changelog for details.</p>\n      </description>\n    </release>`
     )
+  }
+  if (meta !== originalMeta) {
+    writeFileSync(metaPath, meta)
     written.push(metaPath)
   }
 
