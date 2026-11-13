@@ -1,4 +1,4 @@
-import type { FileStage, StatusFile } from '@shared/types'
+import type { FileStage, RepoStatus, StatusFile } from '@shared/types'
 
 /** Which recorded version of a path a row reviews. */
 export type FacetSide = 'index' | 'worktree'
@@ -61,6 +61,61 @@ export function fileFacets(file: StatusFile): FileFacet[] {
     facets.push(makeFacet(file, side, '•', file.stage, file.label))
   }
   return facets
+}
+
+/**
+ * Identity of a preview target. A facet keeps its key while its path stays on
+ * the same side, so reloading the same key is a quiet refresh. A move between
+ * index and worktree, or a stage change such as untracked to unstaged, is a new
+ * target that renders a different pane and therefore reloads from scratch.
+ */
+export function previewKeyFor(repoPath: string, facet: Pick<FileFacet, 'key' | 'stage'>): string {
+  return `${repoPath}|${facet.key}|${facet.stage}`
+}
+
+/**
+ * Whether two status snapshots describe the same working tree.
+ *
+ * The 5 s poll rebuilds the whole snapshot from `git status` on every tick, so
+ * an unchanged tree arrives as a fresh object graph. Publishing it would give
+ * every facet a new identity, which re-runs the review pane's reload effect
+ * under the reviewer. Equal snapshots are compared field by field and dropped.
+ */
+export function statusesEqual(left: RepoStatus, right: RepoStatus): boolean {
+  if (left === right) return true
+  if (
+    left.branch !== right.branch ||
+    left.headSha !== right.headSha ||
+    left.detached !== right.detached ||
+    left.upstream !== right.upstream ||
+    left.ahead !== right.ahead ||
+    left.behind !== right.behind ||
+    left.stagedCount !== right.stagedCount ||
+    left.unstagedCount !== right.unstagedCount ||
+    left.untrackedCount !== right.untrackedCount ||
+    left.conflictedCount !== right.conflictedCount ||
+    left.clean !== right.clean ||
+    left.files.length !== right.files.length
+  ) {
+    return false
+  }
+  for (let index = 0; index < left.files.length; index += 1) {
+    const a = left.files[index]
+    const b = right.files[index]
+    if (a === b) continue
+    if (
+      a.path !== b.path ||
+      a.origPath !== b.origPath ||
+      a.index !== b.index ||
+      a.worktree !== b.worktree ||
+      a.stage !== b.stage ||
+      a.label !== b.label ||
+      Boolean(a.rename) !== Boolean(b.rename)
+    ) {
+      return false
+    }
+  }
+  return true
 }
 
 /**

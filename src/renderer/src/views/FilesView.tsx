@@ -20,7 +20,15 @@ import {
 import type { BlameLine, DiffResult, DirEntry, FileContent, StatusFile } from '@shared/types'
 import { activeIdentity, discardNotice, useStore } from '../store'
 import { call, errorMessage } from '../lib/ipc'
-import { actionPaths, actionPathsFor, fileFacets, stagePaths, stagePathsFor, type FileFacet } from '../lib/files'
+import {
+  actionPaths,
+  actionPathsFor,
+  fileFacets,
+  previewKeyFor,
+  stagePaths,
+  stagePathsFor,
+  type FileFacet
+} from '../lib/files'
 import { createRequestGuard } from '../lib/request'
 import { formatRelativeTime, languageFromPath } from '../lib/format'
 import { Badge, Button, ConfirmDialog, EmptyState, Field, IconButton, LoadingBlock, Select, TextArea } from '../components/ui'
@@ -80,10 +88,16 @@ export function FilesView() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [treeLoading, setTreeLoading] = useState(false)
   const [browseFile, setBrowseFile] = useState<string | null>(null)
+  // Bumped by "Refresh" and by re-clicking the row under review: the preview
+  // effect re-runs for the same target and decides between a quiet and a full
+  // reload from `previewKey`.
+  const [reloadSeq, setReloadSeq] = useState(0)
 
   // Each editable surface keeps its own identity guard: a late response (or a
   // late `finally`) must never populate the editor for a newer selection.
   const previewGuard = useRef(createRequestGuard())
+  /** The selection whose bytes are on screen; a repeat is a quiet reload. */
+  const previewKey = useRef<string | null>(null)
   const browseGuard = useRef(createRequestGuard())
   const blameGuard = useRef(createRequestGuard())
   const treeGuards = useRef(new Map<string, ReturnType<typeof createRequestGuard>>())
@@ -126,13 +140,18 @@ export function FilesView() {
   }, [facets])
 
   const loadPreview = useCallback(
-    async (facet: FileFacet) => {
+    async (facet: FileFacet, quiet = false) => {
       if (!repoPath) return
       const token = previewGuard.current.begin(`${repoPath}|${facet.side}|${facet.path}`)
-      setDiffLoading(true)
-      setDiff(null)
-      setFileContent(null)
-      setContentError(null)
+      // A reload of the selection already on screen keeps the bytes instead of
+      // replacing them with a loading block: blanking the pane would drop the
+      // reviewer's scroll position for a change they cannot see yet.
+      if (!quiet) {
+        setDiffLoading(true)
+        setDiff(null)
+        setFileContent(null)
+        setContentError(null)
+      }
       try {
         // Git emits a combined diff (diff --cc) for unmerged paths, which the
         // unified-diff view cannot render. Show the working-tree file with its
@@ -140,7 +159,8 @@ export function FilesView() {
         if (facet.stage === 'untracked' || facet.stage === 'conflicted') {
           const content = await call('git.fileContent', { path: repoPath, file: facet.path, from: 'worktree' })
           if (!previewGuard.current.isCurrent(token)) return
-          setFileContent(content)
+          setFileContent((current) => (current && sameFileContent(current, content) ? current : content))
+          setContentError(null)
           return
         }
         const result = await call('git.diff', {
@@ -149,9 +169,13 @@ export function FilesView() {
           staged: facet.side === 'index'
         })
         if (!previewGuard.current.isCurrent(token)) return
-        setDiff(result)
+        setDiff((current) => (current && current.patch === result.patch ? current : result))
       } catch (error) {
         if (!previewGuard.current.isCurrent(token)) return
+        // A quiet reload must not blank the pane for bytes that are already on
+        // screen, but the failure is still real: report it, and drop the key so
+        // the next trigger retries from a full, visible load.
+        if (quiet) previewKey.current = null
         if (facet.stage === 'conflicted') setContentError(errorMessage(error))
         notifyError(error)
       } finally {
@@ -163,6 +187,7 @@ export function FilesView() {
 
   useEffect(() => {
     if (!selectedFacet) {
+      previewKey.current = null
       previewGuard.current.invalidate()
       setDiff(null)
       setFileContent(null)
@@ -170,8 +195,14 @@ export function FilesView() {
       setDiffLoading(false)
       return
     }
-    void loadPreview(selectedFacet)
-  }, [loadPreview, repoPath, selectedFacet])
+    // Reloading the same selection (a status poll, an external edit or a
+    // deliberate refresh) is quiet: only a new target starts from a loading
+    // state, so the reviewer keeps the bytes, the scroll position and no flash.
+    const key = previewKeyFor(repoPath, selectedFacet)
+    const quiet = previewKey.current === key
+    previewKey.current = key
+    void loadPreview(selectedFacet, quiet)
+  }, [loadPreview, reloadSeq, repoPath, selectedFacet])
 
   const loadTree = useCallback(
     async (dir = '') => {
@@ -201,6 +232,7 @@ export function FilesView() {
   useEffect(() => {
     if (!repoPath) return
     previewGuard.current.invalidate()
+    previewKey.current = null
     browseGuard.current.invalidate()
     blameGuard.current.invalidate()
     for (const guard of treeGuards.current.values()) guard.invalidate()
@@ -234,6 +266,15 @@ export function FilesView() {
     if (facets.some((facet) => facet.path === selected.path)) return
     setSelected(null)
   }, [facets, selected])
+
+  // Staging or unstaging the selected path replaces its worktree facet with an
+  // index facet. `selectedFacet` falls back to the facet for that path, so the
+  // recorded side must follow it; otherwise the row on screen and the selection
+  // disagree and the next click on it would clear a pane the effect never redraws.
+  useEffect(() => {
+    if (!selected || !selectedFacet || selectedFacet.side === selected.side) return
+    setSelected({ path: selectedFacet.path, side: selectedFacet.side })
+  }, [selected, selectedFacet])
 
   const loadFile = useCallback(
     async (file: string) => {
@@ -337,6 +378,19 @@ export function FilesView() {
     }
   }
 
+  const refreshStaging = async (): Promise<void> => {
+    const published = useStore.getState().status
+    try {
+      await refreshAll()
+    } catch (error) {
+      notifyError(error)
+      return
+    }
+    // A changed status already re-ran the preview effect; only an unchanged
+    // tree (a file edited in place) needs this explicit reload.
+    if (useStore.getState().status === published) setReloadSeq((value) => value + 1)
+  }
+
   const commit = async (): Promise<void> => {
     if (!commitMessage.trim()) {
       notify('Write a commit message first', 'info')
@@ -369,6 +423,13 @@ export function FilesView() {
   }
 
   const selectFacet = (facet: FileFacet): void => {
+    // Re-selecting the row already under review is the natural "reload this
+    // preview" gesture. Clearing the pane here would leave it empty: the reload
+    // effect keys on the facet identity, which has not changed.
+    if (selectedFacet?.key === facet.key) {
+      setReloadSeq((value) => value + 1)
+      return
+    }
     // Invalidate before the next render so a response that lands between the
     // click and the effect cannot populate the editor for the new target, and
     // never render the previous selection's bytes under the new row.
@@ -517,7 +578,7 @@ export function FilesView() {
               >
                 Unstage all
               </Button>
-              <Button size="sm" variant="outline" icon={<RotateCcw size={13} />} onClick={() => void refreshAll()}>
+              <Button size="sm" variant="outline" icon={<RotateCcw size={13} />} onClick={() => void refreshStaging()}>
                 Refresh
               </Button>
             </>
@@ -796,5 +857,17 @@ export function FilesView() {
         onConfirm={() => void doDiscard()}
       />
     </div>
+  )
+}
+
+/** Whether a reloaded preview carries the same bytes, so it need not re-render. */
+function sameFileContent(left: FileContent, right: FileContent): boolean {
+  if (left.path !== right.path || left.from !== right.from) return false
+  if (left.sha256 && right.sha256) return left.sha256 === right.sha256
+  return (
+    left.content === right.content &&
+    left.binary === right.binary &&
+    left.truncated === right.truncated &&
+    left.size === right.size
   )
 }

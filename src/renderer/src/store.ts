@@ -35,6 +35,7 @@ import {
   repoPathKey
 } from './lib/tabs'
 import type { RequestField, RequestToken } from './lib/tabs'
+import { statusesEqual } from './lib/files'
 import { commit87Bridge } from './lib/bridge'
 
 type IpcRequestMap = { [K in keyof IpcMethods]: IpcMethods[K]['request'] }
@@ -825,7 +826,14 @@ const storeCreator: StateCreator<StoreState> = (set, get) => ({
     const id = existing.id
     const index = state.tabs.findIndex((tab) => tab.id === id)
     if (index < 0) return
-    const updated: RepoTab = { ...state.tabs[index], ...patch }
+    // `git status` answers the 5 s poll with an equal snapshot on most ticks.
+    // Keeping the published object means the staging rows, the selected facet
+    // and an open diff keep their identity instead of reloading under the user.
+    const effective: RepoTabPatch =
+      patch.status && existing.status && statusesEqual(existing.status, patch.status)
+        ? { ...patch, status: existing.status }
+        : patch
+    const updated: RepoTab = { ...state.tabs[index], ...effective }
     const tabs = state.tabs.map((tab, itemIndex) => (itemIndex === index ? updated : tab))
     if (state.activeTabId === id) set({ ...tabToStore(updated), tabs })
     else set({ tabs })

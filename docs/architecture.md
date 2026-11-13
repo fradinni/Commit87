@@ -582,6 +582,16 @@ remote; every fetch uses the same origin-scoped helper as other operations.
   applied criteria change. The 5 s poll only refreshes status and repository facts.
   `PullsView` keys its effects on `repo.path` plus the account/owner/repo/state strings,
   so a refreshed object does not re-request forge data.
+- **Stable status snapshots**: `updateTab` compares an incoming status with the published
+  one (`statusesEqual` in `src/renderer/src/lib/files.ts`) and keeps the existing object
+  when they match. A poll therefore cannot give the staging rows, the selected facet or an
+  open diff a new identity. When the status does change (a path appears, disappears or moves
+  between the index and the worktree side, a branch or HEAD update), `FilesView` reloads the
+  preview quietly: the pane keeps its bytes, its loading state and the reviewer's scroll
+  position until different bytes arrive, and an identical result updates no state at all.
+  `git status` does not report new bytes for a file that is already modified, so a
+  content-only edit is picked up by re-selecting the row or by the view's Refresh button;
+  both reload the open preview in place without blanking it.
 - **Repository tabs**: the strip above the sidebar shows the branch and a dirty dot per
   repository, supports drag reorder, middle-click close and `Ctrl+Tab`, `Ctrl/Cmd+1…9`
   and `Ctrl/Cmd+W`. Opening a path that is already open activates its tab instead of
@@ -763,9 +773,12 @@ workflow instead of publishing a channel file no client requests.
   before any network call.
 - Status polling every 5 s keeps the working tree indicator fresh without re-reading
   history or forge detection; it reuses repository discovery, pauses while a task runs and
-  is skipped entirely for a bare repository. After a renderer reload it also reconciles
-  `tasks.snapshot`, so a task that finished while no window was listening is reported
-  once instead of disappearing.
+  is skipped entirely for a bare repository. A tick that reads the same tree publishes
+  nothing new, so reviewing a diff is never interrupted by the poll; a status change reloads
+  the open preview in place instead of blanking it, and re-selecting the row or pressing
+  Refresh reloads the bytes of a file edited in place. After a renderer reload it also
+  reconciles `tasks.snapshot`, so a task that finished while no window was listening is
+  reported once instead of disappearing.
 - Diagnostics are best-effort. A GUI launch can leave stdout and stderr attached to a pipe
   whose reader has exited (a closed terminal, a launcher that quits), so `main/logging.ts`
   handles errors on both stdio streams and the updater logger writes through a guarded

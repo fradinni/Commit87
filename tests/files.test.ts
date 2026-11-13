@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { StatusFile } from '../src/shared/types'
-import { actionPaths, fileFacets, stagePaths } from '../src/renderer/src/lib/files'
+import type { RepoStatus, StatusFile } from '../src/shared/types'
+import { actionPaths, fileFacets, previewKeyFor, stagePaths, statusesEqual } from '../src/renderer/src/lib/files'
 import { createRequestGuard } from '../src/renderer/src/lib/request'
 
 function statusFile(overrides: Partial<StatusFile>): StatusFile {
@@ -136,5 +136,83 @@ describe('request identity guard', () => {
     finishing[0]()
     await Promise.all([first, second])
     expect(state).toBeNull()
+  })
+})
+
+function repoStatus(overrides: Partial<RepoStatus> = {}): RepoStatus {
+  return {
+    branch: 'main',
+    headSha: 'abc123',
+    detached: false,
+    upstream: 'origin/main',
+    ahead: 0,
+    behind: 0,
+    files: [],
+    stagedCount: 0,
+    unstagedCount: 0,
+    untrackedCount: 0,
+    conflictedCount: 0,
+    clean: true,
+    ...overrides
+  }
+}
+
+describe('status snapshots', () => {
+  it('treats a rebuilt snapshot with the same content as unchanged', () => {
+    const file = statusFile({ path: 'src/app.ts', index: 'M', worktree: '.', stage: 'staged', label: 'Modified' })
+    const before = repoStatus({ files: [file], stagedCount: 1, clean: false })
+    const after = repoStatus({ files: [{ ...file }], stagedCount: 1, clean: false })
+    expect(statusesEqual(before, after)).toBe(true)
+  })
+
+  it('detects a change in every field of the snapshot', () => {
+    const file = statusFile({ path: 'src/app.ts', index: 'M', worktree: 'M', stage: 'staged', label: 'Staged + modified' })
+    const base = repoStatus({ files: [file], stagedCount: 1, unstagedCount: 1, clean: false })
+    const changes: Array<[string, RepoStatus]> = [
+      ['branch', { ...base, branch: 'feature' }],
+      ['headSha', { ...base, headSha: 'def456' }],
+      ['detached', { ...base, detached: true }],
+      ['upstream', { ...base, upstream: null }],
+      ['ahead', { ...base, ahead: 1 }],
+      ['behind', { ...base, behind: 1 }],
+      ['stagedCount', { ...base, stagedCount: 2 }],
+      ['unstagedCount', { ...base, unstagedCount: 2 }],
+      ['untrackedCount', { ...base, untrackedCount: 1 }],
+      ['conflictedCount', { ...base, conflictedCount: 1 }],
+      ['clean', { ...base, clean: true }],
+      ['files.length', { ...base, files: [] }],
+      ['file.path', { ...base, files: [{ ...file, path: 'src/other.ts' }] }],
+      ['file.origPath', { ...base, files: [{ ...file, origPath: 'src/old.ts' }] }],
+      ['file.index', { ...base, files: [{ ...file, index: 'A' }] }],
+      ['file.worktree', { ...base, files: [{ ...file, worktree: '.' }] }],
+      ['file.stage', { ...base, files: [{ ...file, stage: 'unstaged' }] }],
+      ['file.label', { ...base, files: [{ ...file, label: 'Modified' }] }],
+      ['file.rename', { ...base, files: [{ ...file, rename: true }] }]
+    ]
+    for (const [field, changed] of changes) {
+      expect(statusesEqual(base, changed), field).toBe(false)
+    }
+  })
+
+  it('detects a file that only moved position in the list', () => {
+    const first = statusFile({ path: 'a.txt' })
+    const second = statusFile({ path: 'b.txt' })
+    const before = repoStatus({ files: [first, second], clean: false })
+    const after = repoStatus({ files: [{ ...second }, { ...first }], clean: false })
+    expect(statusesEqual(before, after)).toBe(false)
+  })
+})
+
+describe('preview target identity', () => {
+  const facet = { key: 'worktree::src/app.ts', stage: 'unstaged' as const }
+
+  it('keeps the key for a repeat load of the same target', () => {
+    expect(previewKeyFor('/repo', facet)).toBe(previewKeyFor('/repo', { ...facet }))
+  })
+
+  it('changes the key for another side, stage or repository', () => {
+    expect(previewKeyFor('/repo', facet)).not.toBe(previewKeyFor('/repo', { ...facet, key: 'index::src/app.ts' }))
+    expect(previewKeyFor('/repo', facet)).not.toBe(previewKeyFor('/repo', { ...facet, stage: 'conflicted' }))
+    expect(previewKeyFor('/repo', facet)).not.toBe(previewKeyFor('/other', facet))
   })
 })

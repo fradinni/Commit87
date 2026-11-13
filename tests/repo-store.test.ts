@@ -602,6 +602,32 @@ describe('async refresh ownership', () => {
     expect(useStore.getState().graphQuery).toBe('newer draft')
     expect(useStore.getState().graphBranch).toBe('')
   })
+
+  it('keeps the published status when a poll reads an unchanged tree', async () => {
+    await useStore.getState().openRepo(A)
+    const published = useStore.getState().status
+    const tabStatus = useStore.getState().tabs.find((tab) => tab.id === A)?.status
+    calls.length = 0
+
+    await useStore.getState().refreshStatus(A)
+
+    // The poll still asked Git, it just did not republish an equal snapshot:
+    // facets, rows and an open diff keep their identity instead of reloading.
+    expect(calls.filter((entry) => entry.channel === 'git.status')).toHaveLength(1)
+    expect(useStore.getState().status).toBe(published)
+    expect(useStore.getState().tabs.find((tab) => tab.id === A)?.status).toBe(tabStatus)
+  })
+
+  it('publishes a poll result that really changed', async () => {
+    await useStore.getState().openRepo(A)
+    const published = useStore.getState().status
+    queuedDelays.push({ channel: 'git.status', path: A, ms: 0, branch: 'feature/review' })
+
+    await useStore.getState().refreshStatus(A)
+
+    expect(useStore.getState().status?.branch).toBe('feature/review')
+    expect(useStore.getState().status).not.toBe(published)
+  })
 })
 
 describe('task snapshot reconciliation', () => {
