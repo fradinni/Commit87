@@ -119,6 +119,10 @@ without `node_modules`.
 
 If any build or verification step fails, the release stays a draft with no new assets.
 
+The step-by-step operator procedure — channel choice, changelog section, tag, watching the
+run, triage, repointing a tag and the exit checks — lives in
+`.agents/skills/release/SKILL.md`.
+
 ### Release authority
 
 - The workflow is read-only by default (`permissions: contents: read`). Only `prepare` and
