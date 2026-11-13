@@ -6,6 +6,21 @@ All notable changes to Commit87 are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-11-13
+
+Patch release on the 0.2 line. Installations on the Stable channel are offered it
+automatically; the Beta channel receives it as well.
+
+### Fixed
+
+- The 5 s status poll no longer wipes the open diff: an unchanged snapshot keeps its object
+  identity, so the selected file is not republished, and a reload of the same preview target
+  now holds the bytes and the loading state and updates only when the patch or the file bytes
+  differ. The pane no longer blanks to a loading state or loses its scroll position every few
+  seconds, and the highlighted row follows the resolved facet after stage/unstage. Selecting
+  the row again or pressing Refresh still reloads a file edited in place, and a failed quiet
+  reload reports the error and retries visibly instead of failing silently.
+
 ## [0.2.0] — 2026-11-12
 
 First stable release since 0.1.0, consolidating the ten 0.2.0 betas. Upgrading from 0.1.0
