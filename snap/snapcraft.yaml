@@ -18,7 +18,7 @@ grade: stable
 confinement: strict
 compression: lzo
 icon: snap/gui/commit87.png
-license: AGPL-3.0-only
+license: AGPL-3.0-or-later
 website: https://commit87.fradinni.fr
 source-code: https://github.com/fradinni/Commit87
 issues: https://github.com/fradinni/Commit87/issues

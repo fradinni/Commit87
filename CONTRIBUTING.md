@@ -52,8 +52,9 @@ exercised, and what could not be run and why.
 ## Licensing of contributions
 
 There is no CLA. By opening a pull request you agree that your contribution is licensed
-under the same terms as the project, the GNU Affero General Public License version 3
-(AGPL-3.0-only, see `LICENSE`), and that you have the right to license it on those terms.
+under the same terms as the project, the GNU Affero General Public License version 3 or any
+later version (AGPL-3.0-or-later, see `LICENSE`), and that you have the right to license it
+on those terms.
 
 ## Code layout
 

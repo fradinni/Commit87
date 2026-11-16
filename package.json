@@ -7,7 +7,7 @@
     "name": "Commit87 Team",
     "email": "contact@fradinni.fr"
   },
-  "license": "AGPL-3.0-only",
+  "license": "AGPL-3.0-or-later",
   "homepage": "https://commit87.fradinni.fr",
   "repository": {
     "type": "git",

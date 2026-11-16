@@ -9,6 +9,9 @@ works on a host that cannot build those formats. It verifies that:
   * the Flatpak app ID and branch are read from the manifest and used for both the
     build and the exported bundle, and the bundle file is confirmed non-empty;
   * the Snap and Flatpak versions agree with package.json;
+  * the licence identifier agrees with package.json in the lockfile root, the Snap and
+    Flatpak manifests and the Linux packaging script, so a relicensing edit cannot leave
+    one recipe behind;
   * the Snap primes the CA certificate paths its launcher points at;
   * build-flatpak.sh, build-snap.sh and package-linux.py map the architecture to
     electron-builder's linux-unpacked / linux-arm64-unpacked directory and reject
@@ -129,6 +132,34 @@ def check_versions() -> None:
         ok(f"version: Flatpak metainfo matches package.json ({version})")
     else:
         fail(f"version: Flatpak metainfo has {metainfo_version!r}, package.json has {version!r}")
+
+
+def check_licenses() -> None:
+    """Every recipe must name the same SPDX licence as package.json."""
+    expected = str(json.loads((ROOT / "package.json").read_text())["license"])
+    lockfile = json.loads((ROOT / "package-lock.json").read_text())
+    data, text = load_snap_manifest()
+    if data is not None:
+        snap_license = str(data.get("license", ""))
+    else:
+        match = re.search(r"(?m)^license:\s*['\"]?([^'\"\s#]+)", text)
+        snap_license = match.group(1) if match else ""
+    metainfo = re.search(
+        r"<project_license>([^<]+)</project_license>",
+        (FLATPAK_DIR / "fr.fradinni.Commit87.metainfo.xml").read_text(),
+    )
+    linux = re.search(r'(?m)^LICENSE_ID = "([^"]+)"', LINUX_SCRIPT.read_text())
+    found = {
+        "package-lock.json (root)": str(lockfile["packages"][""].get("license", "")),
+        "snapcraft.yaml": snap_license,
+        "Flatpak metainfo": metainfo.group(1).strip() if metainfo else "",
+        "package-linux.py LICENSE_ID": linux.group(1) if linux else "",
+    }
+    for label, value in found.items():
+        if value == expected:
+            ok(f"licence: {label} matches package.json ({expected})")
+        else:
+            fail(f"licence: {label} has {value!r}, package.json has {expected!r}")
 
 
 def check_flatpak_manifest() -> None:
@@ -372,6 +403,7 @@ def check_shell_syntax() -> None:
 def main() -> int:
     check_shell_syntax()
     check_versions()
+    check_licenses()
     check_flatpak_manifest()
     check_snap_manifest()
     check_shell_arch_function(FLATPAK_SCRIPT)
