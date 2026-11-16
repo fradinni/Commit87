@@ -45,7 +45,7 @@ paths to check a subset.
 | `tests/launch.test.ts` | OS launch parsing: plain folder argv, `file://` URLs from the Linux file manager, `commit87://` deep links, and rejection of files, flags, relative paths and the app itself |
 | `tests/credentials.test.ts` | identity environment, SSH command quoting, credential-helper argv safety, one exact-origin helper per destination and redaction |
 | `tests/credential-destination.test.ts` | credential destination authorization: explicit account versus clone destination, automatic clone anonymity, separate fetch/push checks, pinned-account clearing when a remote host changes, PR checkout remote selection |
-| `tests/ui-logic.test.ts` | unified diff parser (adds/deletes/renames/binary), commit graph lane layout, console tokenizer and bounded command grammar |
+| `tests/ui-logic.test.ts` | unified diff parser (adds/deletes/renames/binary), commit graph lane layout, console tokenizer and bounded command grammar, and pane-width clamping/stored-value parsing for the resizable columns |
 | `tests/commit-selection.test.ts` | graph selection model: replace/toggle/range, anchor fallback when a commit disappears, loaded-order normalization, and cherry-pick (oldest first) versus revert (newest first) ordering |
 | `tests/commit-shas.test.ts` | IPC commit-list validation for cherry-pick/revert: hex-only object names, duplicate collapsing, empty/oversized lists and option-like values |
 | `tests/ipc-boundaries.test.ts` | strict decoding (real booleans, enums, revisions, paths), the console's bounded grammar and its bypass matrix, grant issuance/authorization (picks, recents, linked worktrees, clone/init targets, persistence), custom-executable policy, symlink-aware file reads and the config execution-key policy |

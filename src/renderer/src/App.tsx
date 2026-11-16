@@ -6,6 +6,8 @@ import { repoPathKey } from './lib/tabs'
 import { Logo, TitleBar } from './components/TitleBar'
 import { RepoTabs } from './components/RepoTabs'
 import { Sidebar } from './components/Sidebar'
+import { Splitter, usePaneSize, resetPaneSizes } from './components/Splitter'
+import { REFS_SIDEBAR_WIDTH } from './lib/panes'
 import { StatusBar, RepoOperationBanner } from './components/StatusBar'
 import { Toasts } from './components/Toasts'
 import { CommandPalette, type PaletteAction } from './components/CommandPalette'
@@ -38,6 +40,9 @@ export function App() {
   const status = useStore((state) => state.status)
   const view = useStore((state) => state.view)
   const sidebarOpen = useStore((state) => state.sidebarOpen)
+  const sidebarMode = useStore((state) => state.sidebarMode)
+  // The refs panel opens wider unless the user picks a sidebar width of their own.
+  const sidebar = usePaneSize('sidebar', repo && sidebarMode === 'refs' ? REFS_SIDEBAR_WIDTH : undefined)
   const notify = useStore((state) => state.notify)
   const notifyError = useStore((state) => state.notifyError)
   const openRepo = useStore((state) => state.openRepo)
@@ -111,6 +116,9 @@ export function App() {
           break
         case 'toggle-console':
           useStore.getState().toggleConsole()
+          break
+        case 'reset-panes':
+          resetPaneSizes()
           break
         case 'toggle-refs':
           useStore.getState().toggleRefsPanel()
@@ -376,7 +384,21 @@ export function App() {
       <TitleBar onPalette={() => useStore.getState().setPaletteOpen(true)} onPush={openPush} />
       <RepoTabs onOpen={() => void pickAndOpen()} />
       <div className="app-body">
-        {sidebarOpen ? <Sidebar /> : null}
+        {sidebarOpen ? (
+          <>
+            <Sidebar width={sidebar.size} />
+            <Splitter
+              id="sidebar"
+              value={sidebar.size}
+              onChange={sidebar.setSize}
+              onFit={sidebar.fit}
+              onReset={sidebar.reset}
+              controls="sidebar-panel"
+              reserve={360}
+              label="Resize navigation sidebar"
+            />
+          </>
+        ) : null}
         <main className="content">
           {!repo ? (
             view === 'settings' ? (

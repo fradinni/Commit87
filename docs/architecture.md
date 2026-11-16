@@ -624,6 +624,24 @@ remote; every fetch uses the same origin-scoped helper as other operations.
   accepts a one-off folder chosen with the picker.
 - **Views**: launchpad, commit graph, files/staging, branches, worktrees, submodules, tags,
   stashes, remotes, pull requests, releases, pipelines, settings.
+- **Resizable panes**: the navigation sidebar, the commit details pane, the Files & staging
+  list and the Browse code file tree are columns the user can drag, so a long commit message
+  or a deep path list gets the room it needs. `Splitter`
+  (`src/renderer/src/components/Splitter.tsx`) owns the pointer drag, the keyboard step
+  (arrow keys, `Shift` for a coarse step, `Home`/`End` for the bounds), the double-click
+  return to the default and the stored value, held in `localStorage` under
+  `commit87.pane.<id>`; `lib/panes.ts` holds the per-pane defaults, bounds and the accessors
+  the tests cover. During a drag the width is written straight to the pane element, so a
+  pointer move re-renders neither the app shell nor the commit list; the state and the stored
+  value change once, on release. A stored width is clamped when it is read, and a window too
+  narrow for it limits the render only, so widening the window brings the chosen width back.
+  Each splitter keeps room for the pane opposite it, so the opposite side keeps its minimum
+  whenever the window has the room; when the window has less room than that, the pane shrinks
+  instead of clipping the view. What a drag remembers is the width that was on screen, and a
+  gesture that cannot move the pane — pinned against the window, or returned to where it
+  started — leaves the stored width alone, so a narrow window never silently rewrites the
+  width chosen for a wide one. The View menu and the command palette's Reset pane widths drop
+  every stored value and the mounted panes follow without a reload.
 - **Interactive rebase**: a modal planner over `onto..HEAD` where commits can be reordered,
   reworded, squashed, fixed up or dropped; it validates the plan in the renderer and again
   in the main process before replaying it.

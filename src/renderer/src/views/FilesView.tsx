@@ -32,6 +32,7 @@ import {
 import { createRequestGuard } from '../lib/request'
 import { formatRelativeTime, languageFromPath } from '../lib/format'
 import { Badge, Button, ConfirmDialog, EmptyState, Field, IconButton, LoadingBlock, Select, TextArea } from '../components/ui'
+import { Splitter, usePaneSize } from '../components/Splitter'
 import { DiffView } from '../components/DiffView'
 import { ConflictView } from '../components/ConflictView'
 import { IdentitySelect } from '../components/selectors'
@@ -71,6 +72,8 @@ export function FilesView() {
   const clearCommitDraft = useStore((state) => state.clearCommitDraft)
 
   const [tab, setTab] = useState<FilesTab>('changes')
+  const stagingPanes = usePaneSize('staging')
+  const treePanes = usePaneSize('fileTree')
   const [selected, setSelected] = useState<FacetSelection | null>(null)
   const [diff, setDiff] = useState<DiffResult | null>(null)
   const [diffLoading, setDiffLoading] = useState(false)
@@ -601,7 +604,7 @@ export function FilesView() {
 
       {tab === 'changes' ? (
         <div className="files-layout">
-          <aside className="staging-panel">
+          <aside className="staging-panel" id="staging-panel" style={{ width: stagingPanes.size }}>
             <div className="staging-scroll" role="listbox" aria-label="Changed files" onKeyDown={onListKeyDown}>
               {groups.length === 0 ? (
                 <EmptyState icon={<GitCommitHorizontal size={20} />} title="Working tree clean" description="No staged, modified or untracked files." />
@@ -721,6 +724,17 @@ export function FilesView() {
             </div>
           </aside>
 
+          <Splitter
+            id="staging"
+            value={stagingPanes.size}
+            onChange={stagingPanes.setSize}
+            onFit={stagingPanes.fit}
+            onReset={stagingPanes.reset}
+            controls="staging-panel"
+            reserve={320}
+            label="Resize changed files"
+          />
+
           <main className="diff-pane">
             {!selectedFacet ? (
               <EmptyState
@@ -766,7 +780,7 @@ export function FilesView() {
         </div>
       ) : (
         <div className="browse-layout">
-          <aside className="file-tree">
+          <aside className="file-tree" id="file-tree-panel" style={{ width: treePanes.size }}>
             <div className="file-tree-head">
               <span>
                 <Folder size={13} /> {repo.name}
@@ -779,6 +793,16 @@ export function FilesView() {
               {treeLoading && !tree[''] ? <LoadingBlock label="Reading files…" /> : renderTree('', 0)}
             </div>
           </aside>
+          <Splitter
+            id="fileTree"
+            value={treePanes.size}
+            onChange={treePanes.setSize}
+            onFit={treePanes.fit}
+            onReset={treePanes.reset}
+            controls="file-tree-panel"
+            reserve={320}
+            label="Resize file tree"
+          />
           <main className="code-pane">
             {blame ? (
               <div className="blame-view">

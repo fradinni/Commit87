@@ -27,7 +27,12 @@ interface NavItem {
   hint?: string
 }
 
-export function Sidebar() {
+interface SidebarProps {
+  /** Width in pixels, owned by the splitter beside the sidebar. */
+  width: number
+}
+
+export function Sidebar({ width }: SidebarProps) {
   const view = useStore((state) => state.view)
   const setView = useStore((state) => state.setView)
   const sidebarMode = useStore((state) => state.sidebarMode)
@@ -80,7 +85,7 @@ export function Sidebar() {
   )
 
   return (
-    <aside className={`sidebar ${repo && sidebarMode === 'refs' ? 'is-refs' : ''}`}>
+    <aside className="sidebar" id="sidebar-panel" style={{ width }}>
       {repo ? (
         <>
           <div className="sidebar-repo">

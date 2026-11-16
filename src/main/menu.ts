@@ -57,6 +57,8 @@ export function installMenu(): void {
         { label: 'Refs Panel', accelerator: 'CmdOrCtrl+Shift+B', click: () => app.emit('commit87:menu', 'toggle-refs') },
         { label: 'Git Console', accelerator: 'CmdOrCtrl+J', click: () => app.emit('commit87:menu', 'toggle-console') },
         { type: 'separator' },
+        { label: 'Reset Pane Widths', click: () => app.emit('commit87:menu', 'reset-panes') },
+        { type: 'separator' },
         { label: 'Next Repository Tab', click: () => app.emit('commit87:menu', 'next-tab') },
         { label: 'Previous Repository Tab', click: () => app.emit('commit87:menu', 'prev-tab') },
         { type: 'separator' },

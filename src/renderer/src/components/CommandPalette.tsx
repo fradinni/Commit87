@@ -14,6 +14,7 @@ import {
   Home,
   Layers,
   ListTree,
+  PanelLeft,
   RefreshCw,
   Rocket,
   Search,
@@ -25,6 +26,7 @@ import {
 } from 'lucide-react'
 import { selectedIdentityId, useStore, type ViewId } from '../store'
 import { call } from '../lib/ipc'
+import { resetPaneSizes } from './Splitter'
 
 export type PaletteAction = 'open' | 'clone' | 'init' | 'new-branch' | 'new-tag' | 'new-worktree' | 'new-submodule' | 'push'
 
@@ -112,7 +114,15 @@ export function CommandPalette({ action }: { action: (action: PaletteAction) => 
       view('releases', 'Releases', <Rocket size={15} />),
       view('actions', 'Pipelines & actions', <Rocket size={15} />),
       view('settings', 'Settings', <Settings size={15} />),
-      { id: 'console', label: 'Toggle git console', hint: 'Ctrl/Cmd+J', group: 'Tools', icon: <SquareTerminal size={15} />, run: () => toggleConsole() }
+      { id: 'console', label: 'Toggle git console', hint: 'Ctrl/Cmd+J', group: 'Tools', icon: <SquareTerminal size={15} />, run: () => toggleConsole() },
+      {
+        id: 'reset-panes',
+        label: 'Reset pane widths',
+        hint: 'sidebar, details, file lists',
+        group: 'Layout',
+        icon: <PanelLeft size={15} />,
+        run: () => resetPaneSizes()
+      }
     )
 
     for (const tab of tabs) {

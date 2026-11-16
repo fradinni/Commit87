@@ -38,6 +38,7 @@ import {
 } from '../lib/commit-selection'
 import { formatDate, formatRelativeTime, initials, shortSha } from '../lib/format'
 import { Badge, Button, ConfirmDialog, EmptyState, IconButton, Modal, Select, TextInput, Field } from '../components/ui'
+import { Splitter, usePaneSize } from '../components/Splitter'
 import { DiffView } from '../components/DiffView'
 
 const ROW_HEIGHT = 32
@@ -117,6 +118,7 @@ export function GraphView() {
   const [confirm, setConfirm] = useState<{ title: string; message: string; run: () => Promise<void> } | null>(null)
   const [busy, setBusy] = useState(false)
   const [menu, setMenu] = useState<GraphMenuState | null>(null)
+  const details = usePaneSize('details')
   // The loaded order from the previous render, so a commit that was never in
   // the graph (a refs-panel jump, for example) is not mistaken for a removed one.
   const loadedOrderRef = useRef<string[]>([])
@@ -875,7 +877,19 @@ export function GraphView() {
           )}
         </div>
 
-        <aside className="details-panel">
+        <Splitter
+          id="details"
+          value={details.size}
+          onChange={details.setSize}
+          onFit={details.fit}
+          onReset={details.reset}
+          controls="commit-details"
+          invert
+          reserve={280}
+          label="Resize commit details"
+        />
+
+        <aside className="details-panel" id="commit-details" style={{ width: details.size }}>
           {multiSelected ? (
             <div className="details-selection">
               <div className="details-selection-head">
