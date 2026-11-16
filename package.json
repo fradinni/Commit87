@@ -38,10 +38,10 @@
   "dependencies": {
     "electron-updater": "^6.8.11",
     "highlight.js": "^11.11.1",
-    "lucide-react": "^1.69.0",
+    "lucide-react": "^1.72.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "zustand": "^5.0.2"
+    "zustand": "^5.1.0"
   },
   "devDependencies": {
     "@electron/fuses": "^2.0.0",
