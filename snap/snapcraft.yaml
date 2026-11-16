@@ -18,7 +18,7 @@ grade: stable
 confinement: strict
 compression: lzo
 icon: snap/gui/commit87.png
-license: MIT
+license: AGPL-3.0-only
 website: https://commit87.fradinni.fr
 source-code: https://github.com/fradinni/Commit87
 issues: https://github.com/fradinni/Commit87/issues
@@ -82,6 +82,11 @@ parts:
       libvk_swiftshader.so: usr/lib/commit87/libvk_swiftshader.so
       libvulkan.so.1: usr/lib/commit87/libvulkan.so.1
       vk_swiftshader_icd.json: usr/lib/commit87/vk_swiftshader_icd.json
+      # Electron and Chromium ship their own notices next to the binary; prime
+      # only keeps usr/lib/commit87, so move them inside it instead of dropping
+      # the third-party notices from the snap.
+      LICENSE.electron.txt: usr/lib/commit87/LICENSE.electron.txt
+      LICENSES.chromium.html: usr/lib/commit87/LICENSES.chromium.html
     prime:
       - usr/lib/commit87
       - usr/bin/git

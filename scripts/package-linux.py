@@ -41,7 +41,7 @@ DESCRIPTION = (
     "identity support for GitHub, GitLab, Bitbucket and Gitea."
 )
 SUMMARY = "A focused desktop Git client"
-LICENSE = "MIT"
+LICENSE_ID = "AGPL-3.0-only"
 
 ARCH_MAP = {
     "x86_64": {"deb": "amd64", "rpm": "x86_64", "pacman": "x86_64", "unpacked": "linux-unpacked"},
@@ -130,7 +130,10 @@ def tree_entries() -> list[tuple[str, pathlib.Path, int]]:
         entries.append((f"/usr/share/icons/hicolor/{size}x{size}/apps/commit87.png", source, 0o644))
     entries.append(("/usr/share/applications/commit87.desktop", None, 0o644))
     entries.append(("/usr/bin/commit87", None, 0o755))
+    # The AGPL has to travel with the package, and the copyright notice with the
+    # object code.
     entries.append(("/usr/share/licenses/commit87/LICENSE", ROOT / "LICENSE", 0o644))
+    entries.append(("/usr/share/licenses/commit87/NOTICE", ROOT / "NOTICE", 0o644))
     return entries
 
 
@@ -297,7 +300,7 @@ def build_rpm(arch: str) -> pathlib.Path:
 Version:        {rpm_core}
 Release:        {rpm_release}%{{?dist}}
 Summary:        {SUMMARY}
-License:        {LICENSE}
+License:        {LICENSE_ID}
 URL:            {HOMEPAGE}
 Vendor:         Commit87
 Packager:       {MAINTAINER}
@@ -419,7 +422,7 @@ def build_pacman(arch: str) -> pathlib.Path:
         f"packager = {MAINTAINER}",
         f"size = {installed_size_kb() * 1024}",
         f"arch = {arch}",
-        f"license = {LICENSE}",
+        f"license = {LICENSE_ID}",
     ]
     for dep in PACMAN_DEPENDS:
         pkginfo.append(f"depend = {dep}")

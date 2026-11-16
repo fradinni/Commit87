@@ -3,8 +3,12 @@
   <id>fr.fradinni.Commit87</id>
   <name>Commit87</name>
   <summary>Focused desktop Git client</summary>
-  <metadata_license>MIT</metadata_license>
-  <project_license>MIT</project_license>
+  <!-- AppStream only accepts its vetted permissive licences for the metadata file
+       itself (MIT, FSFAP, CC0-1.0, ...); the application itself is AGPL-licensed
+       and therefore carries a separate <project_license>. CC0-1.0 needs no
+       notice, so this file carries none. -->
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-only</project_license>
   <description>
     <p>
       Commit87 is a fast desktop Git client built on the system Git binary. It manages

@@ -56,6 +56,7 @@ modules:
       - install -Dm644 fr.fradinni.Commit87.desktop /app/share/applications/fr.fradinni.Commit87.desktop
       - install -Dm644 fr.fradinni.Commit87.metainfo.xml /app/share/metainfo/fr.fradinni.Commit87.metainfo.xml
       - install -Dm644 LICENSE /app/share/licenses/fr.fradinni.Commit87/LICENSE
+      - install -Dm644 NOTICE /app/share/licenses/fr.fradinni.Commit87/NOTICE
     sources:
       - type: file
         path: commit87.sh
@@ -73,3 +74,5 @@ modules:
         dest: icons
       - type: file
         path: ../LICENSE
+      - type: file
+        path: ../NOTICE

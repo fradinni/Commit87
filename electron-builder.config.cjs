@@ -67,6 +67,12 @@ module.exports = {
   },
   asar: true,
   asarUnpack: ['**/*.node'],
+  // The AGPL requires a copy of the licence to travel with the program and the
+  // copyright notice with the object code. Copy both next to the bundle (inside
+  // the AppImage, snap, deb, rpm and pacman payloads, the Windows installers and
+  // the macOS app bundle) instead of leaving them inside the ASAR, where users
+  // cannot read them.
+  extraResources: ['LICENSE', 'NOTICE'],
   // AppImage reads files straight out of the squashfs image. "maximum" uses xz
   // and adds seconds of decompression to every cold start, so prefer gzip.
   compression: 'normal',

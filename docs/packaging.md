@@ -185,9 +185,15 @@ yield an untyped `.pacman` file. The pacman options override `artifactName` only
 compression fpm uses by default stays, so CI and releases publish
 `Commit87-<version>-linux-<arch>.pkg.tar.xz`.
 
-All Linux packages install the app to `/opt/Commit87`, add `/usr/bin/commit87`,
-`/usr/share/applications/commit87.desktop`, hicolor icons from 16 to 1024 px, and the
-license. The wrapper is a one-line `exec /opt/Commit87/commit87 "$@"`, which keeps
+The deb, rpm, pacman and tar.gz packages install the app to `/opt/Commit87`, add
+`/usr/bin/commit87`, `/usr/share/applications/commit87.desktop` and hicolor icons from 16
+to 1024 px; every Linux format carries the licence. `LICENSE` and `NOTICE` are copied into
+`resources/` next to the bundle (so the AppImage, tar.gz, deb, rpm, pacman, snap, Flatpak,
+Windows and macOS artifacts all carry them); the Flatpak manifest and
+`scripts/package-linux.py` also install both under
+`/app/share/licenses/fr.fradinni.Commit87` and `/usr/share/licenses/commit87`, and the snap
+keeps them next to the app under `/usr/lib/commit87/resources`. The wrapper
+is a one-line `exec /opt/Commit87/commit87 "$@"`, which keeps
 `argv[0]` and working-directory behaviour predictable for deep links and file-manager
 integration. The desktop entry registers `x-scheme-handler/commit87` and
 `inode/directory`, so "Open With Commit87" is offered for folders; the file manager passes
