@@ -237,4 +237,12 @@ More documentation:
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Commit87 is free software: you can redistribute it and/or modify it under the terms of the
+GNU Affero General Public License as published by the Free Software Foundation, version 3
+(AGPL-3.0-only) — see [LICENSE](LICENSE).
+
+Copyright (C) 2026 Commit87 Team - Fradinni. The notice shipped with every download is in
+[NOTICE](NOTICE).
+
+The AGPL additionally asks anyone who runs a modified version as a network service to offer
+those users the Corresponding Source, and derivative works stay under the same license.
