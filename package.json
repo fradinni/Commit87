@@ -38,10 +38,10 @@
   "dependencies": {
     "electron-updater": "^6.8.11",
     "highlight.js": "^11.11.1",
-    "lucide-react": "^1.69.0",
+    "lucide-react": "^1.72.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "zustand": "^5.0.2"
+    "zustand": "^5.1.0"
   },
   "devDependencies": {
     "@electron/fuses": "^2.0.0",
@@ -49,7 +49,7 @@
     "@types/react": "^19.0.3",
     "@types/react-dom": "^19.0.2",
     "@vitejs/plugin-react": "^6.3.0",
-    "electron": "^45.2.3",
+    "electron": "^45.3.1",
     "electron-builder": "^26.0.12",
     "electron-vite": "^6.0.0",
     "typescript": "^7.0.2",
