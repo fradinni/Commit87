@@ -8,11 +8,11 @@ All notable changes to Commit87 are documented here. The format follows
 
 ### Changed
 
-- Commit87 is now licensed under the GNU Affero General Public License, version 3
-  (AGPL-3.0-only) instead of MIT. `LICENSE` holds the AGPL text and `NOTICE` the copyright
-  and warranty notice; `package.json` and the lockfile root, the snap manifest, the
-  AppStream project licence and the Linux packaging script carry the new identifier, and
-  the README licence section states the copyleft terms.
+- Commit87 is now licensed under the GNU Affero General Public License, version 3 or any
+  later version (AGPL-3.0-or-later) instead of MIT. `LICENSE` holds the AGPL text and
+  `NOTICE` the copyright and warranty notice; `package.json` and the lockfile root, the
+  snap manifest, the AppStream project licence and the Linux packaging script carry the new
+  identifier, and the README licence section states the copyleft terms.
 - Every packaged build now ships `LICENSE` and `NOTICE`: electron-builder copies both next
   to the bundle for the AppImage, tar.gz, deb, rpm, pacman, Windows and macOS artifacts, so
   the snap and Flatpak payloads inherit them too. The Flatpak manifest and the standalone

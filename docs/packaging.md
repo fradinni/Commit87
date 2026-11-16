@@ -295,6 +295,8 @@ checks the recipes without building them:
   branch, `flatpak build-bundle` exports the same app ID/branch, and the bundle file is
   confirmed non-empty;
 - Snap and Flatpak version fields match `package.json`, the single version source;
+- the licence identifier matches `package.json` in the lockfile root, the Snap and Flatpak
+  manifests and `package-linux.py`, so a relicensing cannot leave one recipe behind;
 - the Snap prime list contains the CA certificate paths its launcher references;
 - `build-flatpak.sh`, `build-snap.sh` and `package-linux.py` map `x86_64`/`amd64` to
   `linux-unpacked` and `aarch64`/`arm64` to `linux-arm64-unpacked`, reject unknown

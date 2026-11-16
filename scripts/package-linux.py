@@ -41,7 +41,7 @@ DESCRIPTION = (
     "identity support for GitHub, GitLab, Bitbucket and Gitea."
 )
 SUMMARY = "A focused desktop Git client"
-LICENSE_ID = "AGPL-3.0-only"
+LICENSE_ID = "AGPL-3.0-or-later"
 
 ARCH_MAP = {
     "x86_64": {"deb": "amd64", "rpm": "x86_64", "pacman": "x86_64", "unpacked": "linux-unpacked"},
