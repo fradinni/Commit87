@@ -160,6 +160,56 @@ a {
   overflow: hidden;
 }
 
+/* --------------------------------------------------------------- splitters */
+
+/*
+ * The divider between two columns is also its own 10px hit area, so a pane needs
+ * no border where a splitter follows it. The width here must match HANDLE_WIDTH
+ * in src/renderer/src/components/Splitter.tsx. The strip is not widened with an
+ * overlay: it would swallow clicks on the rows that end at the pane edge.
+ */
+.splitter {
+  position: relative;
+  flex: none;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+  z-index: 4;
+}
+
+.splitter-grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  margin-left: -0.5px;
+  background: var(--border);
+  transition: background 0.12s ease, width 0.12s ease;
+}
+
+.splitter:hover .splitter-grip,
+.splitter.is-dragging .splitter-grip {
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent);
+}
+
+.splitter:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.splitter:focus-visible .splitter-grip {
+  background: var(--accent);
+}
+
+body[data-pane-resizing='horizontal'] {
+  cursor: col-resize;
+  user-select: none;
+}
+
 .content {
   flex: 1;
   min-width: 0;
@@ -838,11 +888,10 @@ a {
 /* ----------------------------------------------------------------- sidebar */
 
 .sidebar {
-  width: 236px;
+  /* The width is set from PANE_BOUNDS by the Splitter, never here. */
   flex: none;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border);
   background: var(--bg-panel);
   min-height: 0;
 }
@@ -1064,10 +1113,6 @@ a {
 }
 
 /* ---------------------------------------------------------------- sidebar refs */
-
-.sidebar.is-refs {
-  width: 292px;
-}
 
 .sidebar-mode {
   display: flex;

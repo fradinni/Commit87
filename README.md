@@ -48,6 +48,10 @@ communicates through one validated IPC channel.
 
 - **Commit graph** with lanes, refs, search, multi-select and per-commit actions: branch,
   tag, checkout detached, cherry-pick, revert and reset.
+- **Resizable layout**: drag the dividers to size the navigation sidebar, the commit details
+  pane and the Files & staging or Browse code lists to the content in front of you. Double-click
+  a divider to restore its default width, and use the arrow keys when it has focus; widths are
+  remembered between runs and reset from the View menu or the command palette.
 - **Repository tabs**: keep several repositories open at once, each with its own selection,
   status and console.
 - **Branches, worktrees and refs**: a keyboard-first refs panel, conflict-aware merge and

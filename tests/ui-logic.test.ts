@@ -8,6 +8,17 @@ import {
   withLineEndings
 } from '../src/renderer/src/lib/conflict'
 import { buildGraph, classifyRefs } from '../src/renderer/src/lib/graph'
+import {
+  clampPaneSize,
+  dragOutcome,
+  dragPaneSize,
+  effectiveMinimum,
+  nextDragPending,
+  PANE_BOUNDS,
+  parsePaneSize,
+  REFS_SIDEBAR_WIDTH,
+  visiblePaneSize
+} from '../src/renderer/src/lib/panes'
 import { tokenizeCommand, validateConsoleCommand } from '../src/main/tasks'
 import type { Commit } from '../src/shared/types'
 
@@ -71,6 +82,133 @@ describe('unified diff parser', () => {
     expect(files[2].status).toBe('renamed')
     expect(files[2].oldPath).toBe('a.txt')
     expect(files[2].newPath).toBe('b.txt')
+  })
+})
+
+describe('draggable pane sizes', () => {
+  const bounds = PANE_BOUNDS.sidebar
+
+  it('clamps a requested width to the pane bounds', () => {
+    expect(clampPaneSize(300, bounds)).toBe(300)
+    expect(clampPaneSize(10, bounds)).toBe(bounds.min)
+    expect(clampPaneSize(9999, bounds)).toBe(bounds.max)
+    expect(clampPaneSize(240.6, bounds)).toBe(241)
+  })
+
+  it('falls back to the default for unusable values', () => {
+    expect(clampPaneSize(Number.NaN, bounds)).toBe(bounds.defaultSize)
+    expect(clampPaneSize(Number.POSITIVE_INFINITY, bounds)).toBe(bounds.defaultSize)
+  })
+
+  it('parses a stored width and rejects malformed entries', () => {
+    expect(parsePaneSize('320', bounds)).toBe(320)
+    expect(parsePaneSize(' 320 ', bounds)).toBe(320)
+    expect(parsePaneSize('12', bounds)).toBe(bounds.min)
+    expect(parsePaneSize('wide', bounds)).toBeNull()
+    expect(parsePaneSize('', bounds)).toBeNull()
+    expect(parsePaneSize(null, bounds)).toBeNull()
+    expect(parsePaneSize(undefined, bounds)).toBeNull()
+  })
+
+  it('keeps every pane minimum smaller than its default', () => {
+    for (const pane of Object.values(PANE_BOUNDS)) {
+      expect(pane.min).toBeLessThan(pane.defaultSize)
+      expect(pane.defaultSize).toBeLessThan(pane.max)
+    }
+  })
+
+  it('opens the refs sidebar wider but inside the sidebar bounds', () => {
+    expect(REFS_SIDEBAR_WIDTH).toBeGreaterThan(PANE_BOUNDS.sidebar.defaultSize)
+    expect(REFS_SIDEBAR_WIDTH).toBeLessThanOrEqual(PANE_BOUNDS.sidebar.max)
+  })
+
+  it('turns a pointer delta into a width, honouring the inverted pane', () => {
+    const base = { startValue: 300, bounds }
+    expect(dragPaneSize({ ...base, deltaX: 40 })).toBe(340)
+    expect(dragPaneSize({ ...base, deltaX: -40 })).toBe(260)
+    // A pane on the right of the splitter grows when the pointer moves left.
+    expect(dragPaneSize({ ...base, deltaX: -40, invert: true })).toBe(340)
+    expect(dragPaneSize({ ...base, deltaX: 40, invert: true })).toBe(260)
+  })
+
+  it('clamps a drag to the pane bounds', () => {
+    const base = { startValue: 300, bounds }
+    expect(dragPaneSize({ ...base, deltaX: 400 })).toBe(bounds.max)
+    expect(dragPaneSize({ ...base, deltaX: -400 })).toBe(bounds.min)
+    // The remembered width never leaves the pane's own bounds, whatever the window does.
+    expect(dragPaneSize({ startValue: bounds.max, deltaX: 400, bounds })).toBe(bounds.max)
+  })
+
+  it('limits the rendered width without losing the chosen one', () => {
+    const room = { min: bounds.min, max: bounds.max }
+    expect(visiblePaneSize(400, bounds.defaultSize, { min: bounds.min, max: 350 })).toBe(350)
+    // Widening the window again brings the width the user picked back.
+    expect(visiblePaneSize(400, bounds.defaultSize, room)).toBe(400)
+    expect(visiblePaneSize(300, bounds.defaultSize, room)).toBe(300)
+    // Nothing chosen: the mode default, limited by the room.
+    expect(visiblePaneSize(null, REFS_SIDEBAR_WIDTH, { min: bounds.min, max: 200 })).toBe(200)
+    // A reset in a narrow window renders the default clamped, never wider.
+    expect(visiblePaneSize(null, bounds.defaultSize, { min: bounds.min, max: 200 })).toBe(200)
+    expect(visiblePaneSize(null, bounds.defaultSize, room)).toBe(bounds.defaultSize)
+  })
+
+  it('keeps the announced range valid when the window is smaller than the minimum', () => {
+    const squeezed = { min: bounds.min, max: 40 }
+    const rendered = visiblePaneSize(null, bounds.defaultSize, squeezed)
+    const floor = effectiveMinimum(squeezed)
+    // The floor lowers to the room that exists, so the pane shrinks instead of
+    // overflowing the window, and now stays inside [min, max].
+    expect(floor).toBe(40)
+    expect(rendered).toBe(40)
+    expect(floor).toBeLessThanOrEqual(rendered)
+    expect(rendered).toBeLessThanOrEqual(squeezed.max)
+    // A container with no room at all must not produce a negative width.
+    expect(effectiveMinimum({ min: bounds.min, max: 0 })).toBe(0)
+    expect(visiblePaneSize(null, bounds.defaultSize, { min: bounds.min, max: -20 })).toBe(0)
+  })
+
+  it('does not rewrite the remembered width when the window pins the pane', () => {
+    // Details chosen at 760, window narrow enough to render 324.
+    const room = { min: bounds.min, max: 324 }
+    const nudged = dragOutcome({ startVisible: 324, wanted: 325, room })
+    expect(nudged.visible).toBe(324)
+    expect(nudged.remember).toBeNull()
+
+    // Shrinking the visible pane is a real gesture and is remembered.
+    const shrunk = dragOutcome({ startVisible: 324, wanted: 294, room })
+    expect(shrunk.visible).toBe(294)
+    expect(shrunk.remember).toBe(294)
+
+    // What is remembered is what was on screen, not the width the pointer asked
+    // for beyond the window: widening the window must not jump past it.
+    const overshoot = dragOutcome({ startVisible: 300, wanted: 500, room })
+    expect(overshoot.visible).toBe(324)
+    expect(overshoot.remember).toBe(324)
+
+    // A drag that returns to where it started commits nothing.
+    const returned = dragOutcome({ startVisible: 300, wanted: 300, room: { min: bounds.min, max: bounds.max } })
+    expect(returned.visible).toBe(300)
+    expect(returned.remember).toBeNull()
+  })
+
+  it('carries a drag back to its start as nothing pending', () => {
+    const room = { min: bounds.min, max: bounds.max }
+    const at = (from: number, to: number) => dragOutcome({ startVisible: from, wanted: to, room })
+
+    // Onward movement becomes the pending width, exactly once.
+    expect(nextDragPending(null, at(300, 340))).toBe(340)
+    expect(nextDragPending(340, at(300, 360))).toBe(360)
+    // Coming back to the start clears it, so release commits nothing.
+    expect(nextDragPending(340, at(300, 300))).toBeNull()
+    expect(nextDragPending(360, at(300, 300))).toBeNull()
+
+    // The pinned case: a nudge that cannot move the pane is never pending, and a
+    // press with no movement stays pending-free.
+    const pinned = { min: bounds.min, max: 324 }
+    expect(nextDragPending(null, dragOutcome({ startVisible: 324, wanted: 330, room: pinned }))).toBeNull()
+    expect(nextDragPending(null, dragOutcome({ startVisible: 324, wanted: 324, room: pinned }))).toBeNull()
+    // A real move at the ceiling is remembered at the width that was visible.
+    expect(nextDragPending(null, dragOutcome({ startVisible: 300, wanted: 500, room: pinned }))).toBe(324)
   })
 })
 
