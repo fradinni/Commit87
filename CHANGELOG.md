@@ -6,6 +6,23 @@ All notable changes to Commit87 are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.2-beta.1] — 2026-11-18
+
+Pre-release on the 0.2 line. Installations on the Beta channel are offered it; Stable stays
+on 0.2.1 until a stable release follows.
+
+### Added
+
+- The navigation sidebar, the commit details pane, the changed-files list and the Browse-code
+  file tree can now be resized, so a long commit message, a deep path list or a wide diff can
+  be read at the width it needs. Drag the divider between two panes, or focus it and use the
+  arrow keys (Shift for a coarser step, Home/End for the limits); double-click returns a pane
+  to its default width.
+- Chosen widths are remembered between sessions, per pane. **View → Reset Pane Widths** (also
+  in the command palette) puts every pane back to its default.
+- Resizing never clips the view: when the window is too narrow for the width a pane was given,
+  the pane shrinks instead, and widening the window restores the chosen width.
+
 ### Changed
 
 - Commit87 is now licensed under the GNU Affero General Public License, version 3 or any
